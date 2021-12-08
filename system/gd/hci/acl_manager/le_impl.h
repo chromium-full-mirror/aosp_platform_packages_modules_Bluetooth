@@ -404,6 +404,28 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
     le_address_manager_->ClearConnectList();
   }
 
+  void remove_device_from_connect_list(AddressWithType address_with_type) {
+    AddressType address_type = address_with_type.GetAddressType();
+    direct_connections_.erase(address_with_type);
+    if (!address_manager_registered) {
+      le_address_manager_->Register(this);
+      address_manager_registered = true;
+    }
+    pause_connection = true;
+    switch (address_type) {
+      case AddressType::PUBLIC_DEVICE_ADDRESS:
+      case AddressType::PUBLIC_IDENTITY_ADDRESS: {
+        le_address_manager_->RemoveDeviceFromConnectList(
+            ConnectListAddressType::PUBLIC, address_with_type.GetAddress());
+      } break;
+      case AddressType::RANDOM_DEVICE_ADDRESS:
+      case AddressType::RANDOM_IDENTITY_ADDRESS: {
+        le_address_manager_->RemoveDeviceFromConnectList(
+            ConnectListAddressType::RANDOM, address_with_type.GetAddress());
+      }
+    }
+  }
+
   void add_device_to_resolving_list(
       AddressWithType address_with_type,
       const std::array<uint8_t, 16>& peer_irk,
@@ -424,6 +446,27 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
       case AddressType::RANDOM_IDENTITY_ADDRESS: {
         le_address_manager_->AddDeviceToResolvingList(
             PeerAddressType::RANDOM_DEVICE_OR_IDENTITY_ADDRESS, address_with_type.GetAddress(), peer_irk, local_irk);
+      }
+    }
+  }
+
+  void remove_device_from_resolving_list(AddressWithType address_with_type) {
+    AddressType address_type = address_with_type.GetAddressType();
+    if (!address_manager_registered) {
+      le_address_manager_->Register(this);
+      address_manager_registered = true;
+    }
+    pause_connection = true;
+    switch (address_type) {
+      case AddressType::PUBLIC_DEVICE_ADDRESS:
+      case AddressType::PUBLIC_IDENTITY_ADDRESS: {
+        le_address_manager_->RemoveDeviceFromResolvingList(
+            PeerAddressType::PUBLIC_DEVICE_OR_IDENTITY_ADDRESS, address_with_type.GetAddress());
+      } break;
+      case AddressType::RANDOM_DEVICE_ADDRESS:
+      case AddressType::RANDOM_IDENTITY_ADDRESS: {
+        le_address_manager_->RemoveDeviceFromResolvingList(
+            PeerAddressType::RANDOM_DEVICE_OR_IDENTITY_ADDRESS, address_with_type.GetAddress());
       }
     }
   }
@@ -592,49 +635,6 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
         std::move(packet), handler_->BindOnce([](CommandCompleteView complete) {}));
   }
 
-  void remove_device_from_connect_list(AddressWithType address_with_type) {
-    AddressType address_type = address_with_type.GetAddressType();
-    direct_connections_.erase(address_with_type);
-    if (!address_manager_registered) {
-      le_address_manager_->Register(this);
-      address_manager_registered = true;
-    }
-    pause_connection = true;
-    switch (address_type) {
-      case AddressType::PUBLIC_DEVICE_ADDRESS:
-      case AddressType::PUBLIC_IDENTITY_ADDRESS: {
-        le_address_manager_->RemoveDeviceFromConnectList(
-            ConnectListAddressType::PUBLIC, address_with_type.GetAddress());
-      } break;
-      case AddressType::RANDOM_DEVICE_ADDRESS:
-      case AddressType::RANDOM_IDENTITY_ADDRESS: {
-        le_address_manager_->RemoveDeviceFromConnectList(
-            ConnectListAddressType::RANDOM, address_with_type.GetAddress());
-      }
-    }
-  }
-
-  void remove_device_from_resolving_list(AddressWithType address_with_type) {
-    AddressType address_type = address_with_type.GetAddressType();
-    if (!address_manager_registered) {
-      le_address_manager_->Register(this);
-      address_manager_registered = true;
-    }
-    pause_connection = true;
-    switch (address_type) {
-      case AddressType::PUBLIC_DEVICE_ADDRESS:
-      case AddressType::PUBLIC_IDENTITY_ADDRESS: {
-        le_address_manager_->RemoveDeviceFromResolvingList(
-            PeerAddressType::PUBLIC_DEVICE_OR_IDENTITY_ADDRESS, address_with_type.GetAddress());
-      } break;
-      case AddressType::RANDOM_DEVICE_ADDRESS:
-      case AddressType::RANDOM_IDENTITY_ADDRESS: {
-        le_address_manager_->RemoveDeviceFromResolvingList(
-            PeerAddressType::RANDOM_DEVICE_OR_IDENTITY_ADDRESS, address_with_type.GetAddress());
-      }
-    }
-  }
-
   void clear_resolving_list() {
     le_address_manager_->ClearResolvingList();
   }
@@ -742,16 +742,6 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
     }
   }
 
-  void check_for_unregister() {
-    if (le_acl_connections_.empty() && connecting_le_.empty() && canceled_connections_.empty() &&
-        address_manager_registered && ready_to_unregister) {
-      le_address_manager_->Unregister(this);
-      address_manager_registered = false;
-      pause_connection = false;
-      ready_to_unregister = false;
-    }
-  }
-
   uint16_t HACK_get_handle(Address address) {
     for (auto it = le_acl_connections_.begin(); it != le_acl_connections_.end(); it++) {
       if (it->second.remote_address_.GetAddress() == address) {
@@ -769,6 +759,23 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
       return;
     }
     callbacks->OnLocalAddressUpdate(address_with_type);
+  }
+
+  void register_with_address_manager() {
+    if (!address_manager_registered) {
+      le_address_manager_->Register(this);
+      address_manager_registered = true;
+      pause_connection = true;
+    }
+  }
+
+  void check_for_unregister() {
+    if (le_acl_connections_.empty() && connecting_le_.empty() && address_manager_registered && ready_to_unregister) {
+      le_address_manager_->Unregister(this);
+      address_manager_registered = false;
+      pause_connection = false;
+      ready_to_unregister = false;
+    }
   }
 
   static constexpr uint16_t kMinimumCeLength = 0x0002;
