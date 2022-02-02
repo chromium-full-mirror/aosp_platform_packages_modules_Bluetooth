@@ -25,6 +25,8 @@
 
 #define LOG_TAG "bt_bta_dm"
 
+#include <base/logging.h>
+
 #include <cstdint>
 
 #include "bta/dm/bta_dm_int.h"
@@ -44,6 +46,8 @@
 #include "osi/include/fixed_queue.h"
 #include "osi/include/log.h"
 #include "osi/include/osi.h"
+#include "stack/btm/btm_ble_int.h"
+#include "stack/btm/btm_dev.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/btm/neighbor_inquiry.h"
 #include "stack/gatt/connection_manager.h"
@@ -56,8 +60,6 @@
 #include "types/bluetooth/uuid.h"
 #include "types/raw_address.h"
 
-#include <base/logging.h>
-
 #if (GAP_INCLUDED == TRUE)
 #include "gap_api.h"
 #endif
@@ -67,6 +69,7 @@ using bluetooth::Uuid;
 void BTIF_dm_disable();
 void BTIF_dm_enable();
 void btm_ble_adv_init(void);
+void btm_ble_scanner_init(void);
 
 static void bta_dm_inq_results_cb(tBTM_INQ_RESULTS* p_inq, const uint8_t* p_eir,
                                   uint16_t eir_len);
@@ -401,6 +404,8 @@ void BTA_dm_on_hw_on() {
   if (bta_dm_cb.p_sec_cback)
     bta_dm_cb.p_sec_cback(BTA_DM_LE_FEATURES_READ, NULL);
 #endif
+
+  btm_ble_scanner_init();
 
   /* Earlier, we used to invoke BTM_ReadLocalAddr which was just copying the
      bd_addr
@@ -1809,6 +1814,10 @@ static void bta_dm_inq_results_cb(tBTM_INQ_RESULTS* p_inq, const uint8_t* p_eir,
   uint16_t service_class;
 
   result.inq_res.bd_addr = p_inq->remote_bd_addr;
+
+  // Pass the original address to GattService#onScanResult
+  result.inq_res.original_bda = p_inq->original_bda;
+
   memcpy(result.inq_res.dev_class, p_inq->dev_class, DEV_CLASS_LEN);
   BTM_COD_SERVICE_CLASS(service_class, p_inq->dev_class);
   result.inq_res.is_limited =
@@ -2871,7 +2880,7 @@ static void bta_dm_set_eir(char* local_name) {
 #if (BTA_EIR_CANNED_UUID_LIST != TRUE)
   /* if local name is not provided, get it from controller */
   if (local_name == NULL) {
-    if (BTM_ReadLocalDeviceName(&local_name) != BTM_SUCCESS) {
+    if (BTM_ReadLocalDeviceName((const char**)&local_name) != BTM_SUCCESS) {
       APPL_TRACE_ERROR("Fail to read local device name for EIR");
     }
   }
@@ -3312,6 +3321,7 @@ static void bta_dm_observe_results_cb(tBTM_INQ_RESULTS* p_inq,
   APPL_TRACE_DEBUG("bta_dm_observe_results_cb");
 
   result.inq_res.bd_addr = p_inq->remote_bd_addr;
+  result.inq_res.original_bda = p_inq->original_bda;
   result.inq_res.rssi = p_inq->rssi;
   result.inq_res.ble_addr_type = p_inq->ble_addr_type;
   result.inq_res.inq_result_type = p_inq->inq_result_type;
@@ -4041,3 +4051,15 @@ static void bta_dm_ctrl_features_rd_cmpl_cback(tHCI_STATUS result) {
   }
 }
 #endif /* BLE_VND_INCLUDED */
+
+void bta_dm_process_delete_key_RC_to_unpair(const RawAddress& bd_addr)
+{
+    LOG_WARN("RC key missing");
+    tBTA_DM_SEC param = {
+        .delete_key_RC_to_unpair = {
+            .bd_addr = bd_addr,
+        },
+    };
+    bta_dm_cb.p_sec_cback(BTA_DM_REPORT_BONDING_EVT, &param);
+}
+
