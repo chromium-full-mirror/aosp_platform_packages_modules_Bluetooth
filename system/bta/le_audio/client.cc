@@ -671,9 +671,13 @@ class LeAudioClientImpl : public LeAudioClient {
     }
 
     if (active_group_id_ != bluetooth::groups::kGroupUnknown) {
-      LOG(WARNING) << __func__ << ", Another group already active: "
-                   << static_cast<int>(active_group_id_);
-      return;
+      if (active_group_id_ == group_id) {
+        LOG(INFO) << __func__ << ", Group is already active: "
+                  << static_cast<int>(active_group_id_);
+        callbacks_->OnGroupStatus(active_group_id_, GroupStatus::ACTIVE);
+        return;
+      }
+      LOG(INFO) << __func__ << ", switching active group to: " << group_id;
     }
 
     if (!audio_source_instance_) {
@@ -701,21 +705,25 @@ class LeAudioClientImpl : public LeAudioClient {
     if (current_source_codec_config.IsInvalid() &&
         current_sink_codec_config.IsInvalid()) {
       LOG(WARNING) << __func__ << ", unsupported device configurations";
-      callbacks_->OnGroupStatus(active_group_id_, GroupStatus::INACTIVE);
       return;
     }
 
-    /* Expose audio sessions */
-    audio_framework_source_config.data_interval_us =
-        current_source_codec_config.data_interval_us;
-    LeAudioClientAudioSource::Start(audio_framework_source_config,
-                                    audioSinkReceiver);
+    if (active_group_id_ == bluetooth::groups::kGroupUnknown) {
+      /* Expose audio sessions if there was no previous active group */
+      audio_framework_source_config.data_interval_us =
+          current_source_codec_config.data_interval_us;
+      LeAudioClientAudioSource::Start(audio_framework_source_config,
+                                      audioSinkReceiver);
 
-    audio_framework_sink_config.data_interval_us =
+      audio_framework_sink_config.data_interval_us =
           current_source_codec_config.data_interval_us;
 
-    LeAudioClientAudioSink::Start(audio_framework_sink_config,
-                                  audioSourceReceiver);
+      LeAudioClientAudioSink::Start(audio_framework_sink_config,
+                                    audioSourceReceiver);
+    } else {
+      /* In case there was an active group. Stop the stream */
+      GroupStop(active_group_id_);
+    }
 
     active_group_id_ = group_id;
     callbacks_->OnGroupStatus(active_group_id_, GroupStatus::ACTIVE);
@@ -1820,8 +1828,8 @@ class LeAudioClientImpl : public LeAudioClient {
     uint16_t num_of_frames_per_ch;
 
     int dt_us = current_source_codec_config.data_interval_us;
-    int sr_hz = current_source_codec_config.sample_rate;
-    num_of_frames_per_ch = lc3_frame_samples(dt_us, sr_hz);
+    int af_hz = audio_framework_source_config.sample_rate;
+    num_of_frames_per_ch = lc3_frame_samples(dt_us, af_hz);
 
     chan_mono.reserve(num_of_frames_per_ch);
     for (int i = 0; i < pitch * num_of_frames_per_ch; i += pitch) {
@@ -1847,8 +1855,8 @@ class LeAudioClientImpl : public LeAudioClient {
     uint16_t number_of_required_samples_per_channel;
 
     int dt_us = current_source_codec_config.data_interval_us;
-    int sr_hz = current_source_codec_config.sample_rate;
-    number_of_required_samples_per_channel = lc3_frame_samples(dt_us, sr_hz);
+    int af_hz = audio_framework_source_config.sample_rate;
+    number_of_required_samples_per_channel = lc3_frame_samples(dt_us, af_hz);
 
     for (auto [cis_handle, audio_location] : stream_conf->sink_streams) {
       if (audio_location & le_audio::codec_spec_conf::kLeAudioLocationAnyLeft)
@@ -1870,22 +1878,16 @@ class LeAudioClientImpl : public LeAudioClient {
 
     bool mono = (left_cis_handle == 0) || (right_cis_handle == 0);
 
-    int af_hz = audio_framework_source_config.sample_rate;
-    LOG_ASSERT(af_hz >= sr_hz) << __func__ << " sample freq issue";
-
-    int pitch = af_hz / sr_hz;
-
-    LOG(INFO) << __func__ << " pitch " << pitch
-              << " data size: " << (int)data.size()
+    LOG(INFO) << __func__ << " data size: " << (int)data.size()
               << " byte count: " << byte_count << " mono: " << mono;
     if (!mono) {
-      lc3_encode(lc3_encoder_left, (const int16_t*)data.data(), 2 * pitch,
+      lc3_encode(lc3_encoder_left, (const int16_t*)data.data(), 2,
                  chan_left_enc.size(), chan_left_enc.data());
-      lc3_encode(lc3_encoder_right, ((const int16_t*)data.data()) + 1,
-                 2 * pitch, chan_right_enc.size(), chan_right_enc.data());
+      lc3_encode(lc3_encoder_right, ((const int16_t*)data.data()) + 1, 2,
+                 chan_right_enc.size(), chan_right_enc.data());
     } else {
       std::vector<int16_t> chan_mono;
-      get_mono_stream(data, chan_mono, pitch);
+      get_mono_stream(data, chan_mono);
 
       if (left_cis_handle) {
         lc3_encode(lc3_encoder_left, (const int16_t*)chan_mono.data(), 1,
@@ -1919,8 +1921,8 @@ class LeAudioClientImpl : public LeAudioClient {
     uint16_t number_of_required_samples_per_channel;
 
     int dt_us = current_source_codec_config.data_interval_us;
-    int sr_hz = current_source_codec_config.sample_rate;
-    number_of_required_samples_per_channel = lc3_frame_samples(dt_us, sr_hz);
+    int af_hz = audio_framework_source_config.sample_rate;
+    number_of_required_samples_per_channel = lc3_frame_samples(dt_us, af_hz);
 
     if ((int)data.size() < (2 /* bytes per sample */ * num_channels *
                             number_of_required_samples_per_channel)) {
@@ -1929,24 +1931,22 @@ class LeAudioClientImpl : public LeAudioClient {
     }
     std::vector<uint8_t> chan_encoded(num_channels * byte_count, 0);
 
-    int af_hz = audio_framework_source_config.sample_rate;
-    LOG_ASSERT(af_hz >= sr_hz) << __func__ << " sample freq issue";
-
-    int pitch = af_hz / sr_hz;
-
     if (num_channels == 1) {
       /* Since we always get two channels from framework, lets make it mono here
        */
       std::vector<int16_t> chan_mono;
-      get_mono_stream(data, chan_mono, pitch);
+      get_mono_stream(data, chan_mono);
 
-      lc3_encode(lc3_encoder_left, (const int16_t*)chan_mono.data(), 1,
-                 byte_count, chan_encoded.data());
+      auto err = lc3_encode(lc3_encoder_left, (const int16_t*)chan_mono.data(),
+                            1, byte_count, chan_encoded.data());
 
+      if (err < 0) {
+        LOG(ERROR) << " error while encoding, error code: " << +err;
+      }
     } else {
-      lc3_encode(lc3_encoder_left, (const int16_t*)data.data(), 2 * pitch,
-                 byte_count, chan_encoded.data());
-      lc3_encode(lc3_encoder_right, (const int16_t*)data.data() + 1, 2 * pitch,
+      lc3_encode(lc3_encoder_left, (const int16_t*)data.data(), 2, byte_count,
+                 chan_encoded.data());
+      lc3_encode(lc3_encoder_right, (const int16_t*)data.data() + 1, 2,
                  byte_count, chan_encoded.data() + byte_count);
     }
 
@@ -2060,7 +2060,8 @@ class LeAudioClientImpl : public LeAudioClient {
     }
   }
 
-  void SendAudioData(uint8_t* data, uint16_t size) {
+  void SendAudioData(uint8_t* data, uint16_t size, uint16_t cis_conn_hdl,
+                     uint32_t timestamp) {
     /* Get only one channel for MONO microphone */
     /* Gather data for channel */
 
@@ -2088,23 +2089,19 @@ class LeAudioClientImpl : public LeAudioClient {
     }
 
     int dt_us = current_sink_codec_config.data_interval_us;
-    int sr_hz = current_sink_codec_config.sample_rate;
     int af_hz = audio_framework_sink_config.sample_rate;
-    LOG_ASSERT(af_hz >= sr_hz) << __func__ << " sample freq issue";
-
-    int pitch = af_hz / sr_hz;
 
     int pcm_size;
     if (dt_us == 10000) {
-      if (sr_hz == 44100)
+      if (af_hz == 44100)
         pcm_size = 480;
       else
-        pcm_size = sr_hz / 100;
+        pcm_size = af_hz / 100;
     } else if (dt_us == 7500) {
-      if (sr_hz == 44100)
+      if (af_hz == 44100)
         pcm_size = 360;
       else
-        pcm_size = (sr_hz * 3) / 400;
+        pcm_size = (af_hz * 3) / 400;
     } else {
       LOG(ERROR) << "BAD dt_us: " << dt_us;
       return;
@@ -2112,8 +2109,8 @@ class LeAudioClientImpl : public LeAudioClient {
 
     std::vector<int16_t> pcm_data_decoded(pcm_size, 0);
 
-    auto err =
-        lc3_decode(lc3_decoder, data, size, pcm_data_decoded.data(), pitch);
+    auto err = lc3_decode(lc3_decoder, data, size, pcm_data_decoded.data(),
+                          1 /* pitch */);
 
     /* TODO: How handle failing decoding ? */
     if (err < 0) {
@@ -2159,14 +2156,17 @@ class LeAudioClientImpl : public LeAudioClient {
       }
       int dt_us = current_source_codec_config.data_interval_us;
       int sr_hz = current_source_codec_config.sample_rate;
-      unsigned enc_size = lc3_encoder_size(dt_us, sr_hz);
+      int af_hz = audio_framework_source_config.sample_rate;
+      unsigned enc_size = lc3_encoder_size(dt_us, af_hz);
 
       lc3_encoder_left_mem = malloc(enc_size);
       lc3_encoder_right_mem = malloc(enc_size);
 
-      lc3_encoder_left = lc3_setup_encoder(dt_us, sr_hz, lc3_encoder_left_mem);
+      lc3_encoder_left =
+          lc3_setup_encoder(dt_us, sr_hz, af_hz, lc3_encoder_left_mem);
       lc3_encoder_right =
-          lc3_setup_encoder(dt_us, sr_hz, lc3_encoder_right_mem);
+          lc3_setup_encoder(dt_us, sr_hz, af_hz, lc3_encoder_right_mem);
+
     } else if (CodecManager::GetInstance()->GetCodecLocation() ==
                le_audio::types::CodecLocation::ADSP) {
       CodecManager::GetInstance()->UpdateActiveSourceAudioConfig(
@@ -2245,9 +2245,11 @@ class LeAudioClientImpl : public LeAudioClient {
 
       int dt_us = current_sink_codec_config.data_interval_us;
       int sr_hz = current_sink_codec_config.sample_rate;
-      unsigned dec_size = lc3_decoder_size(dt_us, sr_hz);
+      int af_hz = audio_framework_sink_config.sample_rate;
+      unsigned dec_size = lc3_decoder_size(dt_us, af_hz);
       lc3_decoder_mem = malloc(dec_size);
-      lc3_decoder = lc3_setup_decoder(dt_us, sr_hz, lc3_decoder_mem);
+
+      lc3_decoder = lc3_setup_decoder(dt_us, sr_hz, af_hz, lc3_decoder_mem);
     } else if (CodecManager::GetInstance()->GetCodecLocation() ==
                le_audio::types::CodecLocation::ADSP) {
       CodecManager::GetInstance()->UpdateActiveSinkAudioConfig(*stream_conf,
@@ -2341,6 +2343,7 @@ class LeAudioClientImpl : public LeAudioClient {
 
   void Cleanup(base::Callback<void()> cleanupCb) {
     if (alarm_is_scheduled(suspend_timeout_)) alarm_cancel(suspend_timeout_);
+    groupStateMachine_->Cleanup();
     leAudioDevices_.Cleanup();
     aseGroups_.Cleanup();
     StopAudio();
@@ -2921,7 +2924,8 @@ class LeAudioClientImpl : public LeAudioClient {
         }
 
         SendAudioData(event->p_msg->data + event->p_msg->offset,
-                      event->p_msg->len - event->p_msg->offset);
+                      event->p_msg->len - event->p_msg->offset,
+                      event->cis_conn_hdl, event->ts);
       } break;
       case bluetooth::hci::iso_manager::kIsoEventCisEstablishCmpl: {
         auto* event =

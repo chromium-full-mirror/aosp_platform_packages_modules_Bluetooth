@@ -1288,7 +1288,8 @@ TEST_F(IsoManagerDeathTest, CreateBigInvalidResponsePacket) {
           });
 
   ASSERT_EXIT(IsoManager::GetInstance()->CreateBig(0x01, kDefaultBigParams),
-              ::testing::KilledBySignal(SIGABRT), "Invalid bis count");
+              ::testing::KilledBySignal(SIGABRT),
+              "num_bis != 0. Bis count is 0");
 }
 
 TEST_F(IsoManagerDeathTest, CreateBigInvalidResponsePacket2) {
@@ -1804,6 +1805,17 @@ TEST_F(IsoManagerTest, RemoveIsoDataPathInvalidStatus) {
       iso_handle, kDefaultIsoDataPathParams.data_path_dir);
 }
 
+TEST_F(IsoManagerTest, SendIsoDataWithNoCigConnected) {
+  std::vector<uint8_t> data_vec(108, 0);
+  IsoManager::GetInstance()->CreateCig(
+      volatile_test_cig_create_cmpl_evt_.cig_id, kDefaultCigParams);
+
+  auto handle = volatile_test_cig_create_cmpl_evt_.conn_handles[0];
+  IsoManager::GetInstance()->SendIsoData(handle, data_vec.data(),
+                                         data_vec.size());
+  EXPECT_CALL(bte_interface_, HciSend).Times(0);
+}
+
 TEST_F(IsoManagerTest, SendIsoDataCigValid) {
   IsoManager::GetInstance()->CreateCig(
       volatile_test_cig_create_cmpl_evt_.cig_id, kDefaultCigParams);
@@ -2134,17 +2146,6 @@ TEST_F(IsoManagerDeathTest, SendIsoDataWithNoCigBigHandle) {
   ASSERT_EXIT(IsoManager::GetInstance()->SendIsoData(134, data_vec.data(),
                                                      data_vec.size()),
               ::testing::KilledBySignal(SIGABRT), "No such iso");
-}
-
-TEST_F(IsoManagerDeathTest, SendIsoDataWithNoCigConnected) {
-  std::vector<uint8_t> data_vec(108, 0);
-  IsoManager::GetInstance()->CreateCig(
-      volatile_test_cig_create_cmpl_evt_.cig_id, kDefaultCigParams);
-
-  auto handle = volatile_test_cig_create_cmpl_evt_.conn_handles[0];
-  ASSERT_EXIT(IsoManager::GetInstance()->SendIsoData(handle, data_vec.data(),
-                                                     data_vec.size()),
-              ::testing::KilledBySignal(SIGABRT), "CIS not established");
 }
 
 TEST_F(IsoManagerTest, HandleDisconnectNoSuchHandle) {
