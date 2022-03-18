@@ -188,6 +188,16 @@ public final class BluetoothAdapter {
             STATE_BLE_TURNING_OFF
     })
     @Retention(RetentionPolicy.SOURCE)
+    public @interface InternalAdapterState {}
+
+    /** @hide */
+    @IntDef(prefix = { "STATE_" }, value = {
+            STATE_OFF,
+            STATE_TURNING_ON,
+            STATE_ON,
+            STATE_TURNING_OFF,
+    })
+    @Retention(RetentionPolicy.SOURCE)
     public @interface AdapterState {}
 
     /**
@@ -268,14 +278,14 @@ public final class BluetoothAdapter {
     public @interface RfcommListenerResult {}
 
     /**
-     * Human-readable string helper for AdapterState
+     * Human-readable string helper for AdapterState and InternalAdapterState
      *
      * @hide
      */
     @SystemApi
     @RequiresNoPermission
     @NonNull
-    public static String nameForState(@AdapterState int state) {
+    public static String nameForState(@InternalAdapterState int state) {
         switch (state) {
             case STATE_OFF:
                 return "OFF";
@@ -1151,8 +1161,7 @@ public final class BluetoothAdapter {
      * Fetch the current bluetooth state.  If the service is down, return
      * OFF.
      */
-    @AdapterState
-    private int getStateInternal() {
+    private @InternalAdapterState int getStateInternal() {
         int state = BluetoothAdapter.STATE_OFF;
         try {
             mServiceLock.readLock().lock();
@@ -1183,8 +1192,7 @@ public final class BluetoothAdapter {
      */
     @RequiresLegacyBluetoothPermission
     @RequiresNoPermission
-    @AdapterState
-    public int getState() {
+    public @AdapterState int getState() {
         int state = getStateInternal();
 
         // Consider all internal states as OFF
@@ -1220,10 +1228,9 @@ public final class BluetoothAdapter {
      */
     @RequiresLegacyBluetoothPermission
     @RequiresNoPermission
-    @AdapterState
     @UnsupportedAppUsage(publicAlternatives = "Use {@link #getState()} instead to determine "
             + "whether you can use BLE & BT classic.")
-    public int getLeState() {
+    public @InternalAdapterState int getLeState() {
         int state = getStateInternal();
 
         if (VDBG) {
@@ -1433,11 +1440,10 @@ public final class BluetoothAdapter {
      * @return the UUIDs supported by the local Bluetooth Adapter.
      * @hide
      */
-    @SystemApi
+    @UnsupportedAppUsage
     @RequiresLegacyBluetoothPermission
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
-    @SuppressLint(value = {"ArrayReturn", "NullableCollection"})
     public @NonNull ParcelUuid[] getUuids() {
         if (getState() != STATE_ON) {
             return new ParcelUuid[0];
@@ -1458,6 +1464,18 @@ public final class BluetoothAdapter {
             mServiceLock.readLock().unlock();
         }
         return new ParcelUuid[0];
+    }
+
+    /**
+     * Get the UUIDs supported by the local Bluetooth adapter.
+     *
+     * @return a list of the UUIDs supported by the local Bluetooth Adapter.
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public @NonNull List<ParcelUuid> getUuidsList() {
+        return Arrays.asList(getUuids());
     }
 
     /**
