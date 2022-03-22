@@ -1412,7 +1412,7 @@ public final class BluetoothAdapter {
             android.Manifest.permission.BLUETOOTH_CONNECT,
             android.Manifest.permission.BLUETOOTH_PRIVILEGED,
     })
-    public boolean factoryReset() {
+    public boolean clearBluetooth() {
         try {
             mServiceLock.readLock().lock();
             if (mService != null) {
@@ -1434,6 +1434,22 @@ public final class BluetoothAdapter {
         return false;
     }
 
+     /**
+     * See {@link #clearBluetooth()}
+     *
+     * @return true to indicate that the config file was successfully cleared
+     * @hide
+     */
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(allOf = {
+            android.Manifest.permission.BLUETOOTH_CONNECT,
+            android.Manifest.permission.BLUETOOTH_PRIVILEGED,
+    })
+    public boolean factoryReset() {
+        return clearBluetooth();
+    }
+
     /**
      * Get the UUIDs supported by the local Bluetooth adapter.
      *
@@ -1445,25 +1461,8 @@ public final class BluetoothAdapter {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public @NonNull ParcelUuid[] getUuids() {
-        if (getState() != STATE_ON) {
-            return new ParcelUuid[0];
-        }
-        try {
-            mServiceLock.readLock().lock();
-            if (mService != null) {
-                final SynchronousResultReceiver<List<ParcelUuid>> recv =
-                        new SynchronousResultReceiver();
-                mService.getUuids(mAttributionSource, recv);
-                List<ParcelUuid> parcels = recv.awaitResultNoInterrupt(getSyncTimeout())
-                        .getValue(new ArrayList<>());
-                return parcels.toArray(new ParcelUuid[parcels.size()]);
-            }
-        } catch (RemoteException | TimeoutException e) {
-            Log.e(TAG, e.toString() + "\n" + Log.getStackTraceString(new Throwable()));
-        } finally {
-            mServiceLock.readLock().unlock();
-        }
-        return new ParcelUuid[0];
+        List<ParcelUuid> parcels = getUuidsList();
+        return parcels.toArray(new ParcelUuid[parcels.size()]);
     }
 
     /**
@@ -1475,7 +1474,22 @@ public final class BluetoothAdapter {
     @SystemApi
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     public @NonNull List<ParcelUuid> getUuidsList() {
-        return Arrays.asList(getUuids());
+        List<ParcelUuid> defaultValue = new ArrayList<>();
+        if (getState() != STATE_ON || mService == null) {
+            return defaultValue;
+        }
+        mServiceLock.readLock().lock();
+        try {
+            final SynchronousResultReceiver<List<ParcelUuid>> recv =
+                    new SynchronousResultReceiver();
+            mService.getUuids(mAttributionSource, recv);
+            return recv.awaitResultNoInterrupt(getSyncTimeout()).getValue(defaultValue);
+        } catch (RemoteException | TimeoutException e) {
+            Log.e(TAG, e.toString() + "\n" + Log.getStackTraceString(new Throwable()));
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+        return defaultValue;
     }
 
     /**
