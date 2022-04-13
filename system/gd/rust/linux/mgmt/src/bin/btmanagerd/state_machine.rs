@@ -278,6 +278,7 @@ pub async fn mainloop(
 
     // Set up an HCI device listener to emit HCI device inotify messages
     let hci_tx = context.tx.clone();
+    let mgr_clone = bluetooth_manager.clone();
 
     tokio::spawn(async move {
         debug!("Spawned hci notify task");
@@ -296,6 +297,11 @@ pub async fn mainloop(
             match hci_devices_inotify_async_fd() {
                 Some(mut hci_inotify) => {
                     sleep_duration = 1;
+
+                    // TODO(b/226644782) - Turns out the inotify wasn't really
+                    // working (you want udev for /sys, not inotify). Add this
+                    // workaround until we switch to socket(AF_BLUETOOTH).
+                    startup_hci_devices(&mgr_clone);
 
                     // This inner loop runs successfully as long as the hci inotify is valid.
                     loop {
