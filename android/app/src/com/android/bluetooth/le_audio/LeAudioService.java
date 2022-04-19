@@ -49,6 +49,7 @@ import android.os.Looper;
 import android.os.ParcelUuid;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
+import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
 import com.android.bluetooth.Utils;
@@ -174,11 +175,16 @@ public class LeAudioService extends ProfileService {
 
     private final Map<Integer, Integer> mBroadcastStateMap = new HashMap<>();
     private final Map<Integer, Boolean> mBroadcastsPlaybackMap = new HashMap<>();
-    private final List<BluetoothLeBroadcastMetadata> mBroadcastMetadataList = new ArrayList<>();
+    private final Map<Integer, BluetoothLeBroadcastMetadata> mBroadcastMetadataList =
+            new HashMap<>();
 
     @Override
     protected IProfileServiceBinder initBinder() {
         return new BluetoothLeAudioBinder(this);
+    }
+
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfileBapUnicastServerEnabled().orElse(false);
     }
 
     @Override
@@ -669,7 +675,7 @@ public class LeAudioService extends ProfileService {
      * @return list of all know Broadcast metadata
      */
     public List<BluetoothLeBroadcastMetadata> getAllBroadcastMetadata() {
-        return mBroadcastMetadataList;
+        return new ArrayList<BluetoothLeBroadcastMetadata>(mBroadcastMetadataList.values());
     }
 
     /**
@@ -1146,11 +1152,16 @@ public class LeAudioService extends ProfileService {
 
             mBroadcastsPlaybackMap.remove(broadcastId);
             mBroadcastStateMap.remove(broadcastId);
-            mBroadcastMetadataList.removeIf(m -> broadcastId == m.getBroadcastId());
+            mBroadcastMetadataList.remove(broadcastId);
 
         } else if (stackEvent.type == LeAudioStackEvent.EVENT_TYPE_BROADCAST_STATE) {
             int broadcastId = stackEvent.valueInt1;
             int state = stackEvent.valueInt2;
+
+            /* Request broadcast details if not known yet */
+            if (!mBroadcastStateMap.containsKey(broadcastId)) {
+                mLeAudioBroadcasterNativeInterface.getBroadcastMetadata(broadcastId);
+            }
             mBroadcastStateMap.put(broadcastId, state);
 
             if (state == LeAudioStackEvent.BROADCAST_STATE_STOPPED) {
@@ -1211,8 +1222,15 @@ public class LeAudioService extends ProfileService {
                     }
                 }
             }
+        } else if (stackEvent.type == LeAudioStackEvent.EVENT_TYPE_BROADCAST_METADATA_CHANGED) {
+            int broadcastId = stackEvent.valueInt1;
+            if (stackEvent.broadcastMetadata == null) {
+                Log.e(TAG, "Missing Broadcast metadata for broadcastId: " + broadcastId);
+            } else {
+                mBroadcastMetadataList.put(broadcastId, stackEvent.broadcastMetadata);
+                notifyBroadcastMetadataChanged(broadcastId, stackEvent.broadcastMetadata);
+            }
         }
-        // TODO: Support Broadcast metadata updates
 
         if (intent != null) {
             sendBroadcast(intent, BLUETOOTH_CONNECT);
