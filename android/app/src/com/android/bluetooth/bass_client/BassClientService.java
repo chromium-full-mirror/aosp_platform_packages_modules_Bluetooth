@@ -25,7 +25,6 @@ import android.bluetooth.BluetoothStatusCodes;
 import android.bluetooth.BluetoothUuid;
 import android.bluetooth.IBluetoothLeBroadcastAssistant;
 import android.bluetooth.IBluetoothLeBroadcastAssistantCallback;
-import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanRecord;
@@ -260,8 +259,7 @@ public class BassClientService extends ProfileService {
         }
         synchronized (mStateMachines) {
             for (BassClientStateMachine sm : mStateMachines.values()) {
-                sm.doQuit();
-                sm.cleanup();
+                BassObjectsFactory.getInstance().destroyStateMachine(sm);
             }
             mStateMachines.clear();
         }
@@ -369,8 +367,8 @@ public class BassClientService extends ProfileService {
                 return null;
             }
             log("Creating a new state machine for " + device);
-            stateMachine = BassClientStateMachine.make(device,
-                    this, mStateMachinesThread.getLooper());
+            stateMachine = BassObjectsFactory.getInstance().makeStateMachine(
+                    device, this, mStateMachinesThread.getLooper());
             mStateMachines.put(device, stateMachine);
             return stateMachine;
         }
@@ -620,7 +618,8 @@ public class BassClientService extends ProfileService {
             Log.e(TAG, "startSearchingForSources: Adapter is NULL");
             return;
         }
-        BluetoothLeScanner scanner = mBluetoothAdapter.getBluetoothLeScanner();
+        BluetoothLeScannerWrapper scanner = BassObjectsFactory.getInstance()
+                .getBluetoothLeScannerWrapper(mBluetoothAdapter);
         if (scanner == null) {
             Log.e(TAG, "startLeScan: cannot get BluetoothLeScanner");
             return;
@@ -686,7 +685,12 @@ public class BassClientService extends ProfileService {
      */
     public void stopSearchingForSources() {
         log("stopSearchingForSources");
-        BluetoothLeScanner scanner = mBluetoothAdapter.getBluetoothLeScanner();
+        if (mBluetoothAdapter == null) {
+            Log.e(TAG, "stopSearchingForSources: Adapter is NULL");
+            return;
+        }
+        BluetoothLeScannerWrapper scanner = BassObjectsFactory.getInstance()
+                .getBluetoothLeScannerWrapper(mBluetoothAdapter);
         if (scanner == null) {
             Log.e(TAG, "startLeScan: cannot get BluetoothLeScanner");
             return;
@@ -748,7 +752,14 @@ public class BassClientService extends ProfileService {
                     BluetoothStatusCodes.ERROR_BAD_PARAMETERS);
             return;
         }
+        if (getConnectionState(sink) != BluetoothProfile.STATE_CONNECTED) {
+            log("addSource: device is not connected");
+            mCallbacks.notifySourceAddFailed(sink, sourceMetadata,
+                    BluetoothStatusCodes.ERROR_REMOTE_LINK_ERROR);
+            return;
+        }
         if (!hasRoomForBroadcastSourceAddition(sink)) {
+            log("addSource: device has no room");
             mCallbacks.notifySourceAddFailed(sink, sourceMetadata,
                     BluetoothStatusCodes.ERROR_REMOTE_NOT_ENOUGH_RESOURCES);
             return;
@@ -784,6 +795,12 @@ public class BassClientService extends ProfileService {
                     BluetoothStatusCodes.ERROR_BAD_PARAMETERS);
             return;
         }
+        if (getConnectionState(sink) != BluetoothProfile.STATE_CONNECTED) {
+            log("modifySource: device is not connected");
+            mCallbacks.notifySourceModifyFailed(sink, sourceId,
+                    BluetoothStatusCodes.ERROR_REMOTE_LINK_ERROR);
+            return;
+        }
         Message message = stateMachine.obtainMessage(BassClientStateMachine.UPDATE_BCAST_SOURCE);
         message.arg1 = sourceId;
         message.obj = updatedMetadata;
@@ -803,9 +820,15 @@ public class BassClientService extends ProfileService {
         BassClientStateMachine stateMachine = getOrCreateStateMachine(sink);
         if (sourceId == BassConstants.INVALID_SOURCE_ID
                 || stateMachine == null) {
-            log("Error bad parameters: sourceId = " + sourceId);
+            log("removeSource: Error bad parameters: sourceId = " + sourceId);
             mCallbacks.notifySourceRemoveFailed(sink, sourceId,
                     BluetoothStatusCodes.ERROR_BAD_PARAMETERS);
+            return;
+        }
+        if (getConnectionState(sink) != BluetoothProfile.STATE_CONNECTED) {
+            log("removeSource: device is not connected");
+            mCallbacks.notifySourceRemoveFailed(sink, sourceId,
+                    BluetoothStatusCodes.ERROR_REMOTE_LINK_ERROR);
             return;
         }
         Message message = stateMachine.obtainMessage(BassClientStateMachine.REMOVE_BCAST_SOURCE);
