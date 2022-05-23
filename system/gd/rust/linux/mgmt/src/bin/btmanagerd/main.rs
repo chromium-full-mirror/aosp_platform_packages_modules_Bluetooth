@@ -138,12 +138,13 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     );
 
-    let mut powerd_suspend_manager = PowerdSuspendManager::new(conn.clone(), cr);
+    // Temporarily disable powerd suspend manager until we fix it upstream (b/243431889).
+    // let mut powerd_suspend_manager = PowerdSuspendManager::new(conn.clone(), cr);
 
-    tokio::spawn(async move {
-        powerd_suspend_manager.init().await;
-        powerd_suspend_manager.mainloop().await;
-    });
+    // tokio::spawn(async move {
+    //     powerd_suspend_manager.init().await;
+    //     powerd_suspend_manager.mainloop().await;
+    // });
 
     tokio::spawn(async move {
         state_machine::mainloop(context, bluetooth_manager).await;
