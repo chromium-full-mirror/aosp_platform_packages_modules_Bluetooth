@@ -391,6 +391,9 @@ class LeAudioLtvMap {
       : values(std::move(values)) {}
 
   std::optional<std::vector<uint8_t>> Find(uint8_t type) const;
+  void Add(uint8_t type, std::vector<uint8_t> value) {
+    values.insert_or_assign(type, std::move(value));
+  }
   bool IsEmpty() const { return values.empty(); }
   void Clear() { values.clear(); }
   size_t Size() const { return values.size(); }
@@ -519,6 +522,7 @@ struct ase {
         active(false),
         reconfigure(false),
         data_path_state(AudioStreamDataPathState::IDLE),
+        configured_for_context_type(LeAudioContextType::UNINITIALIZED),
         preferred_phy(0),
         state(AseState::BTA_LE_AUDIO_ASE_STATE_IDLE) {}
 
@@ -532,6 +536,7 @@ struct ase {
   bool active;
   bool reconfigure;
   AudioStreamDataPathState data_path_state;
+  LeAudioContextType configured_for_context_type;
 
   /* Codec configuration */
   LeAudioCodecId codec_id;
