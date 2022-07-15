@@ -12,7 +12,6 @@ rust_defaults {
     srcs: ["src/main.rs"],
     // LINT.IfChange
     rustlibs: [
-        "libanyhow",
         "libcodespan_reporting",
         "libpest",
         "libproc_macro2",
@@ -77,8 +76,8 @@ rust_test_host {
     ],
 }
 
-// Generate the python parser+serializer backend for the
-// test grammar located at tests/grammars/test-grammar.pdl.
+// Generate the python parser+serializer backend for the test file
+// located at tests/examples/complex.pdl.
 genrule {
     name: "pdl_python_generator_test_gen",
     cmd: "$(location :pdl) $(in) |" +
@@ -92,7 +91,7 @@ genrule {
         "tests/custom_types.py",
     ],
     srcs: [
-        "tests/grammars/test-grammar.pdl",
+        "tests/examples/complex.pdl",
     ],
     out: [
         "pdl_test.py",
