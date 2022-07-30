@@ -477,10 +477,16 @@ public class AdapterService extends Service {
     private final AdapterServiceHandler mHandler = new AdapterServiceHandler();
 
     @Override
-    @RequiresPermission(value = android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+    @RequiresPermission(
+            allOf = {
+                android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                android.Manifest.permission.READ_DEVICE_CONFIG,
+            },
             anyOf = {
+                android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                android.Manifest.permission.INTERACT_ACROSS_USERS,
                 android.Manifest.permission.CREATE_USERS,
-                android.Manifest.permission.MANAGE_USERS
+                android.Manifest.permission.MANAGE_USERS,
     })
     public void onCreate() {
         super.onCreate();
@@ -3887,9 +3893,17 @@ public class AdapterService extends Service {
                 receiver.propagateException(e);
             }
         }
+        @RequiresPermission(allOf = {
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.BLUETOOTH_PRIVILEGED,
+        })
         private boolean allowLowLatencyAudio(boolean allowed, BluetoothDevice device) {
             AdapterService service = getService();
-            if (service == null) {
+            if (service == null
+                    || !Utils.checkCallerIsSystemOrActiveUser(TAG)
+                    || !Utils.checkConnectPermissionForDataDelivery(
+                            service, Utils.getCallingAttributionSource(service),
+                                "AdapterService allowLowLatencyAudio")) {
                 return false;
             }
             enforceBluetoothPrivilegedPermission(service);
@@ -3905,12 +3919,24 @@ public class AdapterService extends Service {
                 receiver.propagateException(e);
             }
         }
-        public int startRfcommListener(
+        @RequiresPermission(allOf = {
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.BLUETOOTH_PRIVILEGED,
+        })
+        private int startRfcommListener(
                 String name,
                 ParcelUuid uuid,
                 PendingIntent pendingIntent,
                 AttributionSource attributionSource) {
-            return mService.startRfcommListener(name, uuid, pendingIntent, attributionSource);
+            AdapterService service = getService();
+            if (service == null
+                    || !Utils.checkCallerIsSystemOrActiveUser(TAG)
+                    || !Utils.checkConnectPermissionForDataDelivery(
+                            service, attributionSource, "AdapterService startRfcommListener")) {
+                return BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ALLOWED;
+            }
+            enforceBluetoothPrivilegedPermission(service);
+            return service.startRfcommListener(name, uuid, pendingIntent, attributionSource);
         }
 
         @Override
@@ -3922,8 +3948,20 @@ public class AdapterService extends Service {
                 receiver.propagateException(e);
             }
         }
-        public int stopRfcommListener(ParcelUuid uuid, AttributionSource attributionSource) {
-            return mService.stopRfcommListener(uuid, attributionSource);
+        @RequiresPermission(allOf = {
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.BLUETOOTH_PRIVILEGED,
+        })
+        private int stopRfcommListener(ParcelUuid uuid, AttributionSource attributionSource) {
+            AdapterService service = getService();
+            if (service == null
+                    || !Utils.checkCallerIsSystemOrActiveUser(TAG)
+                    || !Utils.checkConnectPermissionForDataDelivery(
+                            service, attributionSource, "AdapterService stopRfcommListener")) {
+                return BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ALLOWED;
+            }
+            enforceBluetoothPrivilegedPermission(service);
+            return service.stopRfcommListener(uuid, attributionSource);
         }
 
         @Override
@@ -3935,9 +3973,22 @@ public class AdapterService extends Service {
                 receiver.propagateException(e);
             }
         }
-        public IncomingRfcommSocketInfo retrievePendingSocketForServiceRecord(
+        @RequiresPermission(allOf = {
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.BLUETOOTH_PRIVILEGED,
+        })
+        private IncomingRfcommSocketInfo retrievePendingSocketForServiceRecord(
                 ParcelUuid uuid, AttributionSource attributionSource) {
-            return mService.retrievePendingSocketForServiceRecord(uuid, attributionSource);
+            AdapterService service = getService();
+            if (service == null
+                    || !Utils.checkCallerIsSystemOrActiveUser(TAG)
+                    || !Utils.checkConnectPermissionForDataDelivery(
+                            service, attributionSource,
+                            "AdapterService retrievePendingSocketForServiceRecord")) {
+                return null;
+            }
+            enforceBluetoothPrivilegedPermission(service);
+            return service.retrievePendingSocketForServiceRecord(uuid, attributionSource);
         }
     }
 
@@ -4085,7 +4136,7 @@ public class AdapterService extends Service {
         }
     }
 
-    private class CallerInfo {
+    private static class CallerInfo {
         public String callerPackageName;
         public UserHandle user;
     }
@@ -4641,7 +4692,7 @@ public class AdapterService extends Service {
      * Get UUIDs for service supported by a remote device
      *
      * @param device the remote device that we want to get UUIDs from
-     * @return
+     * @return the uuids of the remote device
      */
     @VisibleForTesting
     public ParcelUuid[] getRemoteUuids(BluetoothDevice device) {
@@ -4660,7 +4711,7 @@ public class AdapterService extends Service {
      * Converts HCI disconnect reasons to Android disconnect reasons.
      * <p>
      * The HCI Error Codes used for ACL disconnect reasons propagated up from native code were
-     * copied from: {@link system/bt/stack/include/hci_error_code.h}.
+     * copied from: packages/modules/Bluetooth/system/stack/include/hci_error_code.h
      * <p>
      * These error codes are specified and described in Bluetooth Core Spec v5.1, Vol 2, Part D.
      *
@@ -4869,11 +4920,15 @@ public class AdapterService extends Service {
         readEnergyInfo();
 
         synchronized (mEnergyInfoLock) {
-            try {
-                mEnergyInfoLock.wait(CONTROLLER_ENERGY_UPDATE_TIMEOUT_MILLIS);
-            } catch (InterruptedException e) {
-                // Just continue, the energy data may be stale but we won't miss anything next time
-                // we query.
+            long now = System.currentTimeMillis();
+            final long deadline = now + CONTROLLER_ENERGY_UPDATE_TIMEOUT_MILLIS;
+            while (now < deadline) {
+                try {
+                    mEnergyInfoLock.wait(deadline - now);
+                    break;
+                } catch (InterruptedException e) {
+                    now = System.currentTimeMillis();
+                }
             }
 
             final BluetoothActivityEnergyInfo info =
@@ -4950,6 +5005,7 @@ public class AdapterService extends Service {
     // This function is called from JNI. It allows native code to set a single wake
     // alarm. If an alarm is already pending and a new request comes in, the alarm
     // will be rescheduled (i.e. the previously set alarm will be cancelled).
+    @RequiresPermission(android.Manifest.permission.SCHEDULE_EXACT_ALARM)
     private boolean setWakeAlarm(long delayMillis, boolean shouldWake) {
         synchronized (this) {
             if (mPendingAlarm != null) {
@@ -5258,6 +5314,7 @@ public class AdapterService extends Service {
             "INIT_logging_debug_disabled_for_tags";
     private static final String BTAA_HCI_LOG_FLAG = "INIT_btaa_hci";
 
+    @RequiresPermission(android.Manifest.permission.READ_DEVICE_CONFIG)
     private String[] getInitFlags() {
         ArrayList<String> initFlags = new ArrayList<>();
         if (DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_BLUETOOTH, GD_CORE_FLAG, false)) {
@@ -5485,6 +5542,7 @@ public class AdapterService extends Service {
         private static final long DEFAULT_SCAN_TIMEOUT_MILLIS = 30 * MINUTE_IN_MILLIS;
         private static final int DEFAULT_SCAN_UPGRADE_DURATION_MILLIS = (int) SECOND_IN_MILLIS * 6;
 
+        @RequiresPermission(android.Manifest.permission.READ_DEVICE_CONFIG)
         public void start() {
             DeviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_BLUETOOTH,
                     BackgroundThread.getExecutor(), this);

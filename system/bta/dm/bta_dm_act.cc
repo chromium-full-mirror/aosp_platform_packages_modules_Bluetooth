@@ -873,11 +873,9 @@ void bta_dm_search_start(tBTA_DM_MSG* p_data) {
  ******************************************************************************/
 void bta_dm_search_cancel() {
   if (BTM_IsInquiryActive()) {
-    LOG_DEBUG("Cancelling search with inquiry active");
-    BTM_CancelInquiryNotifyWhenComplete([]() {
-      bta_dm_search_cancel_notify();
-      bta_dm_search_cmpl();
-    });
+    BTM_CancelInquiry();
+    bta_dm_search_cancel_notify();
+    bta_dm_search_cmpl();
   }
   /* If no Service Search going on then issue cancel remote name in case it is
      active */
@@ -1469,11 +1467,6 @@ void bta_dm_queue_disc(tBTA_DM_MSG* p_data) {
  ******************************************************************************/
 void bta_dm_execute_queued_request() {
   if (bta_dm_search_cb.p_pending_search) {
-    // Updated queued event to search event to trigger start search
-    if (bta_dm_search_cb.p_pending_search->hdr.event ==
-        BTA_DM_API_QUEUE_SEARCH_EVT) {
-      bta_dm_search_cb.p_pending_search->hdr.event = BTA_DM_API_SEARCH_EVT;
-    }
     LOG_INFO("%s Start pending search", __func__);
     bta_sys_sendmsg(bta_dm_search_cb.p_pending_search);
     bta_dm_search_cb.p_pending_search = NULL;
@@ -1481,9 +1474,6 @@ void bta_dm_execute_queued_request() {
     tBTA_DM_MSG* p_pending_discovery = (tBTA_DM_MSG*)fixed_queue_try_dequeue(
         bta_dm_search_cb.pending_discovery_queue);
     if (p_pending_discovery) {
-      if (p_pending_discovery->hdr.event == BTA_DM_API_QUEUE_DISCOVER_EVT) {
-        p_pending_discovery->hdr.event = BTA_DM_API_DISCOVER_EVT;
-      }
       LOG_INFO("%s Start pending discovery", __func__);
       bta_sys_sendmsg(p_pending_discovery);
     }
@@ -1887,10 +1877,10 @@ static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
 
   APPL_TRACE_DEBUG("%s name=<%s>", __func__, bd_name);
 
-  rem_name.bd_addr = bd_addr;
 
   /* if this is what we are looking for */
   if (bta_dm_search_cb.peer_bdaddr == bd_addr) {
+    rem_name.bd_addr = bd_addr;
     rem_name.length = strlcpy((char*)rem_name.remote_bd_name, (char*)bd_name,
                               BD_NAME_LEN + 1);
     if (rem_name.length > BD_NAME_LEN) {
@@ -1912,6 +1902,9 @@ static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
       APPL_TRACE_WARNING("%s: BTM_ReadRemoteDeviceName returns 0x%02X",
                          __func__, btm_status);
 
+      // needed so our response is not ignored, since this corresponds to the
+      // actual peer_bdaddr
+      rem_name.bd_addr = bta_dm_search_cb.peer_bdaddr;
       rem_name.length = 0;
       rem_name.remote_bd_name[0] = 0;
       rem_name.status = btm_status;
@@ -1934,11 +1927,6 @@ static void bta_dm_remname_cback(void* p) {
   APPL_TRACE_DEBUG("bta_dm_remname_cback len = %d name=<%s>",
                    p_remote_name->length, p_remote_name->remote_bd_name);
 
-  /* remote name discovery is done but it could be failed */
-  bta_dm_search_cb.name_discover_done = true;
-  strlcpy((char*)bta_dm_search_cb.peer_name,
-          (char*)p_remote_name->remote_bd_name, BD_NAME_LEN + 1);
-
   if (bta_dm_search_cb.peer_bdaddr == p_remote_name->bd_addr) {
     if (bluetooth::shim::is_gd_security_enabled()) {
       bluetooth::shim::BTM_SecDeleteRmtNameNotifyCallback(
@@ -1946,7 +1934,18 @@ static void bta_dm_remname_cback(void* p) {
     } else {
       BTM_SecDeleteRmtNameNotifyCallback(&bta_dm_service_search_remname_cback);
     }
+  } else {
+    // if we got a different response, ignore it
+    // we will have made a request directly from BTM_ReadRemoteDeviceName so we
+    // expect a dedicated response for us
+    LOG_INFO("ignoring remote name response in DM callback since it's for the wrong bd_addr");
+    return;
   }
+
+  /* remote name discovery is done but it could be failed */
+  bta_dm_search_cb.name_discover_done = true;
+  strlcpy((char*)bta_dm_search_cb.peer_name,
+          (char*)p_remote_name->remote_bd_name, BD_NAME_LEN + 1);
 
   if (bta_dm_search_cb.transport == BT_TRANSPORT_LE) {
     GAP_BleReadPeerPrefConnParams(bta_dm_search_cb.peer_bdaddr);
