@@ -40,6 +40,7 @@
 #include "gd/common/strings.h"
 #include "le_audio_set_configuration_provider.h"
 #include "le_audio_types.h"
+#include "metrics_collector.h"
 #include "osi/include/log.h"
 #include "osi/include/osi.h"
 #include "osi/include/properties.h"
@@ -138,6 +139,72 @@ std::ostream& operator<<(std::ostream& os, const AudioState& audio_state) {
       break;
   }
   return os;
+}
+
+static std::string usageToString(audio_usage_t usage) {
+  switch (usage) {
+    case AUDIO_USAGE_UNKNOWN:
+      return "USAGE_UNKNOWN";
+    case AUDIO_USAGE_MEDIA:
+      return "USAGE_MEDIA";
+    case AUDIO_USAGE_VOICE_COMMUNICATION:
+      return "USAGE_VOICE_COMMUNICATION";
+    case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
+      return "USAGE_VOICE_COMMUNICATION_SIGNALLING";
+    case AUDIO_USAGE_ALARM:
+      return "USAGE_ALARM";
+    case AUDIO_USAGE_NOTIFICATION:
+      return "USAGE_NOTIFICATION";
+    case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
+      return "USAGE_NOTIFICATION_TELEPHONY_RINGTONE";
+    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
+      return "USAGE_NOTIFICATION_COMMUNICATION_REQUEST";
+    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
+      return "USAGE_NOTIFICATION_COMMUNICATION_INSTANT";
+    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
+      return "USAGE_NOTIFICATION_COMMUNICATION_DELAYED";
+    case AUDIO_USAGE_NOTIFICATION_EVENT:
+      return "USAGE_NOTIFICATION_EVENT";
+    case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
+      return "USAGE_ASSISTANCE_ACCESSIBILITY";
+    case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
+      return "USAGE_ASSISTANCE_NAVIGATION_GUIDANCE";
+    case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
+      return "USAGE_ASSISTANCE_SONIFICATION";
+    case AUDIO_USAGE_GAME:
+      return "USAGE_GAME";
+    case AUDIO_USAGE_ASSISTANT:
+      return "USAGE_ASSISTANT";
+    case AUDIO_USAGE_CALL_ASSISTANT:
+      return "USAGE_CALL_ASSISTANT";
+    case AUDIO_USAGE_EMERGENCY:
+      return "USAGE_EMERGENCY";
+    case AUDIO_USAGE_SAFETY:
+      return "USAGE_SAFETY";
+    case AUDIO_USAGE_VEHICLE_STATUS:
+      return "USAGE_VEHICLE_STATUS";
+    case AUDIO_USAGE_ANNOUNCEMENT:
+      return "USAGE_ANNOUNCEMENT";
+    default:
+      return "unknown usage ";
+  }
+}
+
+static std::string contentTypeToString(audio_content_type_t content_type) {
+  switch (content_type) {
+    case AUDIO_CONTENT_TYPE_UNKNOWN:
+      return "CONTENT_TYPE_UNKNOWN";
+    case AUDIO_CONTENT_TYPE_SPEECH:
+      return "CONTENT_TYPE_SPEECH";
+    case AUDIO_CONTENT_TYPE_MUSIC:
+      return "CONTENT_TYPE_MUSIC";
+    case AUDIO_CONTENT_TYPE_MOVIE:
+      return "CONTENT_TYPE_MOVIE";
+    case AUDIO_CONTENT_TYPE_SONIFICATION:
+      return "CONTENT_TYPE_SONIFICATION";
+    default:
+      return "unknown content type ";
+  }
 }
 
 namespace {
@@ -914,6 +981,10 @@ class LeAudioClientImpl : public LeAudioClient {
       leAudioDevices_.Add(address, true);
     } else {
       leAudioDevice->connecting_actively_ = true;
+
+      le_audio::MetricsCollector::Get()->OnConnectionStateChanged(
+          leAudioDevice->group_id_, address, ConnectionState::CONNECTING,
+          le_audio::ConnectionStatus::SUCCESS);
     }
 
     BTA_GATTC_Open(gatt_if_, address, true, false);
@@ -1308,6 +1379,9 @@ class LeAudioClientImpl : public LeAudioClient {
       LOG(ERROR) << "Failed to connect to LeAudio leAudioDevice, status: "
                  << +status;
       callbacks_->OnConnectionState(ConnectionState::DISCONNECTED, address);
+      le_audio::MetricsCollector::Get()->OnConnectionStateChanged(
+          leAudioDevice->group_id_, address, ConnectionState::CONNECTED,
+          le_audio::ConnectionStatus::FAILED);
       return;
     }
 
@@ -1354,6 +1428,9 @@ class LeAudioClientImpl : public LeAudioClient {
     }
 
     LOG(ERROR) << __func__ << " Encryption error";
+    le_audio::MetricsCollector::Get()->OnConnectionStateChanged(
+        leAudioDevice->group_id_, address, ConnectionState::CONNECTED,
+        le_audio::ConnectionStatus::FAILED);
   }
 
   void RegisterKnownNotifications(LeAudioDevice* leAudioDevice) {
@@ -1409,6 +1486,9 @@ class LeAudioClientImpl : public LeAudioClient {
       BTA_GATTC_Close(leAudioDevice->conn_id_);
       if (leAudioDevice->connecting_actively_) {
         callbacks_->OnConnectionState(ConnectionState::DISCONNECTED, address);
+        le_audio::MetricsCollector::Get()->OnConnectionStateChanged(
+            leAudioDevice->group_id_, address, ConnectionState::CONNECTED,
+            le_audio::ConnectionStatus::FAILED);
       }
       return;
     }
@@ -1456,6 +1536,10 @@ class LeAudioClientImpl : public LeAudioClient {
     leAudioDevice->conn_id_ = GATT_INVALID_CONN_ID;
     leAudioDevice->closing_stream_for_disconnection_ = false;
     leAudioDevice->encrypted_ = false;
+
+    le_audio::MetricsCollector::Get()->OnConnectionStateChanged(
+        leAudioDevice->group_id_, address, ConnectionState::DISCONNECTED,
+        le_audio::ConnectionStatus::SUCCESS);
 
     if (leAudioDevice->removing_device_) {
       if (leAudioDevice->group_id_ != bluetooth::groups::kGroupUnknown) {
@@ -2032,6 +2116,9 @@ class LeAudioClientImpl : public LeAudioClient {
       btif_storage_set_leaudio_autoconnect(leAudioDevice->address_, true);
       leAudioDevice->first_connection_ = false;
     }
+    le_audio::MetricsCollector::Get()->OnConnectionStateChanged(
+        leAudioDevice->group_id_, leAudioDevice->address_,
+        ConnectionState::CONNECTED, le_audio::ConnectionStatus::SUCCESS);
   }
 
   bool IsAseAcceptingAudioData(struct ase* ase) {
@@ -2888,8 +2975,10 @@ class LeAudioClientImpl : public LeAudioClient {
 
     /* Last suspends group - triggers group stop */
     if ((audio_receiver_state_ == AudioState::IDLE) ||
-        (audio_receiver_state_ == AudioState::READY_TO_RELEASE))
+        (audio_receiver_state_ == AudioState::READY_TO_RELEASE)) {
       OnAudioSuspend();
+      le_audio::MetricsCollector::Get()->OnStreamEnded(active_group_id_);
+    }
 
     DLOG(INFO) << __func__
                << " OUT: audio_receiver_state_: " << audio_receiver_state_
@@ -2987,6 +3076,8 @@ class LeAudioClientImpl : public LeAudioClient {
             if (alarm_is_scheduled(suspend_timeout_))
               alarm_cancel(suspend_timeout_);
             leAudioClientAudioSource->ConfirmStreamingRequest();
+            le_audio::MetricsCollector::Get()->OnStreamStarted(
+                active_group_id_, current_context_type_);
             break;
           case AudioState::RELEASING:
             /* Keep wainting. After release is done, Audio Hal will be notified
@@ -3193,6 +3284,10 @@ class LeAudioClientImpl : public LeAudioClient {
       return LeAudioContextType::CONVERSATIONAL;
 
     iter = find(available_contents.begin(), available_contents.end(),
+                LeAudioContextType::RINGTONE);
+    if (iter != available_contents.end()) return LeAudioContextType::RINGTONE;
+
+    iter = find(available_contents.begin(), available_contents.end(),
                 LeAudioContextType::GAME);
     if (iter != available_contents.end()) return LeAudioContextType::GAME;
 
@@ -3264,8 +3359,10 @@ class LeAudioClientImpl : public LeAudioClient {
         continue;
       }
 
-      LOG_INFO("%s: usage=%d, content_type=%d, gain=%f", __func__,
-               tracks->usage, tracks->content_type, tracks->gain);
+      LOG_INFO("%s: usage=%s(%d), content_type=%s(%d), gain=%f", __func__,
+               usageToString(tracks->usage).c_str(), tracks->usage,
+               contentTypeToString(tracks->content_type).c_str(),
+               tracks->content_type, tracks->gain);
 
       auto new_context =
           AudioContentToLeAudioContext(tracks->content_type, tracks->usage);
@@ -3558,6 +3655,8 @@ class LeAudioClientImpl : public LeAudioClient {
 
         stream_setup_end_timestamp_ =
             bluetooth::common::time_get_os_boottime_us();
+        le_audio::MetricsCollector::Get()->OnStreamStarted(
+            active_group_id_, current_context_type_);
         break;
       case GroupStreamStatus::SUSPENDED:
         stream_setup_end_timestamp_ = 0;
@@ -3688,6 +3787,7 @@ class LeAudioClientImpl : public LeAudioClient {
       leAudioClientAudioSink->Release(audio_sink_instance_);
       audio_sink_instance_ = nullptr;
     }
+    le_audio::MetricsCollector::Get()->OnStreamEnded(active_group_id_);
   }
 };
 
@@ -3977,6 +4077,7 @@ void LeAudioClient::Cleanup(base::Callback<void()> cleanupCb) {
   ContentControlIdKeeper::GetInstance()->Stop();
   LeAudioGroupStateMachine::Cleanup();
   IsoManager::GetInstance()->Stop();
+  le_audio::MetricsCollector::Get()->Flush();
 }
 
 void LeAudioClient::InitializeAudioClients(
