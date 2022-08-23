@@ -7,7 +7,7 @@ use bt_topshim::profiles::gatt::GattStatus;
 use bt_topshim::profiles::socket::SocketType;
 
 use btstack::bluetooth::{
-    BluetoothDevice, IBluetooth, IBluetoothCallback, IBluetoothConnectionCallback,
+    BluetoothDevice, IBluetooth, IBluetoothCallback, IBluetoothConnectionCallback, IBluetoothQA,
 };
 use btstack::bluetooth_gatt::{
     BluetoothGattCharacteristic, BluetoothGattDescriptor, BluetoothGattService,
@@ -127,22 +127,7 @@ pub struct BluetoothDeviceDBus {
 
 struct IBluetoothCallbackDBus {}
 
-impl RPCProxy for IBluetoothCallbackDBus {
-    // Dummy implementations just to satisfy impl RPCProxy requirements.
-    fn register_disconnect(&mut self, _f: Box<dyn Fn(u32) + Send>) -> u32 {
-        0
-    }
-
-    fn get_object_id(&self) -> String {
-        String::from("")
-    }
-
-    fn unregister(&mut self, _id: u32) -> bool {
-        false
-    }
-
-    fn export_for_rpc(self: Box<Self>) {}
-}
+impl RPCProxy for IBluetoothCallbackDBus {}
 
 #[generate_dbus_exporter(
     export_bluetooth_callback_dbus_intf,
@@ -186,22 +171,7 @@ impl IBluetoothCallback for IBluetoothCallbackDBus {
 
 struct IBluetoothConnectionCallbackDBus {}
 
-impl RPCProxy for IBluetoothConnectionCallbackDBus {
-    // Dummy implementations just to satisfy impl RPCProxy requirements.
-    fn register_disconnect(&mut self, _f: Box<dyn Fn(u32) + Send>) -> u32 {
-        0
-    }
-
-    fn get_object_id(&self) -> String {
-        String::from("")
-    }
-
-    fn unregister(&mut self, _id: u32) -> bool {
-        false
-    }
-
-    fn export_for_rpc(self: Box<Self>) {}
-}
+impl RPCProxy for IBluetoothConnectionCallbackDBus {}
 
 #[generate_dbus_exporter(
     export_bluetooth_connection_callback_dbus_intf,
@@ -217,18 +187,7 @@ impl IBluetoothConnectionCallback for IBluetoothConnectionCallbackDBus {
 
 struct IScannerCallbackDBus {}
 
-impl RPCProxy for IScannerCallbackDBus {
-    fn register_disconnect(&mut self, _f: Box<dyn Fn(u32) + Send>) -> u32 {
-        0
-    }
-    fn get_object_id(&self) -> String {
-        String::from("")
-    }
-    fn unregister(&mut self, _id: u32) -> bool {
-        false
-    }
-    fn export_for_rpc(self: Box<Self>) {}
-}
+impl RPCProxy for IScannerCallbackDBus {}
 
 #[generate_dbus_exporter(
     export_scanner_callback_dbus_intf,
@@ -474,6 +433,36 @@ impl IBluetooth for BluetoothDBus {
     }
 }
 
+pub(crate) struct BluetoothQADBus {
+    client_proxy: ClientDBusProxy,
+}
+
+impl BluetoothQADBus {
+    pub(crate) fn new(conn: Arc<SyncConnection>, index: i32) -> BluetoothQADBus {
+        BluetoothQADBus {
+            client_proxy: ClientDBusProxy::new(
+                conn.clone(),
+                String::from("org.chromium.bluetooth"),
+                make_object_path(index, "adapter"),
+                String::from("org.chromium.bluetooth.BluetoothQA"),
+            ),
+        }
+    }
+}
+
+#[generate_dbus_interface_client]
+impl IBluetoothQA for BluetoothQADBus {
+    #[dbus_method("GetConnectable")]
+    fn get_connectable(&self) -> bool {
+        dbus_generated!()
+    }
+
+    #[dbus_method("SetConnectable")]
+    fn set_connectable(&mut self, mode: bool) -> bool {
+        dbus_generated!()
+    }
+}
+
 #[dbus_propmap(AdapterWithEnabled)]
 pub struct AdapterWithEnabledDbus {
     hci_interface: i32,
@@ -554,22 +543,7 @@ impl IBluetoothManager for BluetoothManagerDBus {
 
 struct IBluetoothManagerCallbackDBus {}
 
-impl RPCProxy for IBluetoothManagerCallbackDBus {
-    // Placeholder implementations just to satisfy impl RPCProxy requirements.
-    fn register_disconnect(&mut self, _f: Box<dyn Fn(u32) + Send>) -> u32 {
-        0
-    }
-
-    fn get_object_id(&self) -> String {
-        String::from("")
-    }
-
-    fn unregister(&mut self, _id: u32) -> bool {
-        false
-    }
-
-    fn export_for_rpc(self: Box<Self>) {}
-}
+impl RPCProxy for IBluetoothManagerCallbackDBus {}
 
 #[generate_dbus_exporter(
     export_bluetooth_manager_callback_dbus_intf,
@@ -1023,22 +997,7 @@ impl IBluetoothGatt for BluetoothGattDBus {
 
 struct IBluetoothGattCallbackDBus {}
 
-impl RPCProxy for IBluetoothGattCallbackDBus {
-    // Placeholder implementations just to satisfy impl RPCProxy requirements.
-    fn register_disconnect(&mut self, _f: Box<dyn Fn(u32) + Send>) -> u32 {
-        0
-    }
-
-    fn get_object_id(&self) -> String {
-        String::from("")
-    }
-
-    fn unregister(&mut self, _id: u32) -> bool {
-        false
-    }
-
-    fn export_for_rpc(self: Box<Self>) {}
-}
+impl RPCProxy for IBluetoothGattCallbackDBus {}
 
 #[generate_dbus_exporter(
     export_bluetooth_gatt_callback_dbus_intf,
@@ -1246,19 +1205,7 @@ impl IBluetoothSocketManager for BluetoothSocketManagerDBus {
 
 struct IBluetoothSocketManagerCallbacksDBus {}
 
-impl RPCProxy for IBluetoothSocketManagerCallbacksDBus {
-    // Placeholder implementations just to satisfy impl RPCProxy requirements.
-    fn register_disconnect(&mut self, _f: Box<dyn Fn(u32) + Send>) -> u32 {
-        0
-    }
-    fn get_object_id(&self) -> String {
-        String::from("")
-    }
-    fn unregister(&mut self, _id: u32) -> bool {
-        false
-    }
-    fn export_for_rpc(self: Box<Self>) {}
-}
+impl RPCProxy for IBluetoothSocketManagerCallbacksDBus {}
 
 #[generate_dbus_exporter(export_socket_callback_dbus_intf, "org.chromium.bluetooth.SocketCallback")]
 impl IBluetoothSocketManagerCallbacks for IBluetoothSocketManagerCallbacksDBus {
@@ -1334,22 +1281,7 @@ impl ISuspend for SuspendDBus {
 
 struct ISuspendCallbackDBus {}
 
-impl RPCProxy for ISuspendCallbackDBus {
-    // Placeholder implementations just to satisfy impl RPCProxy requirements.
-    fn register_disconnect(&mut self, _f: Box<dyn Fn(u32) + Send>) -> u32 {
-        0
-    }
-
-    fn get_object_id(&self) -> String {
-        String::from("")
-    }
-
-    fn unregister(&mut self, _id: u32) -> bool {
-        false
-    }
-
-    fn export_for_rpc(self: Box<Self>) {}
-}
+impl RPCProxy for ISuspendCallbackDBus {}
 
 #[generate_dbus_exporter(
     export_suspend_callback_dbus_intf,
