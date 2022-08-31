@@ -53,8 +53,8 @@ pub trait ISuspendCallback: RPCProxy {
 #[derive(FromPrimitive, ToPrimitive)]
 #[repr(u32)]
 pub enum SuspendType {
-    Disconnected,
-    Connected,
+    NoWakesAllowed,
+    AllowWakeFromHid,
     Other,
 }
 
@@ -128,12 +128,12 @@ impl ISuspend for Suspend {
         // Handle wakeful cases (Connected/Other)
         // Treat Other the same as Connected
         match suspend_type {
-            SuspendType::Connected => {
+            SuspendType::AllowWakeFromHid => {
                 // TODO(231345733): API For allowing classic HID only
                 // TODO(230604670): check if A2DP is connected
                 // TODO(224603198): save all advertiser information
             }
-            SuspendType::Disconnected => {
+            SuspendType::NoWakesAllowed => {
                 self.intf.lock().unwrap().clear_event_filter();
                 self.intf.lock().unwrap().clear_event_mask();
             }
@@ -158,8 +158,8 @@ impl ISuspend for Suspend {
 
     fn resume(&self) -> bool {
         self.intf.lock().unwrap().set_default_event_mask();
-        //        self.intf.lock().unwrap().set_event_filter_inquiry_result_all_devices();
-        //        self.intf.lock().unwrap().set_event_filter_connection_setup_all_devices();
+        self.intf.lock().unwrap().set_event_filter_inquiry_result_all_devices();
+        self.intf.lock().unwrap().set_event_filter_connection_setup_all_devices();
         if self.is_connected_suspend {
             if self.was_a2dp_connected {
                 // TODO(230604670): self.intf.lock().unwrap().restore_filter_accept_list();

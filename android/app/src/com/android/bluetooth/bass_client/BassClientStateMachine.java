@@ -185,6 +185,7 @@ public class BassClientStateMachine extends StateMachine {
     private boolean mForceSB = false;
     private int mBroadcastSourceIdLength = 3;
     private byte mNextSourceId = 0;
+    private boolean mAllowReconnect = false;
 
     BluetoothGatt mBluetoothGatt = null;
     BluetoothGattCallback mGattCallback = null;
@@ -772,9 +773,11 @@ public class BassClientStateMachine extends StateMachine {
         log("processBroadcastReceiverState: characteristic:" + characteristic);
         BluetoothLeBroadcastReceiveState recvState = parseBroadcastReceiverState(
                 receiverState);
-        if (recvState == null || recvState.getSourceId() == -1) {
-            log("Null recvState or processBroadcastReceiverState: invalid index: "
-                    + recvState.getSourceId());
+        if (recvState == null) {
+            log("processBroadcastReceiverState: Null recvState");
+            return;
+        } else if (recvState.getSourceId() == -1) {
+            log("processBroadcastReceiverState: invalid index: " + recvState.getSourceId());
             return;
         }
         BluetoothLeBroadcastReceiveState oldRecvState =
@@ -1078,7 +1081,7 @@ public class BassClientStateMachine extends StateMachine {
                         mDevice, mLastConnectionState, BluetoothProfile.STATE_DISCONNECTED);
                 if (mLastConnectionState != BluetoothProfile.STATE_DISCONNECTED) {
                     // Reconnect in background if not disallowed by the service
-                    if (mService.okToConnect(mDevice)) {
+                    if (mService.okToConnect(mDevice) && mAllowReconnect) {
                         connectGatt(false);
                     }
                 }
@@ -1105,6 +1108,7 @@ public class BassClientStateMachine extends StateMachine {
                         mBluetoothGatt.close();
                         mBluetoothGatt = null;
                     }
+                    mAllowReconnect = true;
                     if (connectGatt(mIsAllowedList)) {
                         transitionTo(mConnecting);
                     } else {
@@ -1113,6 +1117,7 @@ public class BassClientStateMachine extends StateMachine {
                     break;
                 case DISCONNECT:
                     // Disconnect if there's an ongoing background connection
+                    mAllowReconnect = false;
                     if (mBluetoothGatt != null) {
                         log("Cancelling the background connection to " + mDevice);
                         mBluetoothGatt.disconnect();
@@ -1471,6 +1476,7 @@ public class BassClientStateMachine extends StateMachine {
                     break;
                 case DISCONNECT:
                     log("Disconnecting from " + mDevice);
+                    mAllowReconnect = false;
                     if (mBluetoothGatt != null) {
                         mBluetoothGatt.disconnect();
                         mBluetoothGatt.close();
@@ -1733,6 +1739,7 @@ public class BassClientStateMachine extends StateMachine {
                     break;
                 case DISCONNECT:
                     Log.w(TAG, "DISCONNECT requested!: " + mDevice);
+                    mAllowReconnect = false;
                     if (mBluetoothGatt != null) {
                         mBluetoothGatt.disconnect();
                         mBluetoothGatt.close();
