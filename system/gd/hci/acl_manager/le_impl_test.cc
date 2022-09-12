@@ -390,7 +390,8 @@ class MockLeConnectionCallbacks : public LeConnectionCallbacks {
       OnLeConnectSuccess,
       (AddressWithType address_with_type, std::unique_ptr<LeAclConnection> connection),
       (override));
-  MOCK_METHOD(void, OnLeConnectFail, (AddressWithType address_with_type, ErrorCode reason), (override));
+  MOCK_METHOD(
+      void, OnLeConnectFail, (AddressWithType address_with_type, ErrorCode reason, bool locally_initiated), (override));
 };
 
 class MockLeConnectionManagementCallbacks : public LeConnectionManagementCallbacks {
@@ -1398,6 +1399,97 @@ TEST_F(LeImplWithConnectionTest, on_le_event__REMOTE_CONNECTION_PARAMETER_REQUES
   ASSERT_EQ(kIntervalMax, view.GetIntervalMax());
   ASSERT_EQ(kLatency, view.GetLatency());
   ASSERT_EQ(kTimeout, view.GetTimeout());
+}
+
+TEST_F(LeImplRegisteredWithAddressManagerTest, clear_resolving_list) {
+  le_impl_->clear_resolving_list();
+  ASSERT_EQ(3UL, le_impl_->le_address_manager_->NumberCachedCommands());
+
+  sync_handler();  // Allow |LeAddressManager::pause_registered_clients| to complete
+  sync_handler();  // Allow |LeAddressManager::handle_next_command| to complete
+
+  ASSERT_EQ(1UL, hci_layer_->NumberOfQueuedCommands());
+  {
+    auto view = CreateLeSecurityCommandView<LeSetAddressResolutionEnableView>(hci_layer_->DequeueCommandBytes());
+    ASSERT_TRUE(view.IsValid());
+    ASSERT_EQ(Enable::DISABLED, view.GetAddressResolutionEnable());
+    le_impl_->le_address_manager_->OnCommandComplete(
+        ReturnCommandComplete(OpCode::LE_SET_ADDRESS_RESOLUTION_ENABLE, ErrorCode::SUCCESS));
+  }
+
+  sync_handler();  // Allow |LeAddressManager::check_cached_commands| to complete
+  ASSERT_EQ(1UL, hci_layer_->NumberOfQueuedCommands());
+  {
+    auto view = CreateLeSecurityCommandView<LeClearResolvingListView>(hci_layer_->DequeueCommandBytes());
+    ASSERT_TRUE(view.IsValid());
+    le_impl_->le_address_manager_->OnCommandComplete(
+        ReturnCommandComplete(OpCode::LE_CLEAR_RESOLVING_LIST, ErrorCode::SUCCESS));
+  }
+
+  sync_handler();  // Allow |LeAddressManager::handle_next_command| to complete
+  ASSERT_EQ(1UL, hci_layer_->NumberOfQueuedCommands());
+  {
+    auto view = CreateLeSecurityCommandView<LeSetAddressResolutionEnableView>(hci_layer_->DequeueCommandBytes());
+    ASSERT_TRUE(view.IsValid());
+    ASSERT_EQ(Enable::ENABLED, view.GetAddressResolutionEnable());
+    le_impl_->le_address_manager_->OnCommandComplete(
+        ReturnCommandComplete(OpCode::LE_SET_ADDRESS_RESOLUTION_ENABLE, ErrorCode::SUCCESS));
+  }
+  ASSERT_TRUE(hci_layer_->IsPacketQueueEmpty());
+}
+
+TEST_F(LeImplWithConnectionTest, HACK_get_handle) {
+  sync_handler();
+
+  ASSERT_EQ(kHciHandle, le_impl_->HACK_get_handle(remote_address_));
+}
+
+TEST_F(LeImplTest, on_le_connection_canceled_on_pause) {
+  set_random_device_address_policy();
+  le_impl_->pause_connection = true;
+  le_impl_->on_le_connection_canceled_on_pause();
+  ASSERT_TRUE(le_impl_->arm_on_resume_);
+  ASSERT_EQ(ConnectabilityState::DISARMED, le_impl_->connectability_state_);
+}
+
+TEST_F(LeImplTest, on_create_connection_timeout) {
+  EXPECT_CALL(mock_le_connection_callbacks_, OnLeConnectFail(_, ErrorCode::CONNECTION_ACCEPT_TIMEOUT, _)).Times(1);
+  le_impl_->create_connection_timeout_alarms_.emplace(
+      std::piecewise_construct,
+      std::forward_as_tuple(
+          remote_public_address_with_type_.GetAddress(), remote_public_address_with_type_.GetAddressType()),
+      std::forward_as_tuple(handler_));
+  le_impl_->on_create_connection_timeout(remote_public_address_with_type_);
+  sync_handler();
+  ASSERT_TRUE(le_impl_->create_connection_timeout_alarms_.empty());
+}
+
+TEST_F(LeImplTest, on_common_le_connection_complete__NoPriorConnection) {
+  auto log_capture = std::make_unique<LogCapture>();
+  le_impl_->on_common_le_connection_complete(remote_public_address_with_type_);
+  ASSERT_TRUE(le_impl_->connecting_le_.empty());
+  ASSERT_TRUE(log_capture->Rewind()->Find("No prior connection request for"));
+}
+
+TEST_F(LeImplTest, cancel_connect) {
+  le_impl_->create_connection_timeout_alarms_.emplace(
+      std::piecewise_construct,
+      std::forward_as_tuple(
+          remote_public_address_with_type_.GetAddress(), remote_public_address_with_type_.GetAddressType()),
+      std::forward_as_tuple(handler_));
+  le_impl_->cancel_connect(remote_public_address_with_type_);
+  sync_handler();
+  ASSERT_TRUE(le_impl_->create_connection_timeout_alarms_.empty());
+}
+
+TEST_F(LeImplTest, set_le_suggested_default_data_parameters) {
+  le_impl_->set_le_suggested_default_data_parameters(kLength, kTime);
+  sync_handler();
+  auto view =
+      CreateLeConnectionManagementCommandView<LeWriteSuggestedDefaultDataLengthView>(hci_layer_->DequeueCommandBytes());
+  ASSERT_TRUE(view.IsValid());
+  ASSERT_EQ(kLength, view.GetTxOctets());
+  ASSERT_EQ(kTime, view.GetTxTime());
 }
 
 }  // namespace acl_manager
