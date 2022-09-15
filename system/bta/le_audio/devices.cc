@@ -1555,6 +1555,7 @@ bool LeAudioDeviceGroup::ConfigureAses(
             << " configuration: " << audio_set_conf->name;
 
   active_context_type_ = context_type;
+  metadata_context_type_ = metadata_context_type;
   return true;
 }
 
@@ -2179,6 +2180,11 @@ bool LeAudioDevice::IsReadyToSuspendStream(void) {
 }
 
 bool LeAudioDevice::HaveAllActiveAsesCisEst(void) {
+  if (ases_.empty()) {
+    LOG_WARN("No ases for device %s", address_.ToString().c_str());
+    return false;
+  }
+
   auto iter = std::find_if(ases_.begin(), ases_.end(), [](const auto& ase) {
     return ase.active &&
            (ase.data_path_state != AudioStreamDataPathState::CIS_ESTABLISHED);
