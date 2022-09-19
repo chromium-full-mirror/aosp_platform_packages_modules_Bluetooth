@@ -7,13 +7,13 @@ use crate::dbus_iface::{
 use crate::ClientContext;
 use crate::{console_red, console_yellow, print_error, print_info};
 use bt_topshim::btif::{BtBondState, BtPropertyType, BtSspVariant, BtStatus, Uuid128Bit};
-use bt_topshim::profiles::gatt::GattStatus;
+use bt_topshim::profiles::gatt::{GattStatus, LePhy};
 use btstack::bluetooth::{
     BluetoothDevice, IBluetooth, IBluetoothCallback, IBluetoothConnectionCallback,
 };
 use btstack::bluetooth_adv::IAdvertisingSetCallback;
 use btstack::bluetooth_gatt::{
-    BluetoothGattService, IBluetoothGattCallback, IScannerCallback, LePhy, ScanResult,
+    BluetoothGattService, IBluetoothGattCallback, IScannerCallback, ScanResult,
 };
 use btstack::socket_manager::{
     BluetoothServerSocket, BluetoothSocket, IBluetoothSocketManager,
@@ -21,7 +21,7 @@ use btstack::socket_manager::{
 };
 use btstack::suspend::ISuspendCallback;
 use btstack::uuid::UuidWrapper;
-use btstack::RPCProxy;
+use btstack::{RPCProxy, SuspendMode};
 use dbus::nonblock::SyncConnection;
 use dbus_crossroads::Crossroads;
 use dbus_projection::DisconnectWatcher;
@@ -326,6 +326,10 @@ impl IScannerCallback for ScannerCallback {
         if self.context.lock().unwrap().active_scanner_ids.len() > 0 {
             print_info!("Scan result: {:#?}", scan_result);
         }
+    }
+
+    fn on_suspend_mode_change(&self, _suspend_mode: SuspendMode) {
+        // No-op, not interesting for btclient.
     }
 }
 
