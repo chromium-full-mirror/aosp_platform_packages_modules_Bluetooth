@@ -200,18 +200,22 @@ void LeAudioDeviceGroup::SetCigState(le_audio::types::CigState state) {
 }
 
 bool LeAudioDeviceGroup::Activate(LeAudioContextType context_type) {
+  bool is_activate = false;
   for (auto leAudioDevice : leAudioDevices_) {
     if (leAudioDevice.expired()) continue;
 
     bool activated = leAudioDevice.lock()->ActivateConfiguredAses(context_type);
-    LOG_INFO("Device %s is activated now: ",
-             leAudioDevice.lock().get()->address_.ToString().c_str());
+    LOG_INFO("Device %s is %s",
+             leAudioDevice.lock().get()->address_.ToString().c_str(),
+             activated ? "activated" : " not activated");
     if (activated) {
-      if (!CigAssignCisIds(leAudioDevice.lock().get())) return false;
+      if (!CigAssignCisIds(leAudioDevice.lock().get())) {
+        return false;
+      }
+      is_activate = true;
     }
   }
-
-  return true;
+  return is_activate;
 }
 
 LeAudioDevice* LeAudioDeviceGroup::GetFirstDevice(void) {
@@ -404,17 +408,6 @@ LeAudioDevice* LeAudioDeviceGroup::GetNextActiveDeviceByDataPathState(
   }
 
   return iter->lock().get();
-}
-
-bool LeAudioDeviceGroup::SetContextType(LeAudioContextType context_type) {
-  /* XXX: group context policy ? / may it disallow to change type ?) */
-  context_type_ = context_type;
-
-  return true;
-}
-
-LeAudioContextType LeAudioDeviceGroup::GetContextType(void) {
-  return context_type_;
 }
 
 uint32_t LeAudioDeviceGroup::GetSduInterval(uint8_t direction) {
@@ -1575,9 +1568,6 @@ const set_configurations::AudioSetConfiguration*
 LeAudioDeviceGroup::GetActiveConfiguration(void) {
   return active_context_to_configuration_map[active_context_type_];
 }
-AudioContexts LeAudioDeviceGroup::GetActiveContexts(void) {
-  return active_contexts_mask_;
-}
 
 std::optional<LeAudioCodecConfiguration>
 LeAudioDeviceGroup::GetCodecConfigurationByDirection(
@@ -1771,10 +1761,6 @@ void LeAudioDeviceGroup::CreateStreamVectorForOffloader(uint8_t direction) {
           std::make_pair(cis_entry.conn_handle, current_allocation));
     }
   }
-}
-
-types::LeAudioContextType LeAudioDeviceGroup::GetCurrentContextType(void) {
-  return active_context_type_;
 }
 
 bool LeAudioDeviceGroup::IsPendingConfiguration(void) {
