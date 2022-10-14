@@ -1453,7 +1453,7 @@ void shim::legacy::Acl::OnConnectSuccess(
       ->ReadRemoteControllerInformation();
 
   TRY_POSTING_ON_MAIN(acl_interface_.connection.classic.on_connected, bd_addr,
-                      handle, false, locally_initiated);
+                      handle, false);
   LOG_DEBUG("Connection successful classic remote:%s handle:%hu initiator:%s",
             PRIVATE_ADDRESS(remote_address), handle,
             (locally_initiated) ? "local" : "remote");
@@ -1464,11 +1464,10 @@ void shim::legacy::Acl::OnConnectSuccess(
 }
 
 void shim::legacy::Acl::OnConnectFail(hci::Address address,
-                                      hci::ErrorCode reason,
-                                      bool locally_initiated) {
+                                      hci::ErrorCode reason) {
   const RawAddress bd_addr = ToRawAddress(address);
   TRY_POSTING_ON_MAIN(acl_interface_.connection.classic.on_failed, bd_addr,
-                      ToLegacyHciErrorCode(reason), locally_initiated);
+                      ToLegacyHciErrorCode(reason));
   LOG_WARN("Connection failed classic remote:%s reason:%s",
            PRIVATE_ADDRESS(address), hci::ErrorCodeText(reason).c_str());
   BTM_LogHistory(kBtmLogTag, ToRawAddress(address), "Connection failed",
@@ -1577,8 +1576,7 @@ void shim::legacy::Acl::OnLeConnectSuccess(
 }
 
 void shim::legacy::Acl::OnLeConnectFail(hci::AddressWithType address_with_type,
-                                        hci::ErrorCode reason,
-                                        bool locally_initiated) {
+                                        hci::ErrorCode reason) {
   tBLE_BD_ADDR legacy_address_with_type =
       ToLegacyAddressWithType(address_with_type);
 
@@ -1586,14 +1584,10 @@ void shim::legacy::Acl::OnLeConnectFail(hci::AddressWithType address_with_type,
   bool enhanced = true; /* TODO logging metrics only */
   tHCI_STATUS status = ToLegacyHciErrorCode(reason);
 
-  TRY_POSTING_ON_MAIN(acl_interface_.connection.le.on_failed,
-                      legacy_address_with_type, handle, enhanced, status,
-                      locally_initiated);
-  if (!locally_initiated) {
-    return;
-  }
-
   pimpl_->shadow_acceptlist_.Remove(address_with_type);
+
+  TRY_POSTING_ON_MAIN(acl_interface_.connection.le.on_failed,
+                      legacy_address_with_type, handle, enhanced, status);
   LOG_WARN("Connection failed le remote:%s",
            PRIVATE_ADDRESS(address_with_type));
   BTM_LogHistory(

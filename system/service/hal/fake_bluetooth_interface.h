@@ -62,8 +62,7 @@ class FakeBluetoothInterface : public BluetoothInterface {
                                      const RawAddress& remote_bdaddr,
                                      bt_acl_state_t state,
                                      int transport_link_type,
-                                     bt_hci_error_code_t hci_reason,
-                                     bt_conn_direction_t direction);
+                                     bt_hci_error_code_t hci_reason);
 
   // hal::BluetoothInterface overrides:
   void AddObserver(Observer* observer) override;

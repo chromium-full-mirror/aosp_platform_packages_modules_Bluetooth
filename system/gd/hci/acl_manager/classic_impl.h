@@ -316,8 +316,7 @@ struct classic_impl : public security::ISecurityManagerListener {
           &ConnectionCallbacks::OnConnectFail,
           common::Unretained(client_callbacks_),
           outgoing_connecting_address_,
-          status.GetStatus(),
-          true /* locally initiated */));
+          status.GetStatus()));
       outgoing_connecting_address_ = Address::kEmpty;
       dequeue_next_connection();
     } else {
@@ -341,11 +340,7 @@ struct classic_impl : public security::ISecurityManagerListener {
     }
     if (status != ErrorCode::SUCCESS) {
       client_handler_->Post(common::BindOnce(
-          &ConnectionCallbacks::OnConnectFail,
-          common::Unretained(client_callbacks_),
-          address,
-          status,
-          initiator == Initiator::LOCALLY_INITIATED));
+          &ConnectionCallbacks::OnConnectFail, common::Unretained(client_callbacks_), address, status));
       return;
     }
     uint16_t handle = connection_complete.GetConnectionHandle();
