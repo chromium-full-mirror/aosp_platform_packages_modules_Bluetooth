@@ -866,8 +866,16 @@ impl BtifBluetoothCallbacks for Bluetooth {
         let address = addr.to_string();
 
         // Get the device type before the device is potentially deleted.
-        let device_type =
-            self.get_remote_type(BluetoothDevice::new(address.clone(), "".to_string()));
+        let device_type = match self.get_remote_device_if_found(&address) {
+            Some(d) => match d.properties.get(&BtPropertyType::TypeOfDevice) {
+                Some(prop) => match prop {
+                    BluetoothProperty::TypeOfDevice(type_of_device) => type_of_device.clone(),
+                    _ => BtDeviceType::Unknown,
+                },
+                _ => BtDeviceType::Unknown,
+            },
+            _ => BtDeviceType::Unknown,
+        };
 
         // Easy case of not bonded -- we remove the device from the bonded list and change the bond
         // state in the found list (in case it was previously bonding).
@@ -964,25 +972,12 @@ impl BtifBluetoothCallbacks for Bluetooth {
         status: BtStatus,
         addr: RawAddress,
         state: BtAclState,
-        link_type: BtTransport,
-        hci_reason: BtHciErrorCode,
-        conn_direction: BtConnectionDirection,
+        _link_type: BtTransport,
+        _hci_reason: BtHciErrorCode,
+        _conn_direction: BtConnectionDirection,
     ) {
         if status != BtStatus::Success {
-            warn!(
-                "Connection to [{}] failed. Status: {:?}, Reason: {:?}",
-                addr.to_string(),
-                status,
-                hci_reason
-            );
-            metrics::acl_connection_state_changed(
-                addr,
-                link_type,
-                status,
-                BtAclState::Disconnected,
-                conn_direction,
-                hci_reason,
-            );
+            warn!("Connection to [{}] failed. Status: {:?}", addr.to_string(), status);
             return;
         }
 
@@ -1012,15 +1007,6 @@ impl BtifBluetoothCallbacks for Bluetooth {
                 if prev_state != &state {
                     let device = found.info.clone();
                     found.acl_state = state.clone();
-
-                    metrics::acl_connection_state_changed(
-                        addr,
-                        link_type,
-                        BtStatus::Success,
-                        state.clone(),
-                        conn_direction,
-                        hci_reason,
-                    );
 
                     match state {
                         BtAclState::Connected => {
@@ -1252,7 +1238,7 @@ impl IBluetooth for Bluetooth {
         let device_type = match transport {
             BtTransport::Bredr => BtDeviceType::Bredr,
             BtTransport::Le => BtDeviceType::Ble,
-            _ => self.get_remote_type(device.clone()),
+            _ => self.get_remote_type(device),
         };
 
         // We explicitly log the attempt to start the bonding separate from logging the bond state.
@@ -1274,16 +1260,6 @@ impl IBluetooth for Bluetooth {
             );
             return false;
         }
-
-        // Creating bond automatically create ACL connection as well, therefore also log metrics
-        // ACL connection attempt here.
-        let is_connected = self
-            .get_remote_device_if_found(&device.address)
-            .map_or(false, |d| d.acl_state == BtAclState::Connected);
-        if !is_connected {
-            metrics::acl_connect_attempt(address, BtAclState::Connected);
-        }
-
         return true;
     }
 
@@ -1308,22 +1284,7 @@ impl IBluetooth for Bluetooth {
         }
 
         let address = addr.unwrap();
-        let status = self.intf.lock().unwrap().remove_bond(&address);
-
-        if status != 0 {
-            return false;
-        }
-
-        // Removing bond also disconnects the ACL if is connected. Therefore, also log ACL
-        // disconnection attempt here.
-        let is_connected = self
-            .get_remote_device_if_found(&device.address)
-            .map_or(false, |d| d.acl_state == BtAclState::Connected);
-        if is_connected {
-            metrics::acl_connect_attempt(address, BtAclState::Disconnected);
-        }
-
-        return true;
+        self.intf.lock().unwrap().remove_bond(&address) == 0
     }
 
     fn get_bonded_devices(&self) -> Vec<BluetoothDevice> {
@@ -1591,14 +1552,6 @@ impl IBluetooth for Bluetooth {
             return false;
         }
 
-        // log ACL connection attempt if it's not already connected.
-        let is_connected = self
-            .get_remote_device_if_found(&device.address)
-            .map_or(false, |d| d.acl_state == BtAclState::Connected);
-        if !is_connected {
-            metrics::acl_connect_attempt(addr.unwrap(), BtAclState::Connected);
-        }
-
         // Check all remote uuids to see if they match enabled profiles and connect them.
         let mut has_enabled_uuids = false;
         let uuids = self.get_remote_uuids(device.clone());
@@ -1663,14 +1616,6 @@ impl IBluetooth for Bluetooth {
         if addr.is_none() {
             warn!("Can't connect profiles on invalid address [{}]", &device.address);
             return false;
-        }
-
-        // log ACL disconnection attempt if it's not already disconnected.
-        let is_connected = self
-            .get_remote_device_if_found(&device.address)
-            .map_or(false, |d| d.acl_state == BtAclState::Connected);
-        if is_connected {
-            metrics::acl_connect_attempt(addr.unwrap(), BtAclState::Disconnected);
         }
 
         let uuids = self.get_remote_uuids(device.clone());
