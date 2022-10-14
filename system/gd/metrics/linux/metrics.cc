@@ -49,7 +49,5 @@ void LogMetricsAclConnectionStateChanged(
     uint32_t direction,
     uint32_t hci_reason) {}
 
-void LogMetricsChipsetInfoReport() {}
-
 }  // namespace metrics
 }  // namespace bluetooth
