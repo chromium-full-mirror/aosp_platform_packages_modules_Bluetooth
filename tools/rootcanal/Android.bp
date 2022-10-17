@@ -16,14 +16,12 @@ package {
 cc_defaults {
     name: "rootcanal_defaults",
     defaults: [
+        "fluoride_common_options",
         "gd_defaults",
         "gd_clang_tidy",
         "gd_clang_tidy_ignore_android",
     ],
     cflags: [
-        "-Wall",
-        "-Wextra",
-        "-Werror",
         "-fvisibility=hidden",
         "-DROOTCANAL_LMP",
     ],
@@ -125,6 +123,7 @@ cc_test_host {
         "rootcanal_defaults",
     ],
     srcs: [
+        "test/controller/le/le_set_random_address_test.cc",
         "test/controller/le/le_clear_filter_accept_list_test.cc",
         "test/controller/le/le_add_device_to_filter_accept_list_test.cc",
         "test/controller/le/le_remove_device_from_filter_accept_list_test.cc",
@@ -132,6 +131,12 @@ cc_test_host {
         "test/controller/le/le_clear_resolving_list_test.cc",
         "test/controller/le/le_remove_device_from_resolving_list_test.cc",
         "test/controller/le/le_set_address_resolution_enable_test.cc",
+        "test/controller/le/le_set_advertising_parameters_test.cc",
+        "test/controller/le/le_set_advertising_enable_test.cc",
+        "test/controller/le/le_set_scan_parameters_test.cc",
+        "test/controller/le/le_set_scan_enable_test.cc",
+        "test/controller/le/le_set_extended_scan_parameters_test.cc",
+        "test/controller/le/le_set_extended_scan_enable_test.cc",
     ],
     header_libs: [
         "libbluetooth_headers",
@@ -157,6 +162,7 @@ cc_test_host {
 cc_test_host {
     name: "rootcanal_test_host",
     defaults: [
+        "fluoride_common_options",
         "clang_file_coverage",
         "clang_coverage_bin",
     ],
@@ -185,9 +191,6 @@ cc_test_host {
         "libbt-rootcanal",
     ],
     cflags: [
-        "-Wall",
-        "-Wextra",
-        "-Werror",
         "-fvisibility=hidden",
         "-DLOG_NDEBUG=1",
     ],

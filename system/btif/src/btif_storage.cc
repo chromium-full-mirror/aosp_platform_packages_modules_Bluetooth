@@ -61,6 +61,7 @@ constexpr char kPrivateAddressPrefix[] = "xx:xx:xx:xx";
 #include "btif_hh.h"
 #include "btif_util.h"
 #include "device/include/controller.h"
+#include "gd/common/init_flags.h"
 #include "osi/include/allocator.h"
 #include "osi/include/compat.h"
 #include "osi/include/config.h"
@@ -969,6 +970,14 @@ bt_status_t btif_storage_remove_bonded_device(
 
   /* write bonded info immediately */
   btif_config_flush();
+
+  /* Check the length of the paired devices, and if 0 then reset IRK */
+  auto paired_devices = btif_config_get_paired_devices();
+  if (paired_devices.empty() &&
+      bluetooth::common::init_flags::irk_rotation_is_enabled()) {
+    LOG_INFO("Last paired device removed, resetting IRK");
+    BTA_DmBleResetId();
+  }
   return ret ? BT_STATUS_SUCCESS : BT_STATUS_FAIL;
 }
 
@@ -1378,7 +1387,10 @@ bt_status_t btif_storage_add_ble_local_key(const Octet16& key,
       return BT_STATUS_FAIL;
   }
   int ret = btif_config_set_bin("Adapter", name, key.data(), key.size());
-  btif_config_save();
+  // Had to change this to flush to get it to work on test.
+  // Seems to work in the real world on a phone... but not sure why there's a
+  // race in test. Investigate b/239828132
+  btif_config_flush();
   return ret ? BT_STATUS_SUCCESS : BT_STATUS_FAIL;
 }
 

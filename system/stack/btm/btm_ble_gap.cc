@@ -812,7 +812,7 @@ bool BTM_BleConfigPrivacy(bool privacy_mode) {
 
   GAP_BleAttrDBUpdate(GATT_UUID_GAP_CENTRAL_ADDR_RESOL, &gap_ble_attr_value);
 
-    bluetooth::shim::ACL_ConfigureLePrivacy(privacy_mode);
+  bluetooth::shim::ACL_ConfigureLePrivacy(privacy_mode);
   return true;
 }
 
@@ -2276,8 +2276,13 @@ static void btm_ble_appearance_to_cod(uint16_t appearance, uint8_t* dev_class) {
       dev_class[1] = BTM_COD_MAJOR_AUDIO;
       dev_class[2] = BTM_COD_MINOR_UNCLASSIFIED;
       break;
+    case BTM_BLE_APPEARANCE_GENERIC_WEARABLE_AUDIO_DEVICE:
     case BTM_BLE_APPEARANCE_WEARABLE_AUDIO_DEVICE_EARBUD:
-      dev_class[1] = BTM_COD_MAJOR_AUDIO;
+    case BTM_BLE_APPEARANCE_WEARABLE_AUDIO_DEVICE_HEADSET:
+    case BTM_BLE_APPEARANCE_WEARABLE_AUDIO_DEVICE_HEADPHONES:
+    case BTM_BLE_APPEARANCE_WEARABLE_AUDIO_DEVICE_NECK_BAND:
+      dev_class[0] = (BTM_COD_SERVICE_AUDIO | BTM_COD_SERVICE_RENDERING) >> 8;
+      dev_class[1] = (BTM_COD_MAJOR_AUDIO | BTM_COD_SERVICE_LE_AUDIO);
       dev_class[2] = BTM_COD_MINOR_WEARABLE_HEADSET;
       break;
     case BTM_BLE_APPEARANCE_GENERIC_BARCODE_SCANNER:

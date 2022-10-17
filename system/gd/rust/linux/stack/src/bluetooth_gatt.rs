@@ -20,7 +20,7 @@ use crate::bluetooth_adv::{
     IAdvertisingSetCallback, PeriodicAdvertisingParameters,
 };
 use crate::callbacks::Callbacks;
-use crate::uuid::parse_uuid_string;
+use crate::uuid::UuidHelper;
 use crate::{Message, RPCProxy, SuspendMode};
 use log::{debug, warn};
 use num_traits::cast::{FromPrimitive, ToPrimitive};
@@ -181,6 +181,10 @@ impl ContextMap {
 // TODO(242083290): Split out interfaces.
 pub trait IBluetoothGatt {
     // Scanning
+
+    /// Returns whether LE Scan can be performed by hardware offload defined by
+    /// [MSFT HCI Extension](https://learn.microsoft.com/en-us/windows-hardware/drivers/bluetooth/microsoft-defined-bluetooth-hci-commands-and-events).
+    fn is_msft_supported(&self) -> bool;
 
     /// Registers an LE scanner callback.
     ///
@@ -936,6 +940,11 @@ struct ScannerInfo {
 }
 
 impl IBluetoothGatt for BluetoothGatt {
+    fn is_msft_supported(&self) -> bool {
+        // TODO(b/244505567): Wire the real capability from lower layer.
+        false
+    }
+
     fn register_scanner_callback(&mut self, callback: Box<dyn IScannerCallback + Send>) -> u32 {
         self.scanner_callbacks.add_callback(callback)
     }
@@ -947,7 +956,7 @@ impl IBluetoothGatt for BluetoothGatt {
     fn register_scanner(&mut self, callback_id: u32) -> Uuid128Bit {
         let mut bytes: [u8; 16] = [0; 16];
         self.small_rng.fill_bytes(&mut bytes);
-        let uuid = Uuid { uu: bytes };
+        let uuid = Uuid::from(bytes);
 
         self.scanners.insert(uuid, ScannerInfo { callback_id, scanner_id: None, is_active: false });
 
@@ -1177,7 +1186,7 @@ impl IBluetoothGatt for BluetoothGatt {
         callback: Box<dyn IBluetoothGattCallback + Send>,
         eatt_support: bool,
     ) {
-        let uuid = match parse_uuid_string(&app_uuid) {
+        let uuid = match UuidHelper::parse_string(&app_uuid) {
             Some(id) => id,
             None => {
                 log::info!("Uuid is malformed: {}", app_uuid);
@@ -1257,7 +1266,7 @@ impl IBluetoothGatt for BluetoothGatt {
             return;
         }
 
-        let uuid = parse_uuid_string(uuid);
+        let uuid = UuidHelper::parse_string(uuid);
         if uuid.is_none() {
             return;
         }
@@ -1294,7 +1303,7 @@ impl IBluetoothGatt for BluetoothGatt {
             return;
         }
 
-        let uuid = parse_uuid_string(uuid);
+        let uuid = UuidHelper::parse_string(uuid);
         if uuid.is_none() {
             return;
         }
@@ -1493,7 +1502,7 @@ impl IBluetoothGatt for BluetoothGatt {
     }
 }
 
-#[btif_callbacks_dispatcher(BluetoothGatt, dispatch_gatt_client_callbacks, GattClientCallbacks)]
+#[btif_callbacks_dispatcher(dispatch_gatt_client_callbacks, GattClientCallbacks)]
 pub(crate) trait BtifGattClientCallbacks {
     #[btif_callback(RegisterClient)]
     fn register_client_cb(&mut self, status: GattStatus, client_id: i32, app_uuid: Uuid);
@@ -2097,7 +2106,7 @@ impl BtifGattClientCallbacks for BluetoothGatt {
     }
 }
 
-#[btif_callbacks_dispatcher(BluetoothGatt, dispatch_le_scanner_callbacks, GattScannerCallbacks)]
+#[btif_callbacks_dispatcher(dispatch_le_scanner_callbacks, GattScannerCallbacks)]
 pub(crate) trait BtifGattScannerCallbacks {
     #[btif_callback(OnScannerRegistered)]
     fn on_scanner_registered(&mut self, uuid: Uuid, scanner_id: u8, status: GattStatus);
@@ -2118,11 +2127,7 @@ pub(crate) trait BtifGattScannerCallbacks {
     );
 }
 
-#[btif_callbacks_dispatcher(
-    BluetoothGatt,
-    dispatch_le_scanner_inband_callbacks,
-    GattScannerInbandCallbacks
-)]
+#[btif_callbacks_dispatcher(dispatch_le_scanner_inband_callbacks, GattScannerInbandCallbacks)]
 pub(crate) trait BtifGattScannerInbandCallbacks {
     #[btif_callback(RegisterCallback)]
     fn inband_register_callback(&mut self, app_uuid: Uuid, scanner_id: u8, btm_status: u8);
@@ -2368,7 +2373,7 @@ impl BtifGattScannerCallbacks for BluetoothGatt {
     }
 }
 
-#[btif_callbacks_dispatcher(BluetoothGatt, dispatch_le_adv_callbacks, GattAdvCallbacks)]
+#[btif_callbacks_dispatcher(dispatch_le_adv_callbacks, GattAdvCallbacks)]
 pub(crate) trait BtifGattAdvCallbacks {
     #[btif_callback(OnAdvertisingSetStarted)]
     fn on_advertising_set_started(
@@ -2660,16 +2665,16 @@ mod tests {
 
     #[test]
     fn test_uuid_from_string() {
-        let uuid = parse_uuid_string("abcdef");
+        let uuid = UuidHelper::parse_string("abcdef");
         assert!(uuid.is_none());
 
-        let uuid = parse_uuid_string("0123456789abcdef0123456789abcdef");
+        let uuid = UuidHelper::parse_string("0123456789abcdef0123456789abcdef");
         assert!(uuid.is_some());
         let expected: [u8; 16] = [
             0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
             0xcd, 0xef,
         ];
-        assert_eq!(Uuid { uu: expected }, uuid.unwrap());
+        assert_eq!(Uuid::from(expected), uuid.unwrap());
     }
 
     #[test]
@@ -2679,7 +2684,7 @@ mod tests {
 
         // Add client 1.
         let callback1 = Box::new(TestBluetoothGattCallback::new(String::from("Callback 1")));
-        let uuid1 = parse_uuid_string("00000000000000000000000000000001").unwrap().uu;
+        let uuid1 = UuidHelper::parse_string("00000000000000000000000000000001").unwrap().uu;
         map.add(&uuid1, callback1);
         let found = map.get_by_uuid(&uuid1);
         assert!(found.is_some());
@@ -2699,7 +2704,7 @@ mod tests {
 
         // Add client 2.
         let callback2 = Box::new(TestBluetoothGattCallback::new(String::from("Callback 2")));
-        let uuid2 = parse_uuid_string("00000000000000000000000000000002").unwrap().uu;
+        let uuid2 = UuidHelper::parse_string("00000000000000000000000000000002").unwrap().uu;
         map.add(&uuid2, callback2);
         let found = map.get_by_uuid(&uuid2);
         assert!(found.is_some());
