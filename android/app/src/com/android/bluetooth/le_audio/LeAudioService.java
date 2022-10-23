@@ -752,7 +752,7 @@ public class LeAudioService extends ProfileService {
         }
         synchronized (mGroupLock) {
             for (Map.Entry<BluetoothDevice, Integer> entry : mDeviceGroupIdMap.entrySet()) {
-                if (entry.getValue() != groupId) {
+                if (!Objects.equals(entry.getValue(), groupId)) {
                     continue;
                 }
                 LeAudioStateMachine sm = mStateMachines.get(entry.getKey());
@@ -1575,10 +1575,6 @@ public class LeAudioService extends ProfileService {
             LeAudioGroupDescriptor descriptor = getGroupDescriptor(myGroupId);
             if (descriptor != null) {
                 descriptor.mIsConnected = true;
-                /* HearingAid activates device after connection
-                 * A2dp makes active device via activedevicemanager - connection intent
-                 */
-                setActiveDevice(device);
             } else {
                 Log.e(TAG, "no descriptors for group: " + myGroupId);
             }

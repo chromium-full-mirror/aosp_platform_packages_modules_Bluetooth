@@ -462,7 +462,7 @@ class ShimBondListener : public bluetooth::security::ISecurityManagerListener {
         LinkKey key;  // Never want to send the key to the stack
         (*bta_callbacks_->p_link_key_callback)(
             bluetooth::ToRawAddress(device.GetAddress()), 0, name, key,
-            BTM_LKEY_TYPE_COMBINATION);
+            BTM_LKEY_TYPE_COMBINATION, false /* is_ctkd */);
       }
       if (*bta_callbacks_->p_auth_complete_callback) {
         (*bta_callbacks_->p_auth_complete_callback)(
@@ -1349,12 +1349,13 @@ tBTM_STATUS bluetooth::shim::BTM_ClearFilterAcceptList() {
 }
 
 tBTM_STATUS bluetooth::shim::BTM_DisconnectAllAcls() {
-  Stack::GetInstance()->GetAcl()->Shutdown();
+  Stack::GetInstance()->GetAcl()->DisconnectAllForSuspend();
+//  Stack::GetInstance()->GetAcl()->Shutdown();
   return BTM_SUCCESS;
 }
 
 tBTM_STATUS bluetooth::shim::BTM_LeRand(LeRandCallback cb) {
-  controller_get_interface()->le_rand(cb);
+  Stack::GetInstance()->GetAcl()->LeRand(cb);
   return BTM_SUCCESS;
 }
 
