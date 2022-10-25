@@ -842,10 +842,26 @@ struct shim::legacy::Acl::impl {
 
   void DisconnectClassicConnections(std::promise<void> promise) {
     LOG_INFO("Disconnect gd acl shim classic connections");
+    std::vector<HciHandle> disconnect_handles;
     for (auto& connection : handle_to_classic_connection_map_) {
       disconnect_classic(connection.first, HCI_ERR_REMOTE_POWER_OFF,
                          "Suspend disconnect");
+      disconnect_handles.push_back(connection.first);
     }
+
+    // Since this is a suspend disconnect, we immediately also call
+    // |OnDisconnection| without waiting for it to happen. We want the stack
+    // to clean up ahead of the link layer (since we will mask away that
+    // event). The reason we do this in a separate loop is that this will also
+    // remove the handle from the connection map.
+    for (auto& handle : disconnect_handles) {
+      auto found = handle_to_classic_connection_map_.find(handle);
+      if (found != handle_to_classic_connection_map_.end()) {
+        found->second->OnDisconnection(
+            hci::ErrorCode::CONNECTION_TERMINATED_BY_LOCAL_HOST);
+      }
+    }
+
     promise.set_value();
   }
 
@@ -860,9 +876,24 @@ struct shim::legacy::Acl::impl {
 
   void DisconnectLeConnections(std::promise<void> promise) {
     LOG_INFO("Disconnect gd acl shim le connections");
+    std::vector<HciHandle> disconnect_handles;
     for (auto& connection : handle_to_le_connection_map_) {
       disconnect_le(connection.first, HCI_ERR_REMOTE_POWER_OFF,
                     "Suspend disconnect");
+      disconnect_handles.push_back(connection.first);
+    }
+
+    // Since this is a suspend disconnect, we immediately also call
+    // |OnDisconnection| without waiting for it to happen. We want the stack
+    // to clean up ahead of the link layer (since we will mask away that
+    // event). The reason we do this in a separate loop is that this will also
+    // remove the handle from the connection map.
+    for (auto& handle : disconnect_handles) {
+      auto found = handle_to_le_connection_map_.find(handle);
+      if (found != handle_to_le_connection_map_.end()) {
+        found->second->OnDisconnection(
+            hci::ErrorCode::CONNECTION_TERMINATED_BY_LOCAL_HOST);
+      }
     }
     promise.set_value();
   }
@@ -1194,34 +1225,6 @@ void DumpsysAcl(int fd) {
 using Record = common::TimestampedEntry<std::string>;
 const std::string kTimeFormat("%Y-%m-%d %H:%M:%S");
 
-#define DUMPSYS_TAG "shim::legacy::hid"
-extern btif_hh_cb_t btif_hh_cb;
-
-void DumpsysHid(int fd) {
-  LOG_DUMPSYS_TITLE(fd, DUMPSYS_TAG);
-  LOG_DUMPSYS(fd, "status:%s num_devices:%u",
-              btif_hh_status_text(btif_hh_cb.status).c_str(),
-              btif_hh_cb.device_num);
-  LOG_DUMPSYS(fd, "status:%s", btif_hh_status_text(btif_hh_cb.status).c_str());
-  for (unsigned i = 0; i < BTIF_HH_MAX_HID; i++) {
-    const btif_hh_device_t* p_dev = &btif_hh_cb.devices[i];
-    if (p_dev->bd_addr != RawAddress::kEmpty) {
-      LOG_DUMPSYS(fd, "  %u: addr:%s fd:%d state:%s ready:%s thread_id:%d", i,
-                  PRIVATE_ADDRESS(p_dev->bd_addr), p_dev->fd,
-                  bthh_connection_state_text(p_dev->dev_status).c_str(),
-                  (p_dev->ready_for_data) ? ("T") : ("F"),
-                  static_cast<int>(p_dev->hh_poll_thread_id));
-    }
-  }
-  for (unsigned i = 0; i < BTIF_HH_MAX_ADDED_DEV; i++) {
-    const btif_hh_added_device_t* p_dev = &btif_hh_cb.added_devices[i];
-    if (p_dev->bd_addr != RawAddress::kEmpty) {
-      LOG_DUMPSYS(fd, "  %u: addr:%s", i, PRIVATE_ADDRESS(p_dev->bd_addr));
-    }
-  }
-}
-#undef DUMPSYS_TAG
-
 #define DUMPSYS_TAG "shim::legacy::btm"
 void DumpsysBtm(int fd) {
   LOG_DUMPSYS_TITLE(fd, DUMPSYS_TAG);
@@ -1261,8 +1264,6 @@ void DumpsysRecord(int fd) {
 #undef DUMPSYS_TAG
 
 void shim::legacy::Acl::Dump(int fd) const {
-  PAN_Dumpsys(fd);
-  DumpsysHid(fd);
   DumpsysRecord(fd);
   DumpsysAcl(fd);
   DumpsysL2cap(fd);
