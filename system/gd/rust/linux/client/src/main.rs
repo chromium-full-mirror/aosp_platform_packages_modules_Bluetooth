@@ -1,7 +1,3 @@
-#[macro_use]
-extern crate clap;
-use clap::{App, Arg};
-
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -118,9 +114,6 @@ pub(crate) struct ClientContext {
 
     /// Identifies the callback to receive IBluetoothSocketManagerCallback method calls.
     socket_manager_callback_id: Option<u32>,
-
-    /// Is btclient running in restricted mode?
-    is_restricted: bool,
 }
 
 impl ClientContext {
@@ -128,7 +121,6 @@ impl ClientContext {
         dbus_connection: Arc<SyncConnection>,
         dbus_crossroads: Arc<Mutex<Crossroads>>,
         tx: mpsc::Sender<ForegroundActions>,
-        is_restricted: bool,
     ) -> ClientContext {
         // Manager interface is almost always available but adapter interface
         // requires that the specific adapter is enabled.
@@ -161,7 +153,6 @@ impl ClientContext {
             active_scanner_ids: HashSet::new(),
             adv_sets: HashMap::new(),
             socket_manager_callback_id: None,
-            is_restricted,
         }
     }
 
@@ -273,12 +264,7 @@ enum ForegroundActions {
 
 /// Runs a command line program that interacts with a Bluetooth stack.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = App::new("btclient")
-        .arg(Arg::with_name("restricted").long("restricted").takes_value(false))
-        .arg(Arg::with_name("command").short("c").long("command").takes_value(true))
-        .get_matches();
-    let command = value_t!(matches, "command", String);
-    let is_restricted = matches.is_present("restricted");
+    // TODO: Process command line arguments.
 
     topstack::get_runtime().block_on(async move {
         // Connect to D-Bus system bus.
@@ -312,12 +298,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, rx) = mpsc::channel::<ForegroundActions>(10);
 
         // Create the context needed for handling commands
-        let context = Arc::new(Mutex::new(ClientContext::new(
-            conn.clone(),
-            cr.clone(),
-            tx.clone(),
-            is_restricted,
-        )));
+        let context =
+            Arc::new(Mutex::new(ClientContext::new(conn.clone(), cr.clone(), tx.clone())));
 
         // Check if manager interface is valid. We only print some help text before failing on the
         // first actual access to the interface (so we can also capture the actual reason the
@@ -357,19 +339,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut handler = CommandHandler::new(context.clone());
 
+        let args: Vec<String> = std::env::args().collect();
+
         // Allow command line arguments to be read
-        match command {
-            Ok(command) => {
-                let mut iter = command.split(' ').map(String::from);
-                handler.process_cmd_line(
-                    &iter.next().unwrap_or(String::from("")),
-                    &iter.collect::<Vec<String>>(),
-                );
-            }
-            _ => {
-                start_interactive_shell(handler, tx, rx, context).await;
-            }
-        };
+        if args.len() > 1 {
+            handler.process_cmd_line(&args[1], &args[2..].to_vec());
+        } else {
+            start_interactive_shell(handler, tx, rx, context).await;
+        }
         return Result::Ok(());
     })
 }

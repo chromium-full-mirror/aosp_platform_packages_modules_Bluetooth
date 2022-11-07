@@ -36,7 +36,6 @@
 #include "osi/include/allocator.h"
 #include "osi/include/log.h"
 #include "osi/include/osi.h"
-#include "osi/include/properties.h"
 #include "stack/btm/btm_sco_hfp_hal.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/btm/security_device_record.h"
@@ -49,13 +48,6 @@
 #include "types/raw_address.h"
 
 extern tBTM_CB btm_cb;
-
-/* Default to allow enhanced connections where supported. */
-constexpr bool kDefaultDisableEnhancedConnection = false;
-
-/* Sysprops for SCO connection. */
-static const char kPropertyDisableEnhancedConnection[] =
-    "bluetooth.sco.disable_enhanced_connection";
 
 namespace {
 constexpr char kBtmLogTag[] = "SCO";
@@ -157,9 +149,7 @@ static void btm_esco_conn_rsp(uint16_t sco_inx, uint8_t hci_status,
     }
     /* Use Enhanced Synchronous commands if supported */
     if (controller_get_interface()
-            ->supports_enhanced_setup_synchronous_connection() &&
-        !osi_property_get_bool(kPropertyDisableEnhancedConnection,
-                               kDefaultDisableEnhancedConnection)) {
+            ->supports_enhanced_setup_synchronous_connection()) {
       BTM_TRACE_DEBUG(
           "%s: txbw 0x%x, rxbw 0x%x, lat 0x%x, retrans 0x%02x, "
           "pkt 0x%04x, path %u",
@@ -222,27 +212,11 @@ void btm_route_sco_data(BT_HDR* p_msg) {
     osi_free(p_msg);
     return;
   }
-
-  uint16_t handle = HCID_GET_HANDLE(handle_with_flags);
-  if (handle > HCI_HANDLE_MAX) {
-    LOG_ERROR(
-        "Receive invalid SCO data with handle: 0x%X, required to be <= 0x%X, "
-        "dropping",
-        handle, HCI_HANDLE_MAX);
-    osi_free(p_msg);
-    return;
-  }
+  uint16_t handle = handle_with_flags & 0xFFF;
+  ASSERT_LOG(handle <= 0xEFF, "Require handle <= 0xEFF, but is 0x%X", handle);
 
   tSCO_CONN* active_sco = btm_get_active_sco();
-  if (active_sco == nullptr) {
-    LOG_ERROR("Received SCO data when there is no active SCO connection");
-    osi_free(p_msg);
-    return;
-  }
-  if (active_sco->hci_handle != handle) {
-    LOG_ERROR(
-        "Drop packet with handle(0x%X) different from the active handle(0x%X)",
-        handle, active_sco->hci_handle);
+  if (active_sco == nullptr || active_sco->hci_handle != handle) {
     osi_free(p_msg);
     return;
   }
@@ -491,9 +465,7 @@ static tBTM_STATUS btm_send_connect_request(uint16_t acl_handle,
 
     /* Use Enhanced Synchronous commands if supported */
     if (controller_get_interface()
-            ->supports_enhanced_setup_synchronous_connection() &&
-        !osi_property_get_bool(kPropertyDisableEnhancedConnection,
-                               kDefaultDisableEnhancedConnection)) {
+            ->supports_enhanced_setup_synchronous_connection()) {
       LOG_INFO("Sending enhanced SCO connect request over handle:0x%04x",
                acl_handle);
       LOG(INFO) << __func__ << std::hex << ": enhanced parameter list"
@@ -1359,9 +1331,7 @@ static tBTM_STATUS BTM_ChangeEScoLinkParms(uint16_t sco_inx,
 
     /* Use Enhanced Synchronous commands if supported */
     if (controller_get_interface()
-            ->supports_enhanced_setup_synchronous_connection() &&
-        !osi_property_get_bool(kPropertyDisableEnhancedConnection,
-                               kDefaultDisableEnhancedConnection)) {
+            ->supports_enhanced_setup_synchronous_connection()) {
       btsnd_hcic_enhanced_set_up_synchronous_connection(p_sco->hci_handle,
                                                         p_setup);
       p_setup->packet_types = saved_packet_types;

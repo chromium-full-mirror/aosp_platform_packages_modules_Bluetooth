@@ -25,6 +25,7 @@
 
 #include "net/posix/posix_async_socket.h"  // for PosixAsyncSocket, AsyncMan...
 #include "os/log.h"                        // for LOG_INFO, LOG_ERROR
+#include "osi/include/osi.h"               // for OSI_NO_INTR
 
 namespace android {
 namespace net {
@@ -36,10 +37,7 @@ PosixAsyncSocketServer::PosixAsyncSocketServer(int port, AsyncManager* am)
   struct sockaddr_in listen_address {};
   socklen_t sockaddr_in_size = sizeof(struct sockaddr_in);
 
-  do {
-    listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-  } while (listen_fd == -1 && errno == EAGAIN);
-
+  OSI_NO_INTR(listen_fd = socket(AF_INET, SOCK_STREAM, 0));
   if (listen_fd < 0) {
     LOG_INFO("Error creating socket for test channel.");
     return;
@@ -102,7 +100,7 @@ bool PosixAsyncSocketServer::Connected() {
 
 void PosixAsyncSocketServer::AcceptSocket() {
   int accept_fd = 0;
-  REPEAT_UNTIL_NO_INTR(accept_fd = accept(server_socket_->fd(), NULL, NULL));
+  OSI_NO_INTR(accept_fd = accept(server_socket_->fd(), NULL, NULL));
 
   if (accept_fd < 0) {
     LOG_INFO("Error accepting test channel connection errno=%d (%s).", errno,

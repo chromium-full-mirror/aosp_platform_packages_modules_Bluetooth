@@ -16,10 +16,7 @@
 
 #pragma once
 
-#include <algorithm>
-#include <chrono>
 #include <map>
-#include <vector>
 
 #include "hci/address.h"
 #include "hci/hci_packets.h"
@@ -892,8 +889,8 @@ class LinkLayerController {
 
   struct Scanner {
     bool scan_enable;
-    std::chrono::steady_clock::duration period;
-    std::chrono::steady_clock::duration duration;
+    slots period;
+    slots duration;
     bluetooth::hci::FilterDuplicates filter_duplicates;
     bluetooth::hci::OwnAddressType own_address_type;
     bluetooth::hci::LeScanningFilterPolicy scan_filter_policy;
@@ -914,24 +911,9 @@ class LinkLayerController {
 
     // Time keeping
     std::optional<std::chrono::steady_clock::time_point> timeout;
-    std::optional<std::chrono::steady_clock::time_point> periodical_timeout;
-
-    // Packet History
-    std::vector<model::packets::LinkLayerPacketView> history;
 
     bool IsEnabled() const { return scan_enable; }
-
-    bool IsPacketInHistory(model::packets::LinkLayerPacketView packet) const {
-      return std::any_of(
-          history.begin(), history.end(),
-          [packet](model::packets::LinkLayerPacketView const& a) {
-            return a.size() == packet.size() &&
-                   std::equal(a.begin(), a.end(), packet.begin());
-          });
-    }
-    void AddPacketToHistory(model::packets::LinkLayerPacketView packet) {
-      history.push_back(packet);
-    }
+    void Disable() { scan_enable = false; }
   };
 
   // Legacy and extended scanning properties.

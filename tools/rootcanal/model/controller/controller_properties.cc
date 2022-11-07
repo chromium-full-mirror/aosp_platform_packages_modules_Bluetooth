@@ -23,6 +23,7 @@
 #include <memory>
 
 #include "os/log.h"
+#include "osi/include/osi.h"
 
 namespace rootcanal {
 using namespace bluetooth::hci;

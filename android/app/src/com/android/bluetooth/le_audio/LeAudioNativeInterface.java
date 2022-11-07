@@ -29,7 +29,6 @@ import android.util.Log;
 
 import com.android.bluetooth.Utils;
 import com.android.internal.annotations.GuardedBy;
-import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.Arrays;
 
@@ -65,16 +64,6 @@ public class LeAudioNativeInterface {
                 sInstance = new LeAudioNativeInterface();
             }
             return sInstance;
-        }
-    }
-
-    /**
-     * Set singleton instance.
-     */
-    @VisibleForTesting
-    static void setInstance(LeAudioNativeInterface instance) {
-        synchronized (INSTANCE_LOCK) {
-            sInstance = instance;
         }
     }
 

@@ -33,7 +33,7 @@ Iterator<little_endian>::Iterator(const std::forward_list<View>& data, size_t of
 }
 
 template <bool little_endian>
-Iterator<little_endian> Iterator<little_endian>::operator+(int offset) const {
+Iterator<little_endian> Iterator<little_endian>::operator+(int offset) {
   auto itr(*this);
 
   return itr += offset;
@@ -52,14 +52,14 @@ Iterator<little_endian>& Iterator<little_endian>::operator++() {
 }
 
 template <bool little_endian>
-Iterator<little_endian> Iterator<little_endian>::operator-(int offset) const {
+Iterator<little_endian> Iterator<little_endian>::operator-(int offset) {
   auto itr(*this);
 
   return itr -= offset;
 }
 
 template <bool little_endian>
-int Iterator<little_endian>::operator-(const Iterator<little_endian>& itr) const {
+int Iterator<little_endian>::operator-(Iterator<little_endian>& itr) {
   return index_ - itr.index_;
 }
 

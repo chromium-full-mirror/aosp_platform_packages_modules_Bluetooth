@@ -177,16 +177,18 @@ public class HeadsetServiceAndStateMachineTest {
         // Mock methods in AdapterService
         doReturn(FAKE_HEADSET_UUID).when(mAdapterService)
                 .getRemoteUuids(any(BluetoothDevice.class));
+        doReturn(BluetoothDevice.BOND_BONDED).when(mAdapterService)
+                .getBondState(any(BluetoothDevice.class));
         doAnswer(invocation -> mBondedDevices.toArray(new BluetoothDevice[]{})).when(
                 mAdapterService).getBondedDevices();
         // Mock system interface
         doNothing().when(mSystemInterface).stop();
-        doReturn(mPhoneState).when(mSystemInterface).getHeadsetPhoneState();
-        doReturn(mAudioManager).when(mSystemInterface).getAudioManager();
-        doReturn(true).when(mSystemInterface).activateVoiceRecognition();
-        doReturn(true).when(mSystemInterface).deactivateVoiceRecognition();
-        doReturn(mVoiceRecognitionWakeLock).when(mSystemInterface).getVoiceRecognitionWakeLock();
-        doReturn(true).when(mSystemInterface).isCallIdle();
+        when(mSystemInterface.getHeadsetPhoneState()).thenReturn(mPhoneState);
+        when(mSystemInterface.getAudioManager()).thenReturn(mAudioManager);
+        when(mSystemInterface.activateVoiceRecognition()).thenReturn(true);
+        when(mSystemInterface.deactivateVoiceRecognition()).thenReturn(true);
+        when(mSystemInterface.getVoiceRecognitionWakeLock()).thenReturn(mVoiceRecognitionWakeLock);
+        when(mSystemInterface.isCallIdle()).thenReturn(true);
         // Mock methods in HeadsetNativeInterface
         mNativeInterface = spy(HeadsetNativeInterface.getInstance());
         doNothing().when(mNativeInterface).init(anyInt(), anyBoolean());
@@ -710,7 +712,7 @@ public class HeadsetServiceAndStateMachineTest {
      */
     @Test
     public void testVoiceRecognition_SingleHfInitiatedFailedToActivate() {
-        doReturn(false).when(mSystemInterface).activateVoiceRecognition();
+        when(mSystemInterface.activateVoiceRecognition()).thenReturn(false);
         // Connect HF
         BluetoothDevice device = TestUtils.getTestDevice(mAdapter, 0);
         connectTestDevice(device);
@@ -1137,8 +1139,6 @@ public class HeadsetServiceAndStateMachineTest {
     private void connectTestDevice(BluetoothDevice device) {
         when(mDatabaseManager.getProfileConnectionPolicy(device, BluetoothProfile.HEADSET))
                 .thenReturn(BluetoothProfile.CONNECTION_POLICY_UNKNOWN);
-        doReturn(BluetoothDevice.BOND_BONDED).when(mAdapterService)
-                .getBondState(eq(device));
         // Make device bonded
         mBondedDevices.add(device);
         // Use connecting event to indicate that device is connecting
