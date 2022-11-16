@@ -979,6 +979,7 @@ class LeAudioClientImpl : public LeAudioClient {
     } else {
       /* In case there was an active group. Stop the stream */
       GroupStop(active_group_id_);
+      callbacks_->OnGroupStatus(active_group_id_, GroupStatus::INACTIVE);
     }
 
     active_group_id_ = group_id;
@@ -1705,6 +1706,7 @@ class LeAudioClientImpl : public LeAudioClient {
       return;
     }
 
+    BtaGattQueue::Clean(leAudioDevice->conn_id_);
     LeAudioDeviceGroup* group = aseGroups_.FindById(leAudioDevice->group_id_);
 
     groupStateMachine_->ProcessHciNotifAclDisconnected(group, leAudioDevice);
