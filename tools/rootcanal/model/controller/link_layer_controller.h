@@ -149,6 +149,10 @@ class LinkLayerController {
   AsyncTaskId ScheduleTask(std::chrono::milliseconds delay_ms,
                            const TaskCallback& task);
 
+  AsyncTaskId SchedulePeriodicTask(std::chrono::milliseconds delay_ms,
+                                   std::chrono::milliseconds period_ms,
+                                   const TaskCallback& callback);
+
   void CancelScheduledTask(AsyncTaskId task);
 
   // Set the callbacks for sending packets to the HCI.
@@ -267,12 +271,13 @@ class LinkLayerController {
       uint32_t sdu_interval, uint16_t max_sdu, uint16_t max_transport_latency,
       uint8_t rtn, bluetooth::hci::SecondaryPhyType phy,
       bluetooth::hci::Packing packing, bluetooth::hci::Enable framing,
-      bluetooth::hci::Enable encryption, std::vector<uint16_t> broadcast_code);
+      bluetooth::hci::Enable encryption,
+      std::array<uint8_t, 16> broadcast_code);
   bluetooth::hci::ErrorCode LeTerminateBig(uint8_t big_handle,
                                            bluetooth::hci::ErrorCode reason);
   bluetooth::hci::ErrorCode LeBigCreateSync(
       uint8_t big_handle, uint16_t sync_handle,
-      bluetooth::hci::Enable encryption, std::vector<uint16_t> broadcast_code,
+      bluetooth::hci::Enable encryption, std::array<uint8_t, 16> broadcast_code,
       uint8_t mse, uint16_t big_syunc_timeout, std::vector<uint8_t> bis);
   void LeBigTerminateSync(uint8_t big_handle);
   bluetooth::hci::ErrorCode LeRequestPeerSca(uint16_t request_handle);
@@ -344,11 +349,13 @@ class LinkLayerController {
   void ReadLocalOobData();
   void ReadLocalOobExtendedData();
 
-  ErrorCode AddScoConnection(uint16_t connection_handle, uint16_t packet_type);
+  ErrorCode AddScoConnection(uint16_t connection_handle, uint16_t packet_type,
+                             ScoDatapath datapath);
   ErrorCode SetupSynchronousConnection(
       uint16_t connection_handle, uint32_t transmit_bandwidth,
       uint32_t receive_bandwidth, uint16_t max_latency, uint16_t voice_setting,
-      uint8_t retransmission_effort, uint16_t packet_types);
+      uint8_t retransmission_effort, uint16_t packet_types,
+      ScoDatapath datapath);
   ErrorCode AcceptSynchronousConnection(
       Address bd_addr, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
       uint16_t max_latency, uint16_t voice_setting,
@@ -363,6 +370,10 @@ class LinkLayerController {
 
   // HCI LE Set Random Address command (Vol 4, Part E § 7.8.4).
   ErrorCode LeSetRandomAddress(Address random_address);
+
+  // HCI LE Set Resolvable Private Address Timeout command
+  // (Vol 4, Part E § 7.8.45).
+  ErrorCode LeSetResolvablePrivateAddressTimeout(uint16_t rpa_timeout);
 
   // HCI LE Set Host Feature command (Vol 4, Part E § 7.8.115).
   ErrorCode LeSetHostFeature(uint8_t bit_number, uint8_t bit_value);
@@ -521,12 +532,12 @@ class LinkLayerController {
           initiating_phy_parameters);
 
  protected:
-  void SendLeLinkLayerPacketWithRssi(
-      Address source, Address dest, uint8_t rssi,
+  void SendLinkLayerPacket(
       std::unique_ptr<model::packets::LinkLayerPacketBuilder> packet);
   void SendLeLinkLayerPacket(
       std::unique_ptr<model::packets::LinkLayerPacketBuilder> packet);
-  void SendLinkLayerPacket(
+  void SendLeLinkLayerPacketWithRssi(
+      Address source_address, Address destination_address, uint8_t rssi,
       std::unique_ptr<model::packets::LinkLayerPacketBuilder> packet);
 
   void IncomingAclPacket(model::packets::LinkLayerPacketView packet);
@@ -661,10 +672,12 @@ class LinkLayerController {
   uint8_t GetEncryptionKeySize() const { return min_encryption_key_size_; }
 
   bool GetScoFlowControlEnable() const { return sco_flow_control_enable_; }
+
   AuthenticationEnable GetAuthenticationEnable() {
     return authentication_enable_;
   }
-  std::array<uint8_t, 248> const& GetName() { return name_; }
+
+  std::array<uint8_t, 248> const& GetLocalName() { return local_name_; }
 
   uint64_t GetLeSupportedFeatures() const {
     return properties_.le_features | le_host_supported_features_;
@@ -686,6 +699,11 @@ class LinkLayerController {
                             : properties_.lmp_features[page_number];
   }
 
+  void SetLocalName(std::vector<uint8_t> const& local_name);
+  void SetLocalName(std::array<uint8_t, 248> const& local_name);
+  void SetExtendedInquiryResponse(
+      std::vector<uint8_t> const& extended_inquiry_response);
+
   void SetClassOfDevice(ClassOfDevice class_of_device) {
     class_of_device_ = class_of_device;
   }
@@ -694,11 +712,6 @@ class LinkLayerController {
     class_of_device_.cod[0] = class_of_device & 0xff;
     class_of_device_.cod[1] = (class_of_device >> 8) & 0xff;
     class_of_device_.cod[2] = (class_of_device >> 16) & 0xff;
-  }
-
-  void SetExtendedInquiryData(
-      std::vector<uint8_t> const& extended_inquiry_data) {
-    extended_inquiry_data_ = extended_inquiry_data;
   }
 
   void SetAuthenticationEnable(AuthenticationEnable enable) {
@@ -712,11 +725,13 @@ class LinkLayerController {
     voice_setting_ = voice_setting;
   }
   void SetEventMask(uint64_t event_mask) { event_mask_ = event_mask; }
+
+  void SetEventMaskPage2(uint64_t event_mask) {
+    event_mask_page_2_ = event_mask;
+  }
   void SetLeEventMask(uint64_t le_event_mask) {
     le_event_mask_ = le_event_mask;
   }
-
-  void SetName(std::vector<uint8_t> const& name);
 
   void SetLeHostSupport(bool enable);
   void SetSecureSimplePairingSupport(bool enable);
@@ -747,20 +762,34 @@ class LinkLayerController {
     }
   }
 
+  uint16_t GetLeSuggestedMaxTxOctets() const {
+    return le_suggested_max_tx_octets_;
+  }
+  uint16_t GetLeSuggestedMaxTxTime() const { return le_suggested_max_tx_time_; }
+
+  void SetLeSuggestedMaxTxOctets(uint16_t max_tx_octets) {
+    le_suggested_max_tx_octets_ = max_tx_octets;
+  }
+  void SetLeSuggestedMaxTxTime(uint16_t max_tx_time) {
+    le_suggested_max_tx_time_ = max_tx_time;
+  }
+
+  AsyncTaskId StartScoStream(Address address);
+
  private:
   const Address& address_;
   const ControllerProperties& properties_;
 
   // Host Supported Features (Vol 2, Part C § 3.3 Feature Mask Definition).
   // Page 1 of the LMP feature mask.
-  uint64_t host_supported_features_;
+  uint64_t host_supported_features_{0};
   bool le_host_support_{false};
   bool secure_simple_pairing_host_support_{false};
   bool secure_connections_host_support_{false};
 
   // Le Host Supported Features (Vol 4, Part E § 7.8.3).
   // Specifies the bits indicating Host support.
-  uint64_t le_host_supported_features_;
+  uint64_t le_host_supported_features_{0};
   bool connected_isochronous_stream_host_support_{false};
   bool connection_subrating_host_support_{false};
 
@@ -796,16 +825,20 @@ class LinkLayerController {
   uint16_t voice_setting_{0x0060};
 
   // Authentication Enable (Vol 4, Part E § 6.16).
-  AuthenticationEnable authentication_enable_;
+  AuthenticationEnable authentication_enable_{
+      AuthenticationEnable::NOT_REQUIRED};
 
   // Default Link Policy Settings (Vol 4, Part E § 6.18).
-  uint8_t default_link_policy_settings_;
+  uint8_t default_link_policy_settings_{0x0000};
 
   // Synchronous Flow Control Enable (Vol 4, Part E § 6.22).
   bool sco_flow_control_enable_{false};
 
   // Local Name (Vol 4, Part E § 6.23).
-  std::array<uint8_t, 248> name_;
+  std::array<uint8_t, 248> local_name_{};
+
+  // Extended Inquiry Response (Vol 4, Part E § 6.24).
+  std::array<uint8_t, 240> extended_inquiry_response_{};
 
   // Class of Device (Vol 4, Part E § 6.26).
   ClassOfDevice class_of_device_{{0, 0, 0}};
@@ -819,15 +852,22 @@ class LinkLayerController {
   uint8_t min_encryption_key_size_{16};
 
   // Event Mask (Vol 4, Part E § 7.3.1) and
+  // Event Mask Page 2 (Vol 4, Part E § 7.3.69) and
   // LE Event Mask (Vol 4, Part E § 7.8.1).
   uint64_t event_mask_{0x00001fffffffffff};
+  uint64_t event_mask_page_2_{0x0};
   uint64_t le_event_mask_{0x01f};
+
+  // Suggested Default Data Length (Vol 4, Part E § 7.8.34).
+  uint16_t le_suggested_max_tx_octets_{0x001b};
+  uint16_t le_suggested_max_tx_time_{0x0148};
+
+  // Resolvable Private Address Timeout (Vol 4, Part E § 7.8.45).
+  std::chrono::seconds resolvable_private_address_timeout_{0x0384};
 
   // Page Scan Repetition Mode (Vol 2 Part B § 8.3.1 Page Scan substate).
   // The Page Scan Repetition Mode depends on the selected Page Scan Interval.
   PageScanRepetitionMode page_scan_repetition_mode_{PageScanRepetitionMode::R0};
-
-  std::vector<uint8_t> extended_inquiry_data_;
 
   AclConnectionHandler connections_;
 
@@ -851,8 +891,8 @@ class LinkLayerController {
                      Phy::Type phy_type)>
       send_to_remote_;
 
-  uint32_t oob_id_ = 1;
-  uint32_t key_id_ = 1;
+  uint32_t oob_id_{1};
+  uint32_t key_id_{1};
 
   struct FilterAcceptListEntry {
     FilterAcceptListAddressType address_type;

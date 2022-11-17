@@ -164,7 +164,11 @@ fn build_commands() -> HashMap<String, CommandOption> {
     command_options.insert(
         String::from("advertise"),
         CommandOption {
-            rules: vec![String::from("advertise <on|off|set-interval>")],
+            rules: vec![
+                String::from("advertise <on|off|ext>"),
+                String::from("advertise set-interval <ms>"),
+                String::from("advertise set-scan-rsp <enable|disable>"),
+            ],
             description: String::from("Advertising utilities."),
             function_pointer: CommandHandler::cmd_advertise,
         },
@@ -947,39 +951,20 @@ impl CommandHandler {
         }
         let callback_id = self.context.lock().unwrap().advertiser_callback_id.clone().unwrap();
 
-        enforce_arg_len(args, 1, "advertise <on|off|set-interval>", || match &args[0][0..] {
+        let cmd_usage = "advertise <on|off|ext|set-interval|set-scan-rsp>";
+        enforce_arg_len(args, 1, cmd_usage, || match &args[0][0..] {
             "on" => {
-                let mut context = self.context.lock().unwrap();
-
-                if context.adv_sets.keys().len() > 0 {
-                    print_error!("Already started advertising");
-                    return;
-                }
-
-                let s = AdvSet::new();
-                let reg_id = context.gatt_dbus.as_mut().unwrap().start_advertising_set(
-                    s.params.clone(),
-                    s.data.clone(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    0,
-                    callback_id,
-                );
-                print_info!("Starting advertising set for reg_id = {}", reg_id);
-                context.adv_sets.insert(reg_id, s);
+                print_info!("Creating legacy advertising set...");
+                let s = AdvSet::new(true); // legacy advertising
+                AdvSet::start(self.context.clone(), s, callback_id);
             }
             "off" => {
-                let mut context = self.context.lock().unwrap();
-
-                let adv_ids: Vec<_> =
-                    context.adv_sets.iter().filter_map(|(_, s)| s.adv_id).collect();
-                for adv_id in adv_ids {
-                    print_info!("Stopping advertising set {}", adv_id);
-                    context.gatt_dbus.as_mut().unwrap().stop_advertising_set(adv_id);
-                }
-                context.adv_sets.clear();
+                AdvSet::stop_all(self.context.clone());
+            }
+            "ext" => {
+                print_info!("Creating extended advertising set...");
+                let s = AdvSet::new(false); // extended advertising
+                AdvSet::start(self.context.clone(), s, callback_id);
             }
             "set-interval" => {
                 if args.len() < 2 {
@@ -1006,6 +991,35 @@ impl CommandHandler {
                     .collect();
                 for (adv_id, params) in advs {
                     print_info!("Setting advertising parameters for {}", adv_id);
+                    context.gatt_dbus.as_mut().unwrap().set_advertising_parameters(adv_id, params);
+                }
+            }
+            "set-scan-rsp" => {
+                if args.len() < 2 {
+                    println!("usage: advertise set-scan-rsp <enable|disable>");
+                    return;
+                }
+                let enable = match &args[1][0..] {
+                    "enable" => true,
+                    "disable" => false,
+                    _ => false,
+                };
+
+                let mut context = self.context.lock().unwrap();
+                context.adv_sets.iter_mut().for_each(|(_, s)| s.params.scannable = enable);
+
+                let advs: Vec<(_, _, _)> = context
+                    .adv_sets
+                    .iter()
+                    .filter_map(|(_, s)| {
+                        s.adv_id
+                            .map(|adv_id| (adv_id.clone(), s.params.clone(), s.scan_rsp.clone()))
+                    })
+                    .collect();
+                for (adv_id, params, scan_rsp) in advs {
+                    print_info!("Setting scan response data for {}", adv_id);
+                    context.gatt_dbus.as_mut().unwrap().set_scan_response_data(adv_id, scan_rsp);
+                    print_info!("Setting parameters for {}", adv_id);
                     context.gatt_dbus.as_mut().unwrap().set_advertising_parameters(adv_id, params);
                 }
             }

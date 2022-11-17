@@ -977,7 +977,7 @@ bool gatt_tcb_is_cid_busy(tGATT_TCB& tcb, uint16_t cid) {
  *
  ******************************************************************************/
 tGATT_CLCB* gatt_clcb_alloc(uint16_t conn_id) {
-  tGATT_CLCB clcb;
+  tGATT_CLCB clcb = {};
   tGATT_IF gatt_if = GATT_GET_GATT_IF(conn_id);
   uint8_t tcb_idx = GATT_GET_TCB_IDX(conn_id);
   tGATT_TCB* p_tcb = gatt_get_tcb_by_idx(tcb_idx);
@@ -1631,7 +1631,10 @@ void gatt_cleanup_upon_disc(const RawAddress& bda, tGATT_DISCONN_REASON reason,
 
   for (auto clcb_it = gatt_cb.clcb_queue.begin();
        clcb_it != gatt_cb.clcb_queue.end();) {
-    if (clcb_it->p_tcb != p_tcb) continue;
+    if (clcb_it->p_tcb != p_tcb) {
+      ++clcb_it;
+      continue;
+    }
 
     gatt_stop_rsp_timer(&(*clcb_it));
     VLOG(1) << "found p_clcb conn_id=" << +clcb_it->conn_id;

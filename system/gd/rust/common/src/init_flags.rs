@@ -170,8 +170,10 @@ fn parse_hci_adapter(flags: &mut InitFlags, values: Vec<&str>) {
 }
 
 init_flags!(
+    // LINT.IfChange
     flags: {
         btaa_hci = true,
+        btm_dm_flush_discovery_queue_on_search_cancel,
         finite_att_timeout = true,
         gatt_robust_caching_client = true,
         gatt_robust_caching_server,
@@ -185,12 +187,14 @@ init_flags!(
         irk_rotation,
         logging_debug_enabled_for_all,
         pass_phy_update_callback = true,
+        redact_log = true,
         sdp_serialization = true,
     }
     // extra_fields are not a 1 to 1 match with "INIT_*" flags
     extra_fields: {
         logging_debug_explicit_tag_settings: ExplicitTagSettings,
     }
+    // LINT.ThenChange(/system/gd/common/init_flags.fbs)
     extra_parsed_flags: {
         "INIT_logging_debug_enabled_for_tags" => parse_logging_tag(_, _, true),
         "INIT_logging_debug_disabled_for_tags" => parse_logging_tag(_, _, false),
@@ -281,5 +285,16 @@ mod tests {
         assert!(is_debug_logging_enabled_for_tag("bar2"));
         assert!(!is_debug_logging_enabled_for_tag("unknown_flag"));
         assert!(!logging_debug_enabled_for_all_is_enabled());
+    }
+    #[test]
+    fn test_redact_logging() {
+        let _guard = ASYNC_LOCK.lock().unwrap();
+        assert!(redact_log_is_enabled()); // default is true
+        test_load(vec!["INIT_redact_log=false"]);
+        assert!(!redact_log_is_enabled()); // turned off
+        test_load(vec!["INIT_redact_log=foo"]);
+        assert!(redact_log_is_enabled()); // invalid value, interpreted as default, true
+        test_load(vec!["INIT_redact_log=true"]);
+        assert!(redact_log_is_enabled()); // turned on
     }
 }
