@@ -326,14 +326,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             // time after init. Investigate why this delay is needed
             // and make it a blocking part of init before removing
             // this.
-            // TODO(b/255831897) - We need to disconnect the GATT client in
-            // `disconnect_all_enabled_profiles`, otherwise we will always have an
-            // open ACL connection (even on disconnect). Comment this out as a
-            // workaround.
-            // tokio::spawn(async move {
-            //     time::sleep(Duration::from_millis(500)).await;
-            //     battery_service.lock().unwrap().init();
-            // });
+            tokio::spawn(async move {
+                time::sleep(Duration::from_millis(500)).await;
+                battery_service.lock().unwrap().init();
+            });
             bt_sock_mgr.lock().unwrap().initialize(intf.clone());
 
             // Install SIGTERM handler so that we can properly shutdown
