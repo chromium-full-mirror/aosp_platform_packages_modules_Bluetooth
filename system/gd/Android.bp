@@ -537,7 +537,8 @@ cc_fuzz {
         ":BluetoothL2capFuzzTestSources",
     ],
     fuzz_config: {
-       cc: ["android-bluetooth@google.com"],
+       cc: ["android-bluetooth-security@google.com"],
+       componentid: 27441,
     },
 }
 
@@ -557,7 +558,8 @@ cc_fuzz {
         "hci/fuzz/acl_manager_fuzz_test.cc",
     ],
     fuzz_config: {
-       cc: ["zachoverflow@google.com"],
+       cc: ["android-bluetooth-security@google.com"],
+       componentid: 27441,
     },
 }
 
@@ -591,7 +593,7 @@ genrule {
     tools: [
         "bluetooth_packetgen",
     ],
-    cmd: "$(location bluetooth_packetgen) --include=packages/modules/Bluetooth/system/gd --out=$(genDir) $(in)",
+    cmd: "$(location bluetooth_packetgen) --fuzzing --testing --include=packages/modules/Bluetooth/system/gd --out=$(genDir) $(in)",
     srcs: [
         "hci/hci_packets.pdl",
         "l2cap/l2cap_packets.pdl",

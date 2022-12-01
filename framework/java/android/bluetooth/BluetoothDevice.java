@@ -1125,6 +1125,7 @@ public final class BluetoothDevice implements Parcelable, Attributable {
      * Used as an extra field in {@link #ACTION_UUID} intents,
      * Contains the {@link android.os.ParcelUuid}s of the remote device which
      * is a parcelable version of {@link UUID}.
+     * A {@code null} EXTRA_UUID indicates a timeout.
      */
     public static final String EXTRA_UUID = "android.bluetooth.device.extra.UUID";
 
@@ -1175,11 +1176,8 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @IntDef(
         prefix = { "TRANSPORT_" },
         value = {
-            /** Allow host to automatically select a transport (dual-mode only) */
             TRANSPORT_AUTO,
-            /** Use Classic or BR/EDR transport.*/
             TRANSPORT_BREDR,
-            /** Use Low Energy transport.*/
             TRANSPORT_LE,
         }
     )
@@ -1269,11 +1267,8 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     @IntDef(
         prefix = { "ADDRESS_TYPE_" },
         value = {
-            /** Hardware MAC Address */
             ADDRESS_TYPE_PUBLIC,
-            /** Address is either resolvable, non-resolvable or static.*/
             ADDRESS_TYPE_RANDOM,
-            /** Address type is unknown or unavailable **/
             ADDRESS_TYPE_UNKNOWN,
         }
     )

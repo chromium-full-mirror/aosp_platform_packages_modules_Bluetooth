@@ -8,6 +8,9 @@ pub fn generate(path: &Path) -> String {
     let filename = path.file_name().unwrap().to_str().expect("non UTF-8 filename");
     code.push_str(&format!("// @generated rust packets from {filename}\n\n"));
 
+    // TODO(mgeisler): make the generated code clean from warnings.
+    code.push_str("#![allow(warnings, missing_docs)]\n\n");
+
     code.push_str(&quote_block! {
         use bytes::{BufMut, Bytes, BytesMut};
         use num_derive::{FromPrimitive, ToPrimitive};
@@ -29,8 +32,8 @@ pub fn generate(path: &Path) -> String {
             InvalidPacketError,
             #[error("{field} was {value:x}, which is not known")]
             ConstraintOutOfBounds { field: String, value: u64 },
-            #[error("when parsing {obj}.{field} needed length of {wanted} but got {got}")]
-            InvalidLengthError { obj: String, field: String, wanted: usize, got: usize },
+            #[error("when parsing {obj} needed length of {wanted} but got {got}")]
+            InvalidLengthError { obj: String, wanted: usize, got: usize },
             #[error("Due to size restrictions a struct could not be parsed.")]
             ImpossibleStructError,
             #[error("when parsing field {obj}.{field}, {value} is not a valid {type_} value")]
