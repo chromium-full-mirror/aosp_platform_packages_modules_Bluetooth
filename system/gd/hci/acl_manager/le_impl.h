@@ -61,6 +61,7 @@ constexpr uint8_t PHY_LE_1M = 0x01;
 constexpr uint8_t PHY_LE_2M = 0x02;
 constexpr uint8_t PHY_LE_CODED = 0x04;
 constexpr bool kEnableBlePrivacy = true;
+constexpr bool kEnableBleOnlyInit1mPhy = false;
 
 static const std::string kPropertyMinConnInterval = "bluetooth.core.le.min_connection_interval";
 static const std::string kPropertyMaxConnInterval = "bluetooth.core.le.max_connection_interval";
@@ -74,6 +75,7 @@ static const std::string kPropertyConnScanWindowCodedFast = "bluetooth.core.le.c
 static const std::string kPropertyConnScanIntervalSlow = "bluetooth.core.le.connection_scan_interval_slow";
 static const std::string kPropertyConnScanWindowSlow = "bluetooth.core.le.connection_scan_window_slow";
 static const std::string kPropertyEnableBlePrivacy = "bluetooth.core.gap.le.privacy.enabled";
+static const std::string kPropertyEnableBleOnlyInit1mPhy = "bluetooth.core.gap.le.conn.only_init_1m_phy.enabled";
 
 enum class ConnectabilityState {
   DISARMED = 0,
@@ -919,6 +921,8 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
     }
 
     if (controller_->IsSupported(OpCode::LE_EXTENDED_CREATE_CONNECTION)) {
+      bool only_init_1m_phy = os::GetSystemPropertyBool(kPropertyEnableBleOnlyInit1mPhy, kEnableBleOnlyInit1mPhy);
+
       uint8_t initiating_phys = PHY_LE_1M;
       std::vector<LeCreateConnPhyScanParameters> parameters = {};
       LeCreateConnPhyScanParameters scan_parameters;
@@ -932,7 +936,7 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
       scan_parameters.max_ce_length_ = 0x00;
       parameters.push_back(scan_parameters);
 
-      if (controller_->SupportsBle2mPhy()) {
+      if (controller_->SupportsBle2mPhy() && !only_init_1m_phy) {
         LeCreateConnPhyScanParameters scan_parameters_2m;
         scan_parameters_2m.scan_interval_ = le_scan_interval;
         scan_parameters_2m.scan_window_ = le_scan_window_2m;
@@ -945,7 +949,7 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
         parameters.push_back(scan_parameters_2m);
         initiating_phys |= PHY_LE_2M;
       }
-      if (controller_->SupportsBleCodedPhy()) {
+      if (controller_->SupportsBleCodedPhy() && !only_init_1m_phy) {
         LeCreateConnPhyScanParameters scan_parameters_coded;
         scan_parameters_coded.scan_interval_ = le_scan_interval;
         scan_parameters_coded.scan_window_ = le_scan_window_coded;
