@@ -54,13 +54,14 @@ enum class AdvertisingFlag : uint8_t {
 struct Advertiser {
   os::Handler* handler;
   AddressWithType current_address;
-  base::Callback<void(uint8_t /* status */)> status_callback;
-  base::Callback<void(uint8_t /* status */)> timeout_callback;
+  base::OnceCallback<void(uint8_t /* status */)> status_callback;
+  base::OnceCallback<void(uint8_t /* status */)> timeout_callback;
   common::Callback<void(Address, AddressType)> scan_callback;
   common::Callback<void(ErrorCode, uint8_t, uint8_t)> set_terminated_callback;
   int8_t tx_power;
   uint16_t duration;
   uint8_t max_extended_advertising_events;
+  bool pending_start = false;  // whether we have started but are still in the queue
   bool started = false;
   bool connectable = false;
   bool directed = false;
@@ -219,7 +220,9 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
 
     uint8_t advertiser_id = event_view.GetAdvertisingHandle();
 
+    bool was_rotating_address = false;
     if (advertising_sets_[advertiser_id].address_rotation_alarm != nullptr) {
+      was_rotating_address = true;
       advertising_sets_[advertiser_id].address_rotation_alarm->Cancel();
       advertising_sets_[advertiser_id].address_rotation_alarm.reset();
     }
@@ -232,7 +235,7 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
     if (status == ErrorCode::LIMIT_REACHED || status == ErrorCode::ADVERTISING_TIMEOUT) {
       if (id_map_[advertiser_id] == kIdLocal) {
         if (!advertising_sets_[advertiser_id].timeout_callback.is_null()) {
-          advertising_sets_[advertiser_id].timeout_callback.Run((uint8_t)status);
+          std::move(advertising_sets_[advertiser_id].timeout_callback).Run((uint8_t)status);
           advertising_sets_[advertiser_id].timeout_callback.Reset();
         }
       } else {
@@ -246,6 +249,13 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
       if (advertising_sets_[advertiser_id].duration == 0 &&
           advertising_sets_[advertiser_id].max_extended_advertising_events == 0) {
         LOG_INFO("Reenable advertising");
+        if (was_rotating_address) {
+          advertising_sets_[advertiser_id].address_rotation_alarm = std::make_unique<os::Alarm>(module_handler_);
+          advertising_sets_[advertiser_id].address_rotation_alarm->Schedule(
+              common::BindOnce(
+                  &impl::set_advertising_set_random_address_on_timer, common::Unretained(this), advertiser_id),
+              le_address_manager_->GetNextPrivateAddressIntervalMs());
+        }
         enable_advertiser(advertiser_id, true, 0, 0);
       }
     }
@@ -338,6 +348,7 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
           enable_advertiser(id, true, 0, 0);
         } else {
           enabled_sets_[id].advertising_handle_ = id;
+          advertising_sets_[id].pending_start = true;
         }
       } break;
       case (AdvertisingApiType::ANDROID_HCI): {
@@ -363,6 +374,7 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
           enable_advertiser(id, true, 0, 0);
         } else {
           enabled_sets_[id].advertising_handle_ = id;
+          advertising_sets_[id].pending_start = true;
         }
       } break;
       case (AdvertisingApiType::EXTENDED): {
@@ -375,13 +387,13 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
       AdvertiserId id,
       const ExtendedAdvertisingConfig config,
       uint16_t duration,
-      const base::Callback<void(uint8_t /* status */)>& status_callback,
-      const base::Callback<void(uint8_t /* status */)>& timeout_callback,
+      base::OnceCallback<void(uint8_t /* status */)> status_callback,
+      base::OnceCallback<void(uint8_t /* status */)> timeout_callback,
       const common::Callback<void(Address, AddressType)>& scan_callback,
       const common::Callback<void(ErrorCode, uint8_t, uint8_t)>& set_terminated_callback,
       os::Handler* handler) {
-    advertising_sets_[id].status_callback = status_callback;
-    advertising_sets_[id].timeout_callback = timeout_callback;
+    advertising_sets_[id].status_callback = std::move(status_callback);
+    advertising_sets_[id].timeout_callback = std::move(timeout_callback);
 
     create_extended_advertiser(kIdLocal, id, config, scan_callback, set_terminated_callback, duration, 0, handler);
   }
@@ -440,7 +452,7 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
           // start timer for random address
           advertising_sets_[id].address_rotation_alarm = std::make_unique<os::Alarm>(module_handler_);
           advertising_sets_[id].address_rotation_alarm->Schedule(
-              common::BindOnce(&impl::set_advertising_set_random_address, common::Unretained(this), id),
+              common::BindOnce(&impl::set_advertising_set_random_address_on_timer, common::Unretained(this), id),
               le_address_manager_->GetNextPrivateAddressIntervalMs());
         } else {
           advertising_sets_[id].current_address = le_address_manager_->GetCurrentAddress();
@@ -474,6 +486,9 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
     if (!paused) {
       enable_advertiser(id, true, duration, max_ext_adv_events);
     } else {
+      // invoke callbacks upon OnResume()
+      advertising_sets_[id].pending_start = true;
+
       EnabledSet curr_set;
       curr_set.advertising_handle_ = id;
       curr_set.duration_ = duration;
@@ -521,8 +536,21 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
     enabled_sets_[advertiser_id].advertising_handle_ = kInvalidHandle;
   }
 
-  void set_advertising_set_random_address(AdvertiserId advertiser_id) {
-    // This function should only be trigger by enabled advertising set
+  void rotate_advertiser_address(AdvertiserId advertiser_id) {
+    if (advertising_api_type_ == AdvertisingApiType::EXTENDED) {
+      AddressWithType address_with_type = le_address_manager_->GetAnotherAddress();
+      le_advertising_interface_->EnqueueCommand(
+          hci::LeSetAdvertisingSetRandomAddressBuilder::Create(advertiser_id, address_with_type.GetAddress()),
+          module_handler_->BindOnceOn(
+              this,
+              &impl::on_set_advertising_set_random_address_complete<LeSetAdvertisingSetRandomAddressCompleteView>,
+              advertiser_id,
+              address_with_type));
+    }
+  }
+
+  void set_advertising_set_random_address_on_timer(AdvertiserId advertiser_id) {
+    // This function should only be trigger by enabled advertising set or IRK rotation
     if (enabled_sets_[advertiser_id].advertising_handle_ == kInvalidHandle) {
       if (advertising_sets_[advertiser_id].address_rotation_alarm != nullptr) {
         advertising_sets_[advertiser_id].address_rotation_alarm->Cancel();
@@ -545,23 +573,20 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
           module_handler_->BindOnce(impl::check_status<LeSetExtendedAdvertisingEnableCompleteView>));
     }
 
-    AddressWithType address_with_type = le_address_manager_->GetAnotherAddress();
-    le_advertising_interface_->EnqueueCommand(
-        hci::LeSetAdvertisingSetRandomAddressBuilder::Create(advertiser_id, address_with_type.GetAddress()),
-        module_handler_->BindOnceOn(
-            this,
-            &impl::on_set_advertising_set_random_address_complete<LeSetAdvertisingSetRandomAddressCompleteView>,
-            advertiser_id,
-            address_with_type));
+    rotate_advertiser_address(advertiser_id);
 
-    if (advertising_sets_[advertiser_id].connectable) {
+    // If we are paused, we will be enabled in OnResume(), so don't resume now.
+    // Note that OnResume() can never re-enable us while we are changing our address, since the
+    // DISABLED and ENABLED commands are enqueued synchronously, so OnResume() doesn't need an
+    // analogous check.
+    if (advertising_sets_[advertiser_id].connectable && !paused) {
       le_advertising_interface_->EnqueueCommand(
           hci::LeSetExtendedAdvertisingEnableBuilder::Create(Enable::ENABLED, enabled_sets),
           module_handler_->BindOnce(impl::check_status<LeSetExtendedAdvertisingEnableCompleteView>));
     }
 
     advertising_sets_[advertiser_id].address_rotation_alarm->Schedule(
-        common::BindOnce(&impl::set_advertising_set_random_address, common::Unretained(this), advertiser_id),
+        common::BindOnce(&impl::set_advertising_set_random_address_on_timer, common::Unretained(this), advertiser_id),
         le_address_manager_->GetNextPrivateAddressIntervalMs());
   }
 
@@ -908,6 +933,11 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
       return;
     }
 
+    if (enable) {
+      // so that callbacks get invoked on command complete
+      advertising_sets_[advertiser_id].pending_start = true;
+    }
+
     switch (advertising_api_type_) {
       case (AdvertisingApiType::LEGACY): {
         le_advertising_interface_->EnqueueCommand(
@@ -1095,7 +1125,13 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
         case (AdvertisingApiType::LEGACY): {
           le_advertising_interface_->EnqueueCommand(
               hci::LeSetAdvertisingEnableBuilder::Create(Enable::ENABLED),
-              module_handler_->BindOnce(impl::check_status<LeSetAdvertisingEnableCompleteView>));
+              common::init_flags::trigger_advertising_callbacks_on_first_resume_after_pause_is_enabled()
+                  ? module_handler_->BindOnceOn(
+                        this,
+                        &impl::on_set_advertising_enable_complete<LeSetAdvertisingEnableCompleteView>,
+                        true,
+                        enabled_sets)
+                  : module_handler_->BindOnce(impl::check_status<LeSetAdvertisingEnableCompleteView>));
         } break;
         case (AdvertisingApiType::ANDROID_HCI): {
           for (size_t i = 0; i < enabled_sets_.size(); i++) {
@@ -1103,7 +1139,13 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
             if (id != kInvalidHandle) {
               le_advertising_interface_->EnqueueCommand(
                   hci::LeMultiAdvtSetEnableBuilder::Create(Enable::ENABLED, id),
-                  module_handler_->BindOnce(impl::check_status<LeMultiAdvtCompleteView>));
+                  common::init_flags::trigger_advertising_callbacks_on_first_resume_after_pause_is_enabled()
+                      ? module_handler_->BindOnceOn(
+                            this,
+                            &impl::on_set_advertising_enable_complete<LeMultiAdvtCompleteView>,
+                            true,
+                            enabled_sets)
+                      : module_handler_->BindOnce(impl::check_status<LeMultiAdvtCompleteView>));
             }
           }
         } break;
@@ -1111,12 +1153,35 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
           if (enabled_sets.size() != 0) {
             le_advertising_interface_->EnqueueCommand(
                 hci::LeSetExtendedAdvertisingEnableBuilder::Create(Enable::ENABLED, enabled_sets),
-                module_handler_->BindOnce(impl::check_status<LeSetExtendedAdvertisingEnableCompleteView>));
+                common::init_flags::trigger_advertising_callbacks_on_first_resume_after_pause_is_enabled()
+                    ? module_handler_->BindOnceOn(
+                          this,
+                          &impl::on_set_extended_advertising_enable_complete<
+                              LeSetExtendedAdvertisingEnableCompleteView>,
+                          true,
+                          enabled_sets)
+                    : module_handler_->BindOnce(impl::check_status<LeSetExtendedAdvertisingEnableCompleteView>));
           }
         } break;
       }
     }
     le_address_manager_->AckResume(this);
+  }
+
+  // Note: this needs to be synchronous (i.e. NOT on a handler) for two reasons:
+  // 1. For parity with OnPause() and OnResume()
+  // 2. If we don't enqueue our HCI commands SYNCHRONOUSLY, then it is possible that we OnResume() in addressManager
+  // before our commands complete. So then our commands reach the HCI layer *after* the resume commands from address
+  // manager, which is racey (even if it might not matter).
+  //
+  // If you are a future developer making this asynchronous, you need to add some kind of ->AckIRKChange() method to the
+  // address manager so we can defer resumption to after this completes.
+  void NotifyOnIRKChange() override {
+    for (size_t i = 0; i < enabled_sets_.size(); i++) {
+      if (enabled_sets_[i].advertising_handle_ != kInvalidHandle) {
+        rotate_advertiser_address(i);
+      }
+    }
   }
 
   common::Callback<void(Address, AddressType)> scan_callback_;
@@ -1181,18 +1246,26 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
         continue;
       }
 
-      if (id_map_[id] == kIdLocal) {
+      int reg_id = id_map_[id];
+      if (reg_id == kIdLocal) {
         if (!advertising_sets_[enabled_set.advertising_handle_].status_callback.is_null()) {
-          advertising_sets_[enabled_set.advertising_handle_].status_callback.Run(advertising_status);
+          std::move(advertising_sets_[enabled_set.advertising_handle_].status_callback).Run(advertising_status);
           advertising_sets_[enabled_set.advertising_handle_].status_callback.Reset();
         }
         continue;
       }
 
       if (started) {
+        // This event can be triggered from OnPause / OnResume. If so, only invoke callbacks if we were initially paused
+        // (pending_start) after an API invocation (i.e. StartAdvertising -> currently paused -> OnResume -> enabled
+        // [callback], but StartAdvertising -> enabled [callback] -> resumed -> OnPause -> OnResume [NO callback]
+        if (!advertising_sets_[enabled_set.advertising_handle_].pending_start) {
+          continue;
+        }
         advertising_callbacks_->OnAdvertisingEnabled(id, enable, advertising_status);
+        // since we have started, we are no longer pending
+        advertising_sets_[enabled_set.advertising_handle_].pending_start = false;
       } else {
-        int reg_id = id_map_[id];
         advertising_sets_[enabled_set.advertising_handle_].started = true;
         advertising_callbacks_->OnAdvertisingSetStarted(reg_id, id, le_physical_channel_tx_power_, advertising_status);
       }
@@ -1223,18 +1296,26 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
         continue;
       }
 
-      if (id_map_[id] == kIdLocal) {
+      int reg_id = id_map_[id];
+      if (reg_id == kIdLocal) {
         if (!advertising_sets_[enabled_set.advertising_handle_].status_callback.is_null()) {
-          advertising_sets_[enabled_set.advertising_handle_].status_callback.Run(advertising_status);
+          std::move(advertising_sets_[enabled_set.advertising_handle_].status_callback).Run(advertising_status);
           advertising_sets_[enabled_set.advertising_handle_].status_callback.Reset();
         }
         continue;
       }
 
       if (started) {
+        // This event can be triggered from OnPause / OnResume. If so, only invoke callbacks if we were initially paused
+        // (pending_start) after an API invocation (i.e. StartAdvertising -> currently paused -> OnResume -> enabled
+        // [callback], but StartAdvertising -> enabled [callback] -> resumed -> OnPause -> OnResume [NO callback]
+        if (!advertising_sets_[enabled_set.advertising_handle_].pending_start) {
+          continue;
+        }
         advertising_callbacks_->OnAdvertisingEnabled(id, enable, advertising_status);
+        // since we have started, we are no longer pending
+        advertising_sets_[enabled_set.advertising_handle_].pending_start = false;
       } else {
-        int reg_id = id_map_[id];
         advertising_sets_[enabled_set.advertising_handle_].started = true;
         advertising_callbacks_->OnAdvertisingSetStarted(reg_id, id, tx_power, advertising_status);
       }
@@ -1283,7 +1364,7 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
     auto complete_view = LeSetAdvertisingSetRandomAddressCompleteView::Create(view);
     ASSERT(complete_view.IsValid());
     if (complete_view.GetStatus() != ErrorCode::SUCCESS) {
-      LOG_INFO("Got a command complete with status %s", ErrorCodeText(complete_view.GetStatus()).c_str());
+      LOG_ERROR("Got a command complete with status %s", ErrorCodeText(complete_view.GetStatus()).c_str());
     } else {
       LOG_INFO(
           "update random address for advertising set %d : %s",
@@ -1528,8 +1609,8 @@ void LeAdvertisingManager::StartAdvertising(
     AdvertiserId advertiser_id,
     const ExtendedAdvertisingConfig config,
     uint16_t duration,
-    const base::Callback<void(uint8_t /* status */)>& status_callback,
-    const base::Callback<void(uint8_t /* status */)>& timeout_callback,
+    base::OnceCallback<void(uint8_t /* status */)> status_callback,
+    base::OnceCallback<void(uint8_t /* status */)> timeout_callback,
     const common::Callback<void(Address, AddressType)>& scan_callback,
     const common::Callback<void(ErrorCode, uint8_t, uint8_t)>& set_terminated_callback,
     os::Handler* handler) {
@@ -1539,20 +1620,20 @@ void LeAdvertisingManager::StartAdvertising(
       advertiser_id,
       config,
       duration,
-      status_callback,
-      timeout_callback,
+      std::move(status_callback),
+      std::move(timeout_callback),
       scan_callback,
       set_terminated_callback,
       handler);
 }
 
 void LeAdvertisingManager::RegisterAdvertiser(
-    base::Callback<void(uint8_t /* inst_id */, uint8_t /* status */)> callback) {
+    base::OnceCallback<void(uint8_t /* inst_id */, uint8_t /* status */)> callback) {
   AdvertiserId id = pimpl_->allocate_advertiser();
   if (id == kInvalidId) {
-    callback.Run(kInvalidId, AdvertisingCallback::AdvertisingStatus::TOO_MANY_ADVERTISERS);
+    std::move(callback).Run(kInvalidId, AdvertisingCallback::AdvertisingStatus::TOO_MANY_ADVERTISERS);
   } else {
-    callback.Run(id, AdvertisingCallback::AdvertisingStatus::SUCCESS);
+    std::move(callback).Run(id, AdvertisingCallback::AdvertisingStatus::SUCCESS);
   }
 }
 

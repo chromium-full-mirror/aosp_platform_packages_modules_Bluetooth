@@ -632,11 +632,14 @@ static int get_connection_state(const RawAddress* bd_addr) {
 
 static int pin_reply(const RawAddress* bd_addr, uint8_t accept, uint8_t pin_len,
                      bt_pin_code_t* pin_code) {
+  bt_pin_code_t tmp_pin_code;
   if (!interface_ready()) return BT_STATUS_NOT_READY;
   if (pin_code == nullptr || pin_len > PIN_CODE_LEN) return BT_STATUS_FAIL;
 
+  memcpy(&tmp_pin_code, pin_code, pin_len);
+
   do_in_main_thread(FROM_HERE, base::BindOnce(btif_dm_pin_reply, *bd_addr,
-                                              accept, pin_len, *pin_code));
+                                              accept, pin_len, tmp_pin_code));
   return BT_STATUS_SUCCESS;
 }
 
@@ -733,7 +736,9 @@ static int restore_filter_accept_list() {
 
 static int allow_wake_by_hid() {
   if (!interface_ready()) return BT_STATUS_NOT_READY;
-  do_in_main_thread(FROM_HERE, base::BindOnce(btif_dm_allow_wake_by_hid));
+  auto hid_addrs = btif_storage_get_hid_device_addresses();
+  do_in_main_thread(FROM_HERE, base::BindOnce(btif_dm_allow_wake_by_hid,
+                                              std::move(hid_addrs)));
   return BT_STATUS_SUCCESS;
 }
 

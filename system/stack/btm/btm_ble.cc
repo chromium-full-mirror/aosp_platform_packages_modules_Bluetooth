@@ -991,10 +991,17 @@ tL2CAP_LE_RESULT_CODE btm_ble_start_sec_check(const RawAddress& bd_addr,
   }
 
   if (ble_sec_act == BTM_BLE_SEC_NONE) {
-    return result;
+    if (bluetooth::common::init_flags::queue_l2cap_coc_while_encrypting_is_enabled()) {
+      if (sec_act != BTM_SEC_ENC_PENDING) {
+        return result;
+      }
+    } else {
+      return result;
+    }
+  } else {
+    l2cble_update_sec_act(bd_addr, sec_act);
   }
 
-  l2cble_update_sec_act(bd_addr, sec_act);
   BTM_SetEncryption(bd_addr, BT_TRANSPORT_LE, p_callback, p_ref_data,
                     ble_sec_act);
 
@@ -2065,7 +2072,7 @@ static void btm_ble_reset_id_impl(const Octet16& rand1, const Octet16& rand2) {
   /* proceed generate ER */
   btm_cb.devcb.ble_encryption_key_value = rand2;
   btm_notify_new_key(BTM_BLE_KEY_TYPE_ER);
-
+  
   /* if privacy is enabled, update the irk and RPA in the LE address manager */
   if (btm_cb.ble_ctr_cb.privacy_mode != BTM_PRIVACY_NONE) {
     BTM_BleConfigPrivacy(true);
