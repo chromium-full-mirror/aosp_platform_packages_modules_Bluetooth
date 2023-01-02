@@ -545,27 +545,31 @@ cc_test {
         "fluoride_defaults",
         "mts_defaults",
     ],
+    host_supported: true,
     test_suites: ["general-tests"],
     local_include_dirs: [
         "include",
         "btm",
+        "test/common",
     ],
     include_dirs: [
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
         "packages/modules/Bluetooth/system/internal_include",
-        "packages/modules/Bluetooth/system/internal_include",
         "packages/modules/Bluetooth/system/utils/include",
     ],
     srcs: [
         "gatt/connection_manager.cc",
+        "test/common/mock_btm_api_layer.cc",
         "test/gatt_connection_manager_test.cc",
+        ":TestCommonMainHandler",
     ],
     shared_libs: [
         "libcutils",
     ],
     static_libs: [
         "libbluetooth-types",
+        "libbt-common",
         "liblog",
         "libgmock",
     ],
@@ -1029,6 +1033,7 @@ cc_test {
     include_dirs: [
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/stack/btm",
     ],
     srcs: crypto_toolbox_srcs + [
         ":TestMockStackL2cap",
@@ -1082,6 +1087,7 @@ cc_test {
     include_dirs: [
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/stack/btm",
     ],
     generated_headers: [
         "BluetoothGeneratedDumpsysDataSchema_h",
@@ -1144,6 +1150,7 @@ cc_test {
     include_dirs: [
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/stack/btm",
         "packages/modules/Bluetooth/system/utils/include",
     ],
     generated_headers: [
@@ -1220,6 +1227,7 @@ cc_test {
     include_dirs: [
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/stack/btm",
         "packages/modules/Bluetooth/system/utils/include",
     ],
     generated_headers: [
@@ -1292,6 +1300,7 @@ cc_test {
     include_dirs: [
         "packages/modules/Bluetooth/system",
         "packages/modules/Bluetooth/system/gd",
+        "packages/modules/Bluetooth/system/stack/btm",
         "packages/modules/Bluetooth/system/utils/include",
     ],
     generated_headers: [
