@@ -275,6 +275,9 @@ void bta_dm_enable(tBTA_DM_SEC_CBACK* p_sec_cback) {
   btm_local_io_caps = btif_storage_get_local_io_caps();
 }
 
+void bta_dm_search_set_state(uint8_t state) { bta_dm_search_cb.state = state; }
+uint8_t bta_dm_search_get_state() { return bta_dm_search_cb.state; }
+
 /*******************************************************************************
  *
  * Function         bta_dm_init_cb
@@ -330,7 +333,7 @@ void BTA_dm_on_hw_off() {
   /* hw is ready, go on with BTA DM initialization */
   alarm_free(bta_dm_search_cb.search_timer);
   alarm_free(bta_dm_search_cb.gatt_close_timer);
-  osi_free(bta_dm_search_cb.p_pending_search);
+  osi_free_and_reset((void**)&bta_dm_search_cb.p_pending_search);
   fixed_queue_free(bta_dm_search_cb.pending_discovery_queue, osi_free);
   memset(&bta_dm_search_cb, 0, sizeof(bta_dm_search_cb));
 }
@@ -351,7 +354,7 @@ void BTA_dm_on_hw_on() {
   /* hw is ready, go on with BTA DM initialization */
   alarm_free(bta_dm_search_cb.search_timer);
   alarm_free(bta_dm_search_cb.gatt_close_timer);
-  osi_free(bta_dm_search_cb.p_pending_search);
+  osi_free_and_reset((void**)&bta_dm_search_cb.p_pending_search);
   fixed_queue_free(bta_dm_search_cb.pending_discovery_queue, osi_free);
   memset(&bta_dm_search_cb, 0, sizeof(bta_dm_search_cb));
   /*
@@ -2612,6 +2615,9 @@ static void bta_dm_acl_down(const RawAddress& bd_addr,
       memset(&bta_dm_cb.device_list.peer_device[clear_index], 0,
              sizeof(bta_dm_cb.device_list.peer_device[clear_index]));
     }
+
+    device->conn_state = BTA_DM_NOT_CONNECTED;
+
     break;
   }
   if (bta_dm_cb.device_list.count) bta_dm_cb.device_list.count--;
@@ -4113,9 +4119,11 @@ void btm_dm_start_gatt_discovery(const RawAddress& bd_addr) {
     BTA_GATTC_ServiceSearchRequest(bta_dm_search_cb.conn_id, nullptr);
   } else {
     if (BTM_IsAclConnectionUp(bd_addr, BT_TRANSPORT_LE)) {
-      BTA_GATTC_Open(bta_dm_search_cb.client_if, bd_addr, true, true);
+      BTA_GATTC_Open(bta_dm_search_cb.client_if, bd_addr,
+                     BTM_BLE_DIRECT_CONNECTION, true);
     } else {
-      BTA_GATTC_Open(bta_dm_search_cb.client_if, bd_addr, true, false);
+      BTA_GATTC_Open(bta_dm_search_cb.client_if, bd_addr,
+                     BTM_BLE_DIRECT_CONNECTION, false);
     }
   }
 }

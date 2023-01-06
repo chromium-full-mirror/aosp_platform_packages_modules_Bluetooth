@@ -564,7 +564,8 @@ public class GattService extends ProfileService {
     /**
      * Handlers for incoming service calls
      */
-    private static class BluetoothGattBinder extends IBluetoothGatt.Stub
+    @VisibleForTesting
+    static class BluetoothGattBinder extends IBluetoothGatt.Stub
             implements IProfileServiceBinder {
         private GattService mService;
 
@@ -2967,7 +2968,7 @@ public class GattService extends ProfileService {
 
         final long identity = Binder.clearCallingIdentity();
         try {
-            for (AssociationInfo info : mCompanionManager.getAllAssociations()) {
+            for (AssociationInfo info : Utils.getCdmAssociations(mCompanionManager)) {
                 if (info.getPackageName().equals(callingPackage) && !info.isSelfManaged()
                     && info.getDeviceMacAddress() != null) {
                     macAddresses.add(info.getDeviceMacAddress().toString());

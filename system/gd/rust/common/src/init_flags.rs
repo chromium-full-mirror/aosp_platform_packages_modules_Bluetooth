@@ -220,12 +220,15 @@ init_flags!(
         gd_security,
         hci_adapter: i32,
         irk_rotation,
+        leaudio_targeted_announcement_reconnection_mode,
         logging_debug_enabled_for_all,
         pass_phy_update_callback = true,
+        periodic_advertising_adi = true,
         queue_l2cap_coc_while_encrypting = true,
         redact_log = true,
         sdp_serialization = true,
         sdp_skip_rnr_if_known = true,
+        set_min_encryption = true,
         trigger_advertising_callbacks_on_first_resume_after_pause = true,
     }
     // extra_fields are not a 1 to 1 match with "INIT_*" flags

@@ -26,7 +26,6 @@
 #include "common/metric_id_allocator.h"
 #include "common/time_util.h"
 #include "gd/common/callback.h"
-#include "gd/neighbor/name.h"
 #include "gd/os/log.h"
 #include "gd/security/security_module.h"
 #include "gd/security/ui.h"
@@ -725,6 +724,15 @@ void bluetooth::shim::BTM_BleOpportunisticObserve(
     btm_cb.ble_ctr_cb.p_opportunistic_obs_results_cb = p_results_cb;
   } else {
     btm_cb.ble_ctr_cb.p_opportunistic_obs_results_cb = nullptr;
+  }
+}
+
+void bluetooth::shim::BTM_BleTargetAnnouncementObserve(
+    bool enable, tBTM_INQ_RESULTS_CB* p_results_cb) {
+  if (enable) {
+    btm_cb.ble_ctr_cb.p_target_announcement_obs_results_cb = p_results_cb;
+  } else {
+    btm_cb.ble_ctr_cb.p_target_announcement_obs_results_cb = nullptr;
   }
 }
 
