@@ -263,7 +263,8 @@ public class AdapterService extends Service {
     }
 
     private BluetoothAdapter mAdapter;
-    private AdapterProperties mAdapterProperties;
+    @VisibleForTesting
+    AdapterProperties mAdapterProperties;
     private AdapterState mAdapterStateMachine;
     private BondStateMachine mBondStateMachine;
     private JniCallbacks mJniCallbacks;
@@ -1383,7 +1384,8 @@ public class AdapterService extends Service {
     }
 
     @BluetoothAdapter.RfcommListenerResult
-    private int stopRfcommListener(ParcelUuid uuid, AttributionSource attributionSource) {
+    @VisibleForTesting
+    int stopRfcommListener(ParcelUuid uuid, AttributionSource attributionSource) {
         RfcommListenerData listenerData = mBluetoothServerSockets.get(uuid.getUuid());
 
         if (listenerData == null) {
@@ -1402,7 +1404,8 @@ public class AdapterService extends Service {
         return listenerData.closeServerAndPendingSockets(mHandler);
     }
 
-    private IncomingRfcommSocketInfo retrievePendingSocketForServiceRecord(
+    @VisibleForTesting
+    IncomingRfcommSocketInfo retrievePendingSocketForServiceRecord(
             ParcelUuid uuid, AttributionSource attributionSource) {
         IncomingRfcommSocketInfo socketInfo = new IncomingRfcommSocketInfo();
 
@@ -1573,7 +1576,8 @@ public class AdapterService extends Service {
         }
     }
 
-    private boolean isAvailable() {
+    @VisibleForTesting
+    boolean isAvailable() {
         return !mCleaningUp;
     }
 
@@ -4058,6 +4062,73 @@ public class AdapterService extends Service {
             enforceBluetoothPrivilegedPermission(service);
             Utils.setForegroundUserId(userId);
         }
+
+        @Override
+        public void setPreferredAudioProfiles(BluetoothDevice device, Bundle modeToProfileBundle,
+                AttributionSource source, SynchronousResultReceiver receiver) {
+            try {
+                receiver.send(setPreferredAudioProfiles(device, modeToProfileBundle, source));
+            } catch (RuntimeException e) {
+                receiver.propagateException(e);
+            }
+        }
+
+        private int setPreferredAudioProfiles(BluetoothDevice device, Bundle modeToProfileBundle,
+                AttributionSource source) {
+            AdapterService service = getService();
+            if (service == null) {
+                return BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ENABLED;
+            }
+            if (!callerIsSystemOrActiveOrManagedUser(service, TAG, "setPreferredAudioProfiles")) {
+                return BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ALLOWED;
+            }
+            if (device == null) {
+                throw new IllegalArgumentException("device cannot be null");
+            }
+            if (!BluetoothAdapter.checkBluetoothAddress(device.getAddress())) {
+                throw new IllegalArgumentException("device cannot have an invalid address");
+            }
+            if (!Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
+                return BluetoothStatusCodes.ERROR_MISSING_BLUETOOTH_CONNECT_PERMISSION;
+            }
+
+            enforceBluetoothPrivilegedPermission(service);
+            return service.mDatabaseManager.setPreferredAudioProfiles(device, modeToProfileBundle);
+        }
+
+        @Override
+        public void getPreferredAudioProfiles(BluetoothDevice device,
+                AttributionSource source, SynchronousResultReceiver receiver) {
+            try {
+                receiver.send(getPreferredAudioProfiles(device, source));
+            } catch (RuntimeException e) {
+                receiver.propagateException(e);
+            }
+        }
+
+        private Bundle getPreferredAudioProfiles(BluetoothDevice device,
+                AttributionSource source) {
+            AdapterService service = getService();
+            if (service == null) {
+                return Bundle.EMPTY;
+            }
+            if (!callerIsSystemOrActiveOrManagedUser(service, TAG, "getPreferredAudioProfiles")) {
+                throw new IllegalStateException("Caller is not the system or part of the "
+                        + "active/managed user");
+            }
+            if (device == null) {
+                throw new IllegalArgumentException("device cannot be null");
+            }
+            if (!BluetoothAdapter.checkBluetoothAddress(device.getAddress())) {
+                throw new IllegalArgumentException("device cannot have an invalid address");
+            }
+            if (!Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
+                return Bundle.EMPTY;
+            }
+
+            enforceBluetoothPrivilegedPermission(service);
+            return service.mDatabaseManager.getPreferredAudioProfiles(device);
+        }
     }
 
     // ----API Methods--------
@@ -4105,7 +4176,8 @@ public class AdapterService extends Service {
         return mAdapterProperties.getName().length();
     }
 
-    private static boolean isValidIoCapability(int capability) {
+    @VisibleForTesting
+    static boolean isValidIoCapability(int capability) {
         if (capability < 0 || capability >= BluetoothAdapter.IO_CAPABILITY_MAX) {
             Log.e(TAG, "Invalid IO capability value - " + capability);
             return false;
@@ -5035,7 +5107,8 @@ public class AdapterService extends Service {
         return mAdapterProperties.isA2dpOffloadEnabled();
     }
 
-    private BluetoothActivityEnergyInfo reportActivityInfo() {
+    @VisibleForTesting
+    BluetoothActivityEnergyInfo reportActivityInfo() {
         if (mAdapterProperties.getState() != BluetoothAdapter.STATE_ON
                 || !mAdapterProperties.isActivityAndEnergyReportingSupported()) {
             return null;

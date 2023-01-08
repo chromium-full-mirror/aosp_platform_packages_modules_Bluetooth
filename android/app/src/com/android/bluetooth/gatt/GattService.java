@@ -33,6 +33,7 @@ import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothProtoEnums;
 import android.bluetooth.BluetoothStatusCodes;
+import android.bluetooth.BluetoothUtils;
 import android.bluetooth.IBluetoothGatt;
 import android.bluetooth.IBluetoothGattCallback;
 import android.bluetooth.IBluetoothGattServerCallback;
@@ -94,8 +95,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
+
+import android.content.res.Resources;
 
 /**
  * Provides Bluetooth Gatt profile, as a service in
@@ -142,7 +144,8 @@ public class GattService extends ProfileService {
     /**
      * The default floor value for LE batch scan report delays greater than 0
      */
-    private static final long DEFAULT_REPORT_DELAY_FLOOR = 5000;
+    @VisibleForTesting
+    static final long DEFAULT_REPORT_DELAY_FLOOR = 5000;
 
     // onFoundLost related constants
     private static final int ADVT_STATE_ONFOUND = 0;
@@ -271,9 +274,12 @@ public class GattService extends ProfileService {
 
     private AdapterService mAdapterService;
     private BluetoothAdapterProxy mBluetoothAdapterProxy;
-    private AdvertiseManager mAdvertiseManager;
-    private PeriodicScanManager mPeriodicScanManager;
-    private ScanManager mScanManager;
+    @VisibleForTesting
+    AdvertiseManager mAdvertiseManager;
+    @VisibleForTesting
+    PeriodicScanManager mPeriodicScanManager;
+    @VisibleForTesting
+    ScanManager mScanManager;
     private AppOpsManager mAppOps;
     private CompanionDeviceManager mCompanionManager;
     private String mExposureNotificationPackage;
@@ -306,7 +312,8 @@ public class GattService extends ProfileService {
     /**
      * Reliable write queue
      */
-    private Set<String> mReliableQueue = new HashSet<String>();
+    @VisibleForTesting
+    Set<String> mReliableQueue = new HashSet<String>();
 
     private GattNativeInterface mNativeInterface;
 
@@ -1164,6 +1171,48 @@ public class GattService extends ProfileService {
                                        maxConnectionInterval, peripheralLatency,
                                        supervisionTimeout, minConnectionEventLen,
                                        maxConnectionEventLen, attributionSource);
+        }
+
+        @Override
+        public void subrateModeRequest(int clientIf, String address, int subrateMode,
+                AttributionSource attributionSource, SynchronousResultReceiver receiver) {
+            try {
+                subrateModeRequest(clientIf, address, subrateMode, attributionSource);
+                receiver.send(null);
+            } catch (RuntimeException e) {
+                receiver.propagateException(e);
+            }
+        }
+        private void subrateModeRequest(int clientIf, String address, int subrateMode,
+                AttributionSource attributionSource) {
+            GattService service = getService();
+            if (service == null) {
+                return;
+            }
+            service.subrateModeRequest(clientIf, address, subrateMode, attributionSource);
+        }
+
+        @Override
+        public void leSubrateRequest(int clientIf, String address, int subrateMin, int subrateMax,
+                int maxLatency, int contNumber, int supervisionTimeout,
+                AttributionSource attributionSource, SynchronousResultReceiver receiver) {
+            try {
+                leSubrateRequest(clientIf, address, subrateMin, subrateMax, maxLatency, contNumber,
+                                 supervisionTimeout, attributionSource);
+                receiver.send(null);
+            } catch (RuntimeException e) {
+                receiver.propagateException(e);
+            }
+        }
+        private void leSubrateRequest(int clientIf, String address, int subrateMin, int subrateMax,
+                int maxLatency, int contNumber, int supervisionTimeout,
+                AttributionSource attributionSource) {
+            GattService service = getService();
+            if (service == null) {
+                return;
+            }
+            service.leSubrateRequest(clientIf, address, subrateMin, subrateMax, maxLatency,
+                                     contNumber, supervisionTimeout, attributionSource);
         }
 
         @Override
@@ -2155,6 +2204,25 @@ public class GattService extends ProfileService {
         app.callback.onServiceChanged(address);
     }
 
+    void onClientSubrateChange(int connId, int subrateFactor, int latency, int contNum,
+            int timeout, int status) throws RemoteException {
+        if (DBG) {
+            Log.d(TAG, "onClientSubrateChange() - connId=" + connId + ", status=" + status);
+        }
+
+        String address = mClientMap.addressByConnId(connId);
+        if (address == null) {
+            return;
+        }
+
+        ClientMap.App app = mClientMap.getByConnId(connId);
+        if (app == null) {
+            return;
+        }
+
+        app.callback.onSubrateChange(address, subrateFactor, latency, contNum, timeout, status);
+    }
+
     void onServerPhyUpdate(int connId, int txPhy, int rxPhy, int status) throws RemoteException {
         if (DBG) {
             Log.d(TAG, "onServerPhyUpdate() - connId=" + connId + ", status=" + status);
@@ -2210,6 +2278,26 @@ public class GattService extends ProfileService {
         }
 
         app.callback.onConnectionUpdated(address, interval, latency, timeout, status);
+    }
+
+    void onServerSubrateChange(int connId, int subrateFactor, int latency, int contNum,
+            int timeout, int status)
+            throws RemoteException {
+        if (DBG) {
+            Log.d(TAG, "onServerSubrateChange() - connId=" + connId + ", status=" + status);
+        }
+
+        String address = mServerMap.addressByConnId(connId);
+        if (address == null) {
+            return;
+        }
+
+        ServerMap.App app = mServerMap.getByConnId(connId);
+        if (app == null) {
+            return;
+        }
+
+        app.callback.onSubrateChange(address, subrateFactor, latency, contNum, timeout, status);
     }
 
     void onSearchCompleted(int connId, int status) throws RemoteException {
@@ -3909,6 +3997,82 @@ public class GattService extends ProfileService {
                                             minConnectionEventLen, maxConnectionEventLen);
     }
 
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    void subrateModeRequest(int clientIf, String address, int subrateMode,
+                                   AttributionSource attributionSource) {
+        if (!Utils.checkConnectPermissionForDataDelivery(
+                this, attributionSource, "GattService subrateModeRequest")) {
+            return;
+        }
+
+        int subrateMin;
+        int subrateMax;
+        int maxLatency;
+        int contNumber;
+        // Link supervision timeout is measured in N * 10ms
+        int supervisionTimeout = 500; // 5s
+
+        Resources res = getResources();
+
+        switch (subrateMode) {
+            case BluetoothGatt.SUBRATE_REQUEST_MODE_HIGH:
+                subrateMin = res.getInteger(R.integer.subrate_mode_high_priority_min_subrate);
+                subrateMax = res.getInteger(R.integer.subrate_mode_high_priority_max_subrate);
+                maxLatency = res.getInteger(R.integer.subrate_mode_high_priority_latency);
+                contNumber = res.getInteger(R.integer.subrate_mode_high_priority_cont_number);
+                break;
+
+            case BluetoothGatt.SUBRATE_REQUEST_MODE_LOW_POWER:
+                subrateMin = res.getInteger(R.integer.subrate_mode_low_power_min_subrate);
+                subrateMax = res.getInteger(R.integer.subrate_mode_low_power_max_subrate);
+                maxLatency = res.getInteger(R.integer.subrate_mode_low_power_latency);
+                contNumber = res.getInteger(R.integer.subrate_mode_low_power_cont_number);
+                break;
+
+            case BluetoothGatt.SUBRATE_REQUEST_MODE_BALANCED:
+            default:
+                subrateMin = res.getInteger(R.integer.subrate_mode_balanced_min_subrate);
+                subrateMax = res.getInteger(R.integer.subrate_mode_balanced_max_subrate);
+                maxLatency = res.getInteger(R.integer.subrate_mode_balanced_latency);
+                contNumber = res.getInteger(R.integer.subrate_mode_balanced_cont_number);
+                break;
+        }
+
+        if (DBG) {
+            Log.d(TAG, "subrateModeRequest() - "
+                    + "address=" + BluetoothUtils.toAnonymizedAddress(address)
+                    + ", subrate min/max=" + subrateMin + "/" + subrateMax
+                    + ", maxLatency=" + maxLatency
+                    + ", continuation Number=" + contNumber
+                    + ", timeout=" + supervisionTimeout);
+        }
+
+        mNativeInterface.gattSubrateRequest(clientIf, address, subrateMin, subrateMax, maxLatency,
+                                 contNumber, supervisionTimeout);
+    }
+
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    void leSubrateRequest(int clientIf, String address, int subrateMin, int subrateMax,
+            int maxLatency, int contNumber, int supervisionTimeout,
+            AttributionSource attributionSource) {
+        if (!Utils.checkConnectPermissionForDataDelivery(
+                this, attributionSource, "GattService leSubrateRequest")) {
+            return;
+        }
+
+        if (DBG) {
+            Log.d(TAG, "leSubrateRequest() - "
+                    + "address=" + BluetoothUtils.toAnonymizedAddress(address)
+                    + ", subrate min/max=" + subrateMin + "/" + subrateMax
+                    + ", maxLatency=" + maxLatency
+                    + ", continuation Number=" + contNumber
+                    + ", timeout=" + supervisionTimeout);
+        }
+
+        mNativeInterface.gattSubrateRequest(clientIf, address, subrateMin, subrateMax, maxLatency,
+                contNumber, supervisionTimeout);
+    }
+
     /**************************************************************************
      * Callback functions - SERVER
      *************************************************************************/
@@ -4568,7 +4732,8 @@ public class GattService extends ProfileService {
      *         a new ScanSettings object with the report delay being the floor value if the original
      *         report delay was between 0 and the floor value (exclusive of both)
      */
-    private ScanSettings enforceReportDelayFloor(ScanSettings settings) {
+    @VisibleForTesting
+    ScanSettings enforceReportDelayFloor(ScanSettings settings) {
         if (settings.getReportDelayMillis() == 0) {
             return settings;
         }
