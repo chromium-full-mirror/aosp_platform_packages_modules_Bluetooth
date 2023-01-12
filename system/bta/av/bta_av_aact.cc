@@ -1835,7 +1835,7 @@ void bta_av_do_start(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   LOG_INFO(
       "A2dp stream start peer:%s sco_occupied:%s av_role:0x%x started:%s "
       "wait:0x%x",
-      PRIVATE_ADDRESS(p_scb->PeerAddress()),
+      ADDRESS_TO_LOGGABLE_CSTR(p_scb->PeerAddress()),
       logbool(bta_av_cb.sco_occupied).c_str(), p_scb->role,
       logbool(p_scb->started).c_str(), p_scb->wait);
   if (bta_av_cb.sco_occupied) {
@@ -2010,7 +2010,7 @@ void bta_av_str_stopped(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
  ******************************************************************************/
 void bta_av_reconfig(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   AvdtpSepConfig* p_cfg;
-  tBTA_AV_API_STOP stop;
+  tBTA_AV_API_STOP stop = {};
   tBTA_AV_API_RCFG* p_rcfg = &p_data->api_reconfig;
 
   APPL_TRACE_DEBUG("%s: r:%d, s:%d idx: %d (o:%d)", __func__, p_scb->recfg_sup,

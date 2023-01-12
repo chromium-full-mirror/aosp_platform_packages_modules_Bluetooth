@@ -1528,7 +1528,7 @@ static uint8_t btm_set_conn_mode_adv_init_addr(
         .bda = p_peer_addr_ptr,
         .type = *p_peer_addr_type,
     };
-    LOG_DEBUG("Received BLE connect event %s", PRIVATE_ADDRESS(ble_bd_addr));
+    LOG_DEBUG("Received BLE connect event %s", ADDRESS_TO_LOGGABLE_CSTR(ble_bd_addr));
 
     evt_type = p_cb->directed_conn;
 
@@ -2441,12 +2441,11 @@ void btm_ble_update_inq_result(tINQ_DB_ENT* p_i, uint8_t addr_type,
     }
 
     const uint8_t* p_service_data = data.data();
-    uint16_t remaining_data_len = data.size();
     uint8_t service_data_len = 0;
 
     while ((p_service_data = AdvertiseDataParser::GetFieldByType(
                 p_service_data + service_data_len,
-                (remaining_data_len -= service_data_len),
+                data.size() - (p_service_data - data.data()) - service_data_len,
                 BTM_BLE_AD_TYPE_SERVICE_DATA_TYPE, &service_data_len))) {
       uint16_t uuid;
       STREAM_TO_UINT16(uuid, p_service_data);
