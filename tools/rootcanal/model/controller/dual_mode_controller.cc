@@ -42,8 +42,8 @@ std::string DualModeController::GetTypeString() const {
 }
 
 void DualModeController::IncomingPacket(
-    model::packets::LinkLayerPacketView incoming) {
-  link_layer_controller_.IncomingPacket(incoming);
+    model::packets::LinkLayerPacketView incoming, int8_t rssi) {
+  link_layer_controller_.IncomingPacket(incoming, rssi);
 }
 
 void DualModeController::TimerTick() { link_layer_controller_.TimerTick(); }
@@ -83,8 +83,8 @@ DualModeController::DualModeController(const std::string& properties_filename,
 
   link_layer_controller_.RegisterRemoteChannel(
       [this](std::shared_ptr<model::packets::LinkLayerPacketBuilder> packet,
-             Phy::Type phy_type) {
-        this->SendLinkLayerPacket(packet, phy_type);
+             Phy::Type phy_type, int8_t tx_power) {
+        this->SendLinkLayerPacket(packet, phy_type, tx_power);
       });
 
   std::array<uint8_t, 64> supported_commands{0};
@@ -389,6 +389,13 @@ void DualModeController::HandleAcl(
   ASSERT(acl_packet.IsValid());
   if (loopback_mode_ == LoopbackMode::ENABLE_LOCAL) {
     uint16_t handle = acl_packet.GetHandle();
+
+    std::vector<uint8_t> payload{acl_packet.GetPayload().begin(),
+                                 acl_packet.GetPayload().end()};
+    send_acl_(bluetooth::hci::AclBuilder::Create(
+        handle, acl_packet.GetPacketBoundaryFlag(),
+        acl_packet.GetBroadcastFlag(),
+        std::make_unique<bluetooth::packet::RawBuilder>(payload)));
 
     std::vector<bluetooth::hci::CompletedPackets> completed_packets;
     bluetooth::hci::CompletedPackets cp;

@@ -23,8 +23,7 @@
 #include "stack/include/btu.h"
 #include "stack/include/hci_error_code.h"
 #include "stack/include/hcidefs.h"
-
-std::map<std::string, int> mock_function_count_map;
+#include "test/common/mock_functions.h"
 
 /* Function for test provided by btu_hcif.cc */
 void btu_hcif_hdl_command_status(uint16_t opcode, uint8_t status,
@@ -42,5 +41,5 @@ TEST_F(StackBtuTest, btm_sco_connection_failed_called) {
   uint8_t p_cmd[10];  // garbage data for testing
   bluetooth::legacy::testing::btu_hcif_hdl_command_status(
       HCI_SETUP_ESCO_CONNECTION, HCI_ERR_UNSPECIFIED, p_cmd, nullptr);
-  ASSERT_EQ(1, mock_function_count_map["btm_sco_connection_failed"]);
+  ASSERT_EQ(1, get_func_call_count("btm_sco_connection_failed"));
 }

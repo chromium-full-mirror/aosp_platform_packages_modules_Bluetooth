@@ -6,11 +6,11 @@ use bt_topshim::bindings::root::bluetooth::Uuid;
 use bt_topshim::btif::{BluetoothInterface, BtStatus, BtTransport, RawAddress, Uuid128Bit};
 use bt_topshim::profiles::gatt::{
     ffi::RustAdvertisingTrackInfo, AdvertisingStatus, BtGattDbElement, BtGattNotifyParams,
-    BtGattReadParams, Gatt, GattAdvCallbacks, GattAdvCallbacksDispatcher,
-    GattAdvInbandCallbacksDispatcher, GattClientCallbacks, GattClientCallbacksDispatcher,
-    GattScannerCallbacks, GattScannerCallbacksDispatcher, GattScannerInbandCallbacks,
-    GattScannerInbandCallbacksDispatcher, GattServerCallbacks, GattServerCallbacksDispatcher,
-    GattStatus, LePhy, MsftAdvMonitor, MsftAdvMonitorPattern,
+    BtGattReadParams, BtGattResponse, BtGattValue, Gatt, GattAdvCallbacks,
+    GattAdvCallbacksDispatcher, GattAdvInbandCallbacksDispatcher, GattClientCallbacks,
+    GattClientCallbacksDispatcher, GattScannerCallbacks, GattScannerCallbacksDispatcher,
+    GattScannerInbandCallbacks, GattScannerInbandCallbacksDispatcher, GattServerCallbacks,
+    GattServerCallbacksDispatcher, GattStatus, LePhy, MsftAdvMonitor, MsftAdvMonitorPattern,
 };
 use bt_topshim::topstack;
 use bt_utils::adv_parser;
@@ -48,7 +48,10 @@ struct Client {
 struct Connection {
     conn_id: i32,
     address: String,
+
+    // Connections are made to either a client or server
     client_id: i32,
+    server_id: i32,
 }
 
 struct ContextMap {
@@ -155,7 +158,12 @@ impl ContextMap {
             return;
         }
 
-        self.connections.push(Connection { conn_id, address: address.clone(), client_id });
+        self.connections.push(Connection {
+            conn_id,
+            address: address.clone(),
+            client_id,
+            server_id: 0,
+        });
     }
 
     fn remove_connection(&mut self, _client_id: i32, conn_id: i32) {
@@ -185,6 +193,16 @@ struct Server {
     id: Option<i32>,
     cbid: u32,
     uuid: Uuid128Bit,
+    services: Vec<BluetoothGattService>,
+    is_congested: bool,
+
+    // Queued on_notification_sent callback.
+    congestion_queue: Vec<(String, GattStatus)>,
+}
+
+struct Request {
+    id: i32,
+    handle: i32,
 }
 
 struct ServerContextMap {
@@ -192,6 +210,8 @@ struct ServerContextMap {
     // multiple keys.
     callbacks: Callbacks<dyn IBluetoothGattServerCallback + Send>,
     servers: Vec<Server>,
+    connections: Vec<Connection>,
+    requests: Vec<Request>,
 }
 
 type GattServerCallback = Box<dyn IBluetoothGattServerCallback + Send>;
@@ -201,6 +221,8 @@ impl ServerContextMap {
         ServerContextMap {
             callbacks: Callbacks::new(tx, Message::GattServerCallbackDisconnected),
             servers: vec![],
+            connections: vec![],
+            requests: vec![],
         }
     }
 
@@ -212,8 +234,26 @@ impl ServerContextMap {
         self.servers.iter().find(|server| server.id.map_or(false, |id| id == server_id))
     }
 
+    fn get_mut_by_server_id(&mut self, server_id: i32) -> Option<&mut Server> {
+        self.servers.iter_mut().find(|server| server.id.map_or(false, |id| id == server_id))
+    }
+
     fn get_by_callback_id(&self, callback_id: u32) -> Option<&Server> {
         self.servers.iter().find(|server| server.cbid == callback_id)
+    }
+
+    fn get_by_conn_id(&self, conn_id: i32) -> Option<&Server> {
+        self.connections
+            .iter()
+            .find(|conn| conn.conn_id == conn_id)
+            .and_then(|conn| self.get_by_server_id(conn.server_id))
+    }
+
+    fn get_mut_by_conn_id(&mut self, conn_id: i32) -> Option<&mut Server> {
+        self.connections
+            .iter()
+            .find_map(|conn| (conn.conn_id == conn_id).then(|| conn.server_id.clone()))
+            .and_then(move |server_id| self.get_mut_by_server_id(server_id))
     }
 
     fn add(&mut self, uuid: &Uuid128Bit, callback: GattServerCallback) {
@@ -223,7 +263,14 @@ impl ServerContextMap {
 
         let cbid = self.callbacks.add_callback(callback);
 
-        self.servers.push(Server { id: None, cbid, uuid: uuid.clone() });
+        self.servers.push(Server {
+            id: None,
+            cbid,
+            uuid: uuid.clone(),
+            services: vec![],
+            is_congested: false,
+            congestion_queue: vec![],
+        });
     }
 
     fn remove(&mut self, id: i32) {
@@ -251,6 +298,60 @@ impl ServerContextMap {
         callback_id: u32,
     ) -> Option<&mut GattServerCallback> {
         self.callbacks.get_by_id(callback_id)
+    }
+
+    fn add_connection(&mut self, server_id: i32, conn_id: i32, address: &String) {
+        if self.get_conn_id_from_address(server_id, address).is_some() {
+            return;
+        }
+
+        self.connections.push(Connection {
+            conn_id,
+            address: address.clone(),
+            client_id: 0,
+            server_id,
+        });
+    }
+
+    fn remove_connection(&mut self, conn_id: i32) {
+        self.connections.retain(|conn| conn.conn_id != conn_id);
+    }
+
+    fn get_conn_id_from_address(&self, server_id: i32, address: &String) -> Option<i32> {
+        return self
+            .connections
+            .iter()
+            .find(|conn| conn.server_id == server_id && conn.address == *address)
+            .map(|conn| conn.conn_id);
+    }
+
+    fn get_address_from_conn_id(&self, conn_id: i32) -> Option<String> {
+        self.connections
+            .iter()
+            .find_map(|conn| (conn.conn_id == conn_id).then(|| conn.address.clone()))
+    }
+
+    fn add_service(&mut self, server_id: i32, service: BluetoothGattService) {
+        if let Some(s) = self.get_mut_by_server_id(server_id) {
+            s.services.push(service)
+        }
+    }
+
+    fn delete_service(&mut self, server_id: i32, handle: i32) {
+        self.get_mut_by_server_id(server_id)
+            .map(|s: &mut Server| s.services.retain(|service| service.instance_id != handle));
+    }
+
+    fn add_request(&mut self, request_id: i32, handle: i32) {
+        self.requests.push(Request { id: request_id, handle: handle });
+    }
+
+    fn delete_request(&mut self, request_id: i32) {
+        self.requests.retain(|request| request.id != request_id);
+    }
+
+    fn get_request_handle_from_id(&self, request_id: i32) -> Option<i32> {
+        self.requests.iter().find_map(|request| (request.id == request_id).then(|| request.handle))
     }
 }
 
@@ -515,9 +616,51 @@ pub trait IBluetoothGatt {
 
     /// Unregisters a GATT Server.
     fn unregister_server(&mut self, server_id: i32);
+
+    /// Initiates a GATT connection to the server.
+    fn server_connect(
+        &self,
+        server_id: i32,
+        addr: String,
+        is_direct: bool,
+        transport: BtTransport,
+    ) -> bool;
+
+    /// Disconnects the server GATT connection.
+    fn server_disconnect(&self, server_id: i32, addr: String) -> bool;
+
+    /// Adds a service to the GATT server.
+    fn add_service(&self, server_id: i32, service: BluetoothGattService);
+
+    /// Removes a service from the GATT server.
+    fn remove_service(&self, server_id: i32, handle: i32);
+
+    /// Clears all services from the GATT server.
+    fn clear_services(&self, server_id: i32);
+
+    /// Sends a response to a read/write operation.
+    fn send_response(
+        &self,
+        server_id: i32,
+        addr: String,
+        request_id: i32,
+        status: GattStatus,
+        offset: i32,
+        value: Vec<u8>,
+    ) -> bool;
+
+    /// Sends a notification to a remote device.
+    fn send_notification(
+        &self,
+        server_id: i32,
+        addr: String,
+        handle: i32,
+        confirm: bool,
+        value: Vec<u8>,
+    ) -> bool;
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 /// Represents a GATT Descriptor.
 pub struct BluetoothGattDescriptor {
     pub uuid: Uuid128Bit,
@@ -531,7 +674,7 @@ impl BluetoothGattDescriptor {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 /// Represents a GATT Characteristic.
 pub struct BluetoothGattCharacteristic {
     pub uuid: Uuid128Bit,
@@ -576,7 +719,7 @@ impl BluetoothGattCharacteristic {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 /// Represents a GATT Service.
 pub struct BluetoothGattService {
     pub uuid: Uuid128Bit,
@@ -595,6 +738,138 @@ impl BluetoothGattService {
             characteristics: vec![],
             included_services: vec![],
         }
+    }
+
+    fn from_db(elements: Vec<BtGattDbElement>) -> Vec<BluetoothGattService> {
+        let mut db_out: Vec<BluetoothGattService> = vec![];
+
+        for elem in elements {
+            match GattDbElementType::from_u32(elem.type_).unwrap() {
+                GattDbElementType::PrimaryService | GattDbElementType::SecondaryService => {
+                    db_out.push(BluetoothGattService::new(
+                        elem.uuid.uu,
+                        elem.id as i32,
+                        elem.type_ as i32,
+                    ));
+                    // TODO(b/200065274): Mark restricted services.
+                }
+
+                GattDbElementType::Characteristic => {
+                    match db_out.last_mut() {
+                        Some(s) => s.characteristics.push(BluetoothGattCharacteristic::new(
+                            elem.uuid.uu,
+                            elem.id as i32,
+                            elem.properties as i32,
+                            0,
+                        )),
+                        None => {
+                            // TODO(b/193685325): Log error.
+                        }
+                    }
+                    // TODO(b/200065274): Mark restricted characteristics.
+                }
+
+                GattDbElementType::Descriptor => {
+                    match db_out.last_mut() {
+                        Some(s) => match s.characteristics.last_mut() {
+                            Some(c) => c.descriptors.push(BluetoothGattDescriptor::new(
+                                elem.uuid.uu,
+                                elem.id as i32,
+                                0,
+                            )),
+                            None => {
+                                // TODO(b/193685325): Log error.
+                            }
+                        },
+                        None => {
+                            // TODO(b/193685325): Log error.
+                        }
+                    }
+                    // TODO(b/200065274): Mark restricted descriptors.
+                }
+
+                GattDbElementType::IncludedService => {
+                    match db_out.last_mut() {
+                        Some(s) => {
+                            s.included_services.push(BluetoothGattService::new(
+                                elem.uuid.uu,
+                                elem.id as i32,
+                                elem.type_ as i32,
+                            ));
+                        }
+                        None => {
+                            // TODO(b/193685325): Log error.
+                        }
+                    }
+                }
+            }
+        }
+
+        db_out
+    }
+
+    fn into_db(service: BluetoothGattService) -> Vec<BtGattDbElement> {
+        let mut db_out: Vec<BtGattDbElement> = vec![];
+        db_out.push(BtGattDbElement {
+            id: service.instance_id as u16,
+            uuid: Uuid::from(service.uuid),
+            type_: service.service_type as u32,
+            attribute_handle: service.instance_id as u16,
+            start_handle: service.instance_id as u16,
+            end_handle: 0,
+            properties: 0,
+            extended_properties: 0,
+            permissions: 0,
+        });
+
+        for char in service.characteristics {
+            db_out.push(BtGattDbElement {
+                id: char.instance_id as u16,
+                uuid: Uuid::from(char.uuid),
+                type_: GattDbElementType::Characteristic as u32,
+                attribute_handle: char.instance_id as u16,
+                start_handle: 0,
+                end_handle: 0,
+                properties: char.properties as u8,
+                extended_properties: 0,
+                permissions: char.permissions as u16,
+            });
+
+            for desc in char.descriptors {
+                db_out.push(BtGattDbElement {
+                    id: desc.instance_id as u16,
+                    uuid: Uuid::from(desc.uuid),
+                    type_: GattDbElementType::Descriptor as u32,
+                    attribute_handle: desc.instance_id as u16,
+                    start_handle: 0,
+                    end_handle: 0,
+                    properties: 0,
+                    extended_properties: 0,
+                    permissions: desc.permissions as u16,
+                });
+            }
+        }
+
+        for included_service in service.included_services {
+            db_out.push(BtGattDbElement {
+                id: included_service.instance_id as u16,
+                uuid: Uuid::from(included_service.uuid),
+                type_: included_service.service_type as u32,
+                attribute_handle: included_service.instance_id as u16,
+                start_handle: 0,
+                end_handle: 0,
+                properties: 0,
+                extended_properties: 0,
+                permissions: 0,
+            });
+        }
+
+        // Set end handle of primary/secondary attribute to last element's handle
+        if let Some(elem) = db_out.last() {
+            db_out[0].end_handle = elem.attribute_handle;
+        }
+
+        db_out
     }
 }
 
@@ -674,6 +949,64 @@ pub trait IBluetoothGattCallback: RPCProxy {
 pub trait IBluetoothGattServerCallback: RPCProxy {
     /// When the `register_server` request is done.
     fn on_server_registered(&self, _status: GattStatus, _server_id: i32);
+
+    /// When there is a change in the state of a GATT server connection.
+    fn on_server_connection_state(&self, _server_id: i32, _connected: bool, _addr: String);
+
+    /// When there is a service added to the GATT server.
+    fn on_service_added(&self, _status: GattStatus, _service: BluetoothGattService);
+
+    /// When a remote device has requested to read a characteristic.
+    fn on_characteristic_read_request(
+        &self,
+        _addr: String,
+        _trans_id: i32,
+        _offset: i32,
+        _is_long: bool,
+        _handle: i32,
+    );
+
+    /// When a remote device has requested to read a descriptor.
+    fn on_descriptor_read_request(
+        &self,
+        _addr: String,
+        _trans_id: i32,
+        _offset: i32,
+        _is_long: bool,
+        _handle: i32,
+    );
+
+    /// When a remote device has requested to write to a characteristic.
+    fn on_characteristic_write_request(
+        &self,
+        _addr: String,
+        _trans_id: i32,
+        _offset: i32,
+        _len: i32,
+        _is_prep: bool,
+        _need_rsp: bool,
+        _handle: i32,
+        _value: Vec<u8>,
+    );
+
+    /// When a remote device has requested to write to a descriptor.
+    fn on_descriptor_write_request(
+        &self,
+        _addr: String,
+        _trans_id: i32,
+        _offset: i32,
+        _len: i32,
+        _is_prep: bool,
+        _need_rsp: bool,
+        _handle: i32,
+        _value: Vec<u8>,
+    );
+
+    /// When a previously prepared write is to be executed.
+    fn on_execute_write(&self, _addr: String, _trans_id: i32, _exec_write: bool);
+
+    /// When a notification or indication has been sent to a remote device.
+    fn on_notification_sent(&self, _addr: String, _status: GattStatus);
 }
 
 /// Interface for scanner callbacks to clients, passed to
@@ -1996,6 +2329,131 @@ impl IBluetoothGatt for BluetoothGatt {
         self.server_context_map.remove(server_id);
         self.gatt.as_ref().unwrap().lock().unwrap().server.unregister_server(server_id);
     }
+
+    fn server_connect(
+        &self,
+        server_id: i32,
+        addr: String,
+        is_direct: bool,
+        transport: BtTransport,
+    ) -> bool {
+        let address = match RawAddress::from_string(addr.clone()) {
+            None => return false,
+            Some(addr) => addr,
+        };
+
+        self.gatt.as_ref().unwrap().lock().unwrap().server.connect(
+            server_id,
+            &address,
+            is_direct,
+            transport.into(),
+        );
+
+        true
+    }
+
+    fn server_disconnect(&self, server_id: i32, addr: String) -> bool {
+        let address = match RawAddress::from_string(addr.clone()) {
+            None => return false,
+            Some(addr) => addr,
+        };
+
+        let conn_id = match self.server_context_map.get_conn_id_from_address(server_id, &addr) {
+            None => return false,
+            Some(id) => id,
+        };
+
+        self.gatt.as_ref().unwrap().lock().unwrap().server.disconnect(server_id, &address, conn_id);
+
+        true
+    }
+
+    fn add_service(&self, server_id: i32, service: BluetoothGattService) {
+        self.gatt
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .server
+            .add_service(server_id, &BluetoothGattService::into_db(service));
+    }
+
+    fn remove_service(&self, server_id: i32, handle: i32) {
+        self.gatt.as_ref().unwrap().lock().unwrap().server.delete_service(server_id, handle);
+    }
+
+    fn clear_services(&self, server_id: i32) {
+        if let Some(s) = self.server_context_map.get_by_server_id(server_id) {
+            for service in &s.services {
+                self.gatt
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .server
+                    .delete_service(server_id, service.instance_id);
+            }
+        }
+    }
+
+    fn send_response(
+        &self,
+        server_id: i32,
+        addr: String,
+        request_id: i32,
+        status: GattStatus,
+        offset: i32,
+        value: Vec<u8>,
+    ) -> bool {
+        (|| {
+            let conn_id = self.server_context_map.get_conn_id_from_address(server_id, &addr)?;
+            let handle = self.server_context_map.get_request_handle_from_id(request_id)?;
+            let len = value.len() as u16;
+            let data: [u8; 600] = value.try_into().ok()?;
+
+            self.gatt.as_ref().unwrap().lock().unwrap().server.send_response(
+                conn_id,
+                request_id,
+                status as i32,
+                &BtGattResponse {
+                    attr_value: BtGattValue {
+                        value: data,
+                        handle: handle as u16,
+                        offset: offset as u16,
+                        len: len,
+                        auth_req: 0 as u8,
+                    },
+                },
+            );
+
+            Some(())
+        })()
+        .is_some()
+    }
+
+    fn send_notification(
+        &self,
+        server_id: i32,
+        addr: String,
+        handle: i32,
+        confirm: bool,
+        value: Vec<u8>,
+    ) -> bool {
+        let conn_id = match self.server_context_map.get_conn_id_from_address(server_id, &addr) {
+            None => return false,
+            Some(id) => id,
+        };
+
+        self.gatt.as_ref().unwrap().lock().unwrap().server.send_indication(
+            server_id,
+            handle,
+            conn_id,
+            confirm as i32,
+            value.as_ref(),
+        );
+
+        true
+    }
 }
 
 #[btif_callbacks_dispatcher(dispatch_gatt_client_callbacks, GattClientCallbacks)]
@@ -2397,76 +2855,16 @@ impl BtifGattClientCallbacks for BluetoothGatt {
             return;
         }
 
-        let mut db_out: Vec<BluetoothGattService> = vec![];
-
-        for elem in elements {
-            match GattDbElementType::from_u32(elem.type_).unwrap() {
-                GattDbElementType::PrimaryService | GattDbElementType::SecondaryService => {
-                    db_out.push(BluetoothGattService::new(
-                        elem.uuid.uu,
-                        elem.id as i32,
-                        elem.type_ as i32,
-                    ));
-                    // TODO(b/200065274): Mark restricted services.
-                }
-
-                GattDbElementType::Characteristic => {
-                    match db_out.last_mut() {
-                        Some(s) => s.characteristics.push(BluetoothGattCharacteristic::new(
-                            elem.uuid.uu,
-                            elem.id as i32,
-                            elem.properties as i32,
-                            0,
-                        )),
-                        None => {
-                            // TODO(b/193685325): Log error.
-                        }
-                    }
-                    // TODO(b/200065274): Mark restricted characteristics.
-                }
-
-                GattDbElementType::Descriptor => {
-                    match db_out.last_mut() {
-                        Some(s) => match s.characteristics.last_mut() {
-                            Some(c) => c.descriptors.push(BluetoothGattDescriptor::new(
-                                elem.uuid.uu,
-                                elem.id as i32,
-                                0,
-                            )),
-                            None => {
-                                // TODO(b/193685325): Log error.
-                            }
-                        },
-                        None => {
-                            // TODO(b/193685325): Log error.
-                        }
-                    }
-                    // TODO(b/200065274): Mark restricted descriptors.
-                }
-
-                GattDbElementType::IncludedService => {
-                    match db_out.last_mut() {
-                        Some(s) => {
-                            s.included_services.push(BluetoothGattService::new(
-                                elem.uuid.uu,
-                                elem.id as i32,
-                                elem.type_ as i32,
-                            ));
-                        }
-                        None => {
-                            // TODO(b/193685325): Log error.
-                        }
-                    }
-                }
-            }
-        }
-
         match (client, address) {
             (Some(c), Some(addr)) => {
                 let cbid = c.cbid;
                 self.context_map.get_callback_from_callback_id(cbid).and_then(
                     |cb: &mut GattClientCallback| {
-                        cb.on_search_complete(addr.to_string(), db_out, GattStatus::Success);
+                        cb.on_search_complete(
+                            addr.to_string(),
+                            BluetoothGattService::from_db(elements),
+                            GattStatus::Success,
+                        );
                         Some(())
                     },
                 );
@@ -2601,6 +2999,86 @@ impl BtifGattClientCallbacks for BluetoothGatt {
 pub(crate) trait BtifGattServerCallbacks {
     #[btif_callback(RegisterServer)]
     fn register_server_cb(&mut self, status: GattStatus, server_id: i32, app_uuid: Uuid);
+
+    #[btif_callback(Connection)]
+    fn connection_cb(&mut self, conn_id: i32, server_id: i32, connected: i32, addr: RawAddress);
+
+    #[btif_callback(ServiceAdded)]
+    fn service_added_cb(
+        &mut self,
+        status: GattStatus,
+        server_id: i32,
+        elements: Vec<BtGattDbElement>,
+        _count: usize,
+    );
+
+    #[btif_callback(ServiceDeleted)]
+    fn service_deleted_cb(&mut self, status: GattStatus, server_id: i32, handle: i32);
+
+    #[btif_callback(RequestReadCharacteristic)]
+    fn request_read_characteristic_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        is_long: bool,
+    );
+
+    #[btif_callback(RequestReadDescriptor)]
+    fn request_read_descriptor_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        is_long: bool,
+    );
+
+    #[btif_callback(RequestWriteCharacteristic)]
+    fn request_write_characteristic_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        need_rsp: bool,
+        is_prep: bool,
+        data: Vec<u8>,
+        len: usize,
+    );
+
+    #[btif_callback(RequestWriteDescriptor)]
+    fn request_write_descriptor_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        need_rsp: bool,
+        is_prep: bool,
+        data: Vec<u8>,
+        len: usize,
+    );
+
+    #[btif_callback(RequestExecWrite)]
+    fn request_exec_write_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        exec_write: i32,
+    );
+
+    #[btif_callback(IndicationSent)]
+    fn indication_sent_cb(&mut self, conn_id: i32, status: GattStatus);
+
+    #[btif_callback(Congestion)]
+    fn congestion_cb(&mut self, conn_id: i32, congested: bool);
 }
 
 impl BtifGattServerCallbacks for BluetoothGatt {
@@ -2616,6 +3094,225 @@ impl BtifGattServerCallbacks for BluetoothGatt {
             }
             None => {
                 warn!("Warning: No callback found for UUID {}", app_uuid);
+            }
+        }
+    }
+
+    fn connection_cb(&mut self, conn_id: i32, server_id: i32, connected: i32, addr: RawAddress) {
+        let is_connected = connected != 0;
+        if is_connected {
+            self.server_context_map.add_connection(server_id, conn_id, &addr.to_string());
+        } else {
+            self.server_context_map.remove_connection(conn_id);
+        }
+
+        let cbid = self.server_context_map.get_by_server_id(server_id).map(|server| server.cbid);
+        match cbid {
+            Some(cbid) => {
+                if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                    cb.on_server_connection_state(server_id, is_connected, addr.to_string());
+                }
+            }
+            None => {
+                warn!("Warning: No callback found for server ID {}", server_id);
+            }
+        }
+    }
+
+    fn service_added_cb(
+        &mut self,
+        status: GattStatus,
+        server_id: i32,
+        elements: Vec<BtGattDbElement>,
+        _count: usize,
+    ) {
+        for service in BluetoothGattService::from_db(elements) {
+            if status == GattStatus::Success {
+                self.server_context_map.add_service(server_id, service.clone());
+            }
+
+            let cbid =
+                self.server_context_map.get_by_server_id(server_id).map(|server| server.cbid);
+            match cbid {
+                Some(cbid) => {
+                    if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                        cb.on_service_added(status, service);
+                    }
+                }
+                None => {
+                    warn!("Warning: No callback found for server ID {}", server_id);
+                }
+            }
+        }
+    }
+
+    fn service_deleted_cb(&mut self, status: GattStatus, server_id: i32, handle: i32) {
+        if status == GattStatus::Success {
+            self.server_context_map.delete_service(server_id, handle);
+        }
+    }
+
+    fn request_read_characteristic_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        is_long: bool,
+    ) {
+        self.server_context_map.add_request(trans_id, handle);
+
+        if let Some(cbid) =
+            self.server_context_map.get_by_conn_id(conn_id).map(|server| server.cbid)
+        {
+            if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                cb.on_characteristic_read_request(
+                    addr.to_string(),
+                    trans_id,
+                    offset,
+                    is_long,
+                    handle,
+                );
+            }
+        }
+    }
+
+    fn request_read_descriptor_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        is_long: bool,
+    ) {
+        self.server_context_map.add_request(trans_id, handle);
+
+        if let Some(cbid) =
+            self.server_context_map.get_by_conn_id(conn_id).map(|server| server.cbid)
+        {
+            if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                cb.on_descriptor_read_request(addr.to_string(), trans_id, offset, is_long, handle);
+            }
+        }
+    }
+
+    fn request_write_characteristic_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        need_rsp: bool,
+        is_prep: bool,
+        data: Vec<u8>,
+        len: usize,
+    ) {
+        self.server_context_map.add_request(trans_id, handle);
+
+        if let Some(cbid) =
+            self.server_context_map.get_by_conn_id(conn_id).map(|server| server.cbid)
+        {
+            if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                cb.on_characteristic_write_request(
+                    addr.to_string(),
+                    trans_id,
+                    offset,
+                    len as i32,
+                    is_prep,
+                    need_rsp,
+                    handle,
+                    data,
+                );
+            }
+        }
+    }
+
+    fn request_write_descriptor_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        handle: i32,
+        offset: i32,
+        need_rsp: bool,
+        is_prep: bool,
+        data: Vec<u8>,
+        len: usize,
+    ) {
+        self.server_context_map.add_request(trans_id, handle);
+
+        if let Some(cbid) =
+            self.server_context_map.get_by_conn_id(conn_id).map(|server| server.cbid)
+        {
+            if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                cb.on_descriptor_write_request(
+                    addr.to_string(),
+                    trans_id,
+                    offset,
+                    len as i32,
+                    is_prep,
+                    need_rsp,
+                    handle,
+                    data,
+                );
+            }
+        }
+    }
+
+    fn request_exec_write_cb(
+        &mut self,
+        conn_id: i32,
+        trans_id: i32,
+        addr: RawAddress,
+        exec_write: i32,
+    ) {
+        if let Some(cbid) =
+            self.server_context_map.get_by_conn_id(conn_id).map(|server| server.cbid)
+        {
+            if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                cb.on_execute_write(addr.to_string(), trans_id, exec_write != 0);
+            }
+        }
+    }
+
+    fn indication_sent_cb(&mut self, conn_id: i32, mut status: GattStatus) {
+        (|| {
+            let address = self.server_context_map.get_address_from_conn_id(conn_id)?;
+            let server = self.server_context_map.get_mut_by_conn_id(conn_id)?;
+
+            if server.is_congested {
+                if status == GattStatus::Congested {
+                    status = GattStatus::Success;
+                }
+
+                server.congestion_queue.push((address, status));
+                return None;
+            }
+
+            let cbid = server.cbid;
+            if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                cb.on_notification_sent(address.to_string(), status);
+            }
+
+            Some(())
+        })();
+    }
+
+    fn congestion_cb(&mut self, conn_id: i32, congested: bool) {
+        if let Some(mut server) = self.server_context_map.get_mut_by_conn_id(conn_id) {
+            server.is_congested = congested;
+            if !server.is_congested {
+                let cbid = server.cbid;
+                let congestion_queue: Vec<_> = server.congestion_queue.drain(..).collect();
+
+                if let Some(cb) = self.server_context_map.get_callback_from_callback_id(cbid) {
+                    for callback in congestion_queue {
+                        cb.on_notification_sent(callback.0.clone(), callback.1);
+                    }
+                }
             }
         }
     }

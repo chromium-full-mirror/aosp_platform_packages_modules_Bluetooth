@@ -65,6 +65,7 @@ cc_library_static {
         "packages/modules/Bluetooth/system/udrv/include",
         "packages/modules/Bluetooth/system/bta/include",
         "packages/modules/Bluetooth/system/bta/sys",
+        "packages/modules/Bluetooth/system/device/include",
         "packages/modules/Bluetooth/system/utils/include",
         "packages/modules/Bluetooth/system/gd/rust/shim",
     ],
@@ -197,6 +198,7 @@ cc_library_static {
         "btm/btm_dev.cc",
         "btm/btm_devctl.cc",
         "btm/btm_inq.cc",
+        "btm/btm_iot_config.cc",
         "btm/btm_main.cc",
         "acl/btm_pm.cc",
         "btm/btm_sco.cc",
@@ -430,6 +432,7 @@ cc_test {
     srcs: crypto_toolbox_srcs + [
         ":TestCommonLogMsg",
         ":TestCommonMainHandler",
+        ":TestCommonMockFunctions",
         ":TestMockBtif",
         ":TestMockCommon",
         ":TestMockDevice",
@@ -601,7 +604,9 @@ cc_test {
         "packages/modules/Bluetooth/system/utils/include",
     ],
     srcs: [
+        ":TestCommonMockFunctions",
         ":TestMockStackBtm",
+        ":TestMockStackSdp",
         "gatt/gatt_utils.cc",
         "test/common/mock_eatt.cc",
         "test/common/mock_gatt_layer.cc",
@@ -658,6 +663,7 @@ cc_test {
         "test/common/mock_btu_layer.cc",
         "test/common/mock_stack_avdt_msg.cc",
         ":TestCommonLogMsg",
+        ":TestCommonMockFunctions",
         ":TestMockStackL2cap",
         ":TestMockStackAcl",
         ":TestMockStackA2dp",
@@ -743,6 +749,7 @@ cc_test {
     ],
     srcs: crypto_toolbox_srcs + [
         ":TestCommonMainHandler",
+        ":TestCommonMockFunctions",
         ":TestMockStackBtm",
         "gatt/gatt_db.cc",
         "gatt/gatt_sr_hash.cc",
@@ -887,6 +894,7 @@ cc_test {
     ],
     include_dirs: [
         "packages/modules/Bluetooth/system",
+        "packages/modules/Bluetooth/system/device/include",
         "packages/modules/Bluetooth/system/gd",
         "packages/modules/Bluetooth/system/vnd/ble",
     ],
@@ -936,6 +944,7 @@ cc_test {
         "btm/btm_dev.cc",
         "btm/btm_devctl.cc",
         "btm/btm_inq.cc",
+        "btm/btm_iot_config.cc",
         "btm/btm_iso.cc",
         "btm/btm_main.cc",
         "btm/btm_sco.cc",
@@ -994,6 +1003,7 @@ cc_test {
         "packages/modules/Bluetooth/system/vnd/ble",
     ],
     srcs: crypto_toolbox_srcs + [
+        ":TestCommonMockFunctions",
         "test/hci/stack_hci_test.cc",
     ],
     static_libs: [
@@ -1039,6 +1049,7 @@ cc_test {
         "packages/modules/Bluetooth/system/stack/btm",
     ],
     srcs: crypto_toolbox_srcs + [
+        ":TestCommonMockFunctions",
         ":TestMockStackL2cap",
         ":TestMockStackSdp",
         ":TestMockStackBtm",
@@ -1098,6 +1109,7 @@ cc_test {
     ],
     srcs: [
         ":TestCommonLogMsg",
+        ":TestCommonMockFunctions",
         ":TestMockBta",
         ":TestMockBtif",
         ":TestMockHci",
@@ -1164,6 +1176,7 @@ cc_test {
     srcs: [
         ":OsiCompatSources",
         ":TestCommonMainHandler",
+        ":TestCommonMockFunctions",
         ":TestCommonStackConfig",
         ":TestMockBta",
         ":TestMockBtif",
@@ -1335,11 +1348,13 @@ cc_test {
         ":TestMockStackSdp",
         ":TestMockStackSmp",
         "acl/*.cc",
+        "btm/btm_iot_config.cc",
         "test/stack_acl_test.cc",
     ],
     static_libs: [
         "libbt-common",
         "libbt-protos-lite",
+        "libbtdevice",
         "libflatbuffers-cpp",
         "libgmock",
         "liblog",

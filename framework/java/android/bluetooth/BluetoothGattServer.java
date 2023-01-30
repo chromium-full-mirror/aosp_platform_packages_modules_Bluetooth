@@ -367,6 +367,28 @@ public final class BluetoothGattServer implements BluetoothProfile {
                 }
 
                 /**
+                 * The connection priority has changed.
+                 * @hide
+                 */
+                @Override
+                public void onPriorityChanged(String address, int priority) {
+                    if (DBG) {
+                        Log.d(TAG,
+                                "onPriorityChanged() - " + "device=" + address
+                                        + ",interval=" + priority);
+                    }
+
+                    BluetoothDevice device = mAdapter.getRemoteDevice(address);
+                    if (device == null) return;
+
+                    try {
+                        mCallback.onPriorityChanged(device, priority);
+                    } catch (Exception ex) {
+                        Log.w(TAG, "Unhandled exception: " + ex);
+                    }
+                }
+
+                /**
                  * Callback invoked when the given connection is updated
                  * @hide
                  */
@@ -469,11 +491,12 @@ public final class BluetoothGattServer implements BluetoothProfile {
     /**
      * Close this GATT server instance.
      *
-     * Application should call this method as early as possible after it is done with
-     * this GATT server.
+     * <p>Application should call this method as early as possible after it is done with this GATT
+     * server.
      */
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @Override
     public void close() {
         if (DBG) Log.d(TAG, "close()");
         unregisterCallback();

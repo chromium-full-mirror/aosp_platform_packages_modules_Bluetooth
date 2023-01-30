@@ -40,7 +40,8 @@ pub fn mask_bits(n: usize) -> syn::LitInt {
     syn::parse_str::<syn::LitInt>(&format!("{:#x}{suffix}", (1u64 << n) - 1)).unwrap()
 }
 
-/// Generate code for an `ast::Decl::Packet` enum value.
+/// Generate code for `ast::Decl::Packet` and `ast::Decl::Struct`
+/// values.
 fn generate_packet_decl(
     scope: &lint::Scope<'_>,
     //  File:
@@ -66,21 +67,18 @@ fn generate_packet_decl(
     field_parser.done();
 
     let id_lower = format_ident!("{}", id.to_lowercase());
+    let id_packet = format_ident!("{id}");
     let id_data = format_ident!("{id}Data");
-    let id_packet = format_ident!("{id}Packet");
     let id_builder = format_ident!("{id}Builder");
 
+    let fields_with_ids = fields.iter().filter(|f| f.id().is_some()).collect::<Vec<_>>();
     let field_names =
-        fields.iter().filter_map(|f| f.id()).map(|id| format_ident!("{id}")).collect::<Vec<_>>();
-    let field_types = fields
-        .iter()
-        .filter_map(|f| f.width())
-        .map(|w| format_ident!("u{}", types::Integer::new(w).width))
-        .collect::<Vec<_>>();
-
+        fields_with_ids.iter().map(|f| format_ident!("{}", f.id().unwrap())).collect::<Vec<_>>();
+    let field_types = fields_with_ids.iter().map(|f| types::rust_type(f)).collect::<Vec<_>>();
     let getter_names = field_names.iter().map(|id| format_ident!("get_{id}"));
 
-    let packet_size = syn::Index::from(fields.iter().filter_map(|f| f.width()).sum::<usize>() / 8);
+    let packet_size =
+        syn::Index::from(fields.iter().filter_map(|f| f.width(scope)).sum::<usize>() / 8);
     let conforms = if packet_size.index == 0 {
         quote! { true }
     } else {
@@ -88,17 +86,21 @@ fn generate_packet_decl(
     };
 
     quote! {
-    #[derive(Debug)]
+        #[derive(Debug)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         struct #id_data {
             #field_declarations
         }
 
         #[derive(Debug, Clone)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct #id_packet {
+            #[cfg_attr(feature = "serde", serde(flatten))]
             #id_lower: Arc<#id_data>,
         }
 
         #[derive(Debug)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct #id_builder {
             #(pub #field_names: #field_types),*
         }
@@ -175,9 +177,70 @@ fn generate_packet_decl(
     }
 }
 
+fn generate_enum_decl(id: &str, tags: &[ast::Tag]) -> proc_macro2::TokenStream {
+    let name = format_ident!("{id}");
+    let variants = tags.iter().map(|t| format_ident!("{}", t.id)).collect::<Vec<_>>();
+    let values = tags
+        .iter()
+        .map(|t| syn::parse_str::<syn::LitInt>(&format!("{:#x}", t.value)).unwrap())
+        .collect::<Vec<_>>();
+    let visitor_name = format_ident!("{id}Visitor");
+
+    quote! {
+        #[derive(FromPrimitive, ToPrimitive, Debug, Hash, Eq, PartialEq, Clone, Copy)]
+        #[repr(u64)]
+        pub enum #name {
+            #(#variants = #values,)*
+        }
+
+        #[cfg(feature = "serde")]
+        impl serde::Serialize for #name {
+            fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                serializer.serialize_u64(*self as u64)
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        struct #visitor_name;
+
+        #[cfg(feature = "serde")]
+        impl<'de> serde::de::Visitor<'de> for #visitor_name {
+            type Value = #name;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a valid discriminant")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    #(#values => Ok(#name::#variants),)*
+                    _ => Err(E::custom(format!("invalid discriminant: {value}"))),
+                }
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl<'de> serde::Deserialize<'de> for #name {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                deserializer.deserialize_u64(#visitor_name)
+            }
+        }
+    }
+}
+
 fn generate_decl(scope: &lint::Scope<'_>, file: &ast::File, decl: &ast::Decl) -> String {
     match decl {
-        ast::Decl::Packet { id, constraints, fields, parent_id, .. } => generate_packet_decl(
+        ast::Decl::Packet { id, constraints, fields, parent_id, .. }
+        | ast::Decl::Struct { id, constraints, fields, parent_id, .. } => generate_packet_decl(
             scope,
             file.endianness.value,
             id,
@@ -186,6 +249,7 @@ fn generate_decl(scope: &lint::Scope<'_>, file: &ast::File, decl: &ast::Decl) ->
             parent_id.as_deref(),
         )
         .to_string(),
+        ast::Decl::Enum { id, tags, .. } => generate_enum_decl(id, tags).to_string(),
         _ => todo!("unsupported Decl::{:?}", decl),
     }
 }
@@ -305,5 +369,54 @@ mod tests {
             c: 6,
           }
         "#,
+    );
+
+    test_pdl!(
+        struct_decl_complex_scalars,
+        r#"
+          struct Foo {
+            a: 3,
+            b: 8,
+            c: 5,
+            d: 24,
+            e: 12,
+            f: 4,
+          }
+        "#,
+    );
+
+    test_pdl!(packet_decl_8bit_enum, " enum Foo :  8 { A = 1, B = 2 } packet Bar { x: Foo }");
+    test_pdl!(packet_decl_24bit_enum, "enum Foo : 24 { A = 1, B = 2 } packet Bar { x: Foo }");
+    test_pdl!(packet_decl_64bit_enum, "enum Foo : 64 { A = 1, B = 2 } packet Bar { x: Foo }");
+
+    test_pdl!(
+        packet_decl_mixed_scalars_enums,
+        "
+          enum Enum7 : 7 {
+            A = 1,
+            B = 2,
+          }
+
+          enum Enum9 : 9 {
+            A = 1,
+            B = 2,
+          }
+
+          packet Foo {
+            x: Enum7,
+            y: 5,
+            z: Enum9,
+            w: 3,
+          }
+        "
+    );
+
+    test_pdl!(
+        packet_decl_reserved_field,
+        "
+          packet Foo {
+            _reserved_: 40,
+          }
+        "
     );
 }

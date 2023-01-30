@@ -38,37 +38,6 @@ impl<'a> FieldParser<'a> {
         }
     }
 
-    fn endianness_suffix(&self, width: usize) -> &'static str {
-        if width > 8 && self.endianness == ast::EndiannessValue::LittleEndian {
-            "_le"
-        } else {
-            ""
-        }
-    }
-
-    /// Parse an unsigned integer with the given `width`.
-    ///
-    /// The generated code requires that `self.span` is a mutable
-    /// `bytes::Buf` value.
-    fn get_uint(&self, width: usize) -> proc_macro2::TokenStream {
-        let span = &self.span;
-        let suffix = self.endianness_suffix(width);
-        let value_type = types::Integer::new(width);
-        if value_type.width == width {
-            let get_u = format_ident!("get_u{}{}", value_type.width, suffix);
-            quote! {
-                #span.#get_u()
-            }
-        } else {
-            let get_uint = format_ident!("get_uint{}", suffix);
-            let value_nbytes = proc_macro2::Literal::usize_unsuffixed(width / 8);
-            let cast = (value_type.width < 64).then(|| quote!(as #value_type));
-            quote! {
-                #span.#get_uint(#value_nbytes) #cast
-            }
-        }
-    }
-
     pub fn add(&mut self, field: &'a ast::Field) {
         if field.is_bitfield(self.scope) {
             self.add_bit_field(field);
@@ -80,7 +49,7 @@ impl<'a> FieldParser<'a> {
 
     fn add_bit_field(&mut self, field: &'a ast::Field) {
         self.chunk.push(BitField { shift: self.shift, field });
-        self.shift += field.width().unwrap();
+        self.shift += field.width(self.scope).unwrap();
         if self.shift % 8 != 0 {
             return;
         }
@@ -107,7 +76,7 @@ impl<'a> FieldParser<'a> {
         // semantic in Rust.
         let chunk_name = format_ident!("chunk");
 
-        let get = self.get_uint(self.shift);
+        let get = types::get_uint(self.endianness, self.shift, self.span);
         if self.chunk.len() > 1 {
             // Multiple values: we read into a local variable.
             self.code.push(quote! {
@@ -130,7 +99,7 @@ impl<'a> FieldParser<'a> {
                 v = quote! { (#v >> #shift) }
             }
 
-            let width = field.width().unwrap();
+            let width = field.width(self.scope).unwrap();
             let value_type = types::Integer::new(width);
             if !single_value && width < value_type.width {
                 // Mask value if we grabbed more than `width` and if
@@ -149,6 +118,21 @@ impl<'a> FieldParser<'a> {
                     quote! {
                         let #id = #v;
                     }
+                }
+                ast::Field::Typedef { id, type_id, .. } => {
+                    let id = format_ident!("{id}");
+                    let type_id = format_ident!("{type_id}");
+                    let from_u = format_ident!("from_u{}", value_type.width);
+                    // TODO(mgeisler): Remove the `unwrap` from the
+                    // generated code and return the error to the
+                    // caller.
+                    quote! {
+                        let #id = #type_id::#from_u(#v).unwrap();
+                    }
+                }
+                ast::Field::Reserved { .. } => {
+                    // Nothing to do here.
+                    quote! {}
                 }
                 _ => todo!(),
             });

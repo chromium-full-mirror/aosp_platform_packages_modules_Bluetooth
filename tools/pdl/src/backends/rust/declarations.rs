@@ -20,6 +20,17 @@ impl FieldDeclarations {
                     #id: #field_type,
                 }
             }
+            ast::Field::Typedef { id, type_id, .. } => {
+                let id = format_ident!("{id}");
+                let field_type = format_ident!("{type_id}");
+                quote! {
+                    #id: #field_type,
+                }
+            }
+            ast::Field::Reserved { .. } => {
+                // Nothing to do here.
+                quote! {}
+            }
             _ => todo!(),
         });
     }
