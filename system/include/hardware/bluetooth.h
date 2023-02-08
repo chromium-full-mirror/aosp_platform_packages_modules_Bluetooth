@@ -24,7 +24,7 @@
 #include <sys/types.h>
 
 #include "avrcp/avrcp.h"
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "bluetooth/uuid.h"
 #include "bt_transport.h"
 #include "raw_address.h"
@@ -357,13 +357,6 @@ typedef enum {
    * Data Type - bool.
    */
   BT_PROPERTY_REMOTE_IS_COORDINATED_SET_MEMBER,
-
-  /**
-   * Description - True if Remote is an ASHA follower device of a set.
-   * Access mode - GET.
-   * Data Type - bool.
-   */
-  BT_PROPERTY_REMOTE_IS_ASHA_FOLLOWER,
 
   /**
    * Description - Appearance as specified in Assigned Numbers.
