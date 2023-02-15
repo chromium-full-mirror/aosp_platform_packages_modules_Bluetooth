@@ -25,8 +25,6 @@
 #include <map>
 #include <string>
 
-extern std::map<std::string, int> mock_function_count_map;
-
 // Mock include file to share data between tests and mock
 #include "test/mock/mock_stack_hcic_hciblecmds.h"
 
@@ -77,8 +75,6 @@ struct btsnd_hcic_ble_read_resolvable_addr_local
     btsnd_hcic_ble_read_resolvable_addr_local;
 struct btsnd_hcic_ble_read_resolvable_addr_peer
     btsnd_hcic_ble_read_resolvable_addr_peer;
-struct btsnd_hcic_ble_remove_from_acceptlist
-    btsnd_hcic_ble_remove_from_acceptlist;
 struct btsnd_hcic_ble_set_addr_resolution_enable
     btsnd_hcic_ble_set_addr_resolution_enable;
 struct btsnd_hcic_ble_set_adv_data btsnd_hcic_ble_set_adv_data;
@@ -303,13 +299,6 @@ void btsnd_hcic_ble_read_resolvable_addr_peer(uint8_t addr_type_peer,
   mock_function_count_map[__func__]++;
   test::mock::stack_hcic_hciblecmds::btsnd_hcic_ble_read_resolvable_addr_peer(
       addr_type_peer, bda_peer);
-}
-void btsnd_hcic_ble_remove_from_acceptlist(
-    tBLE_ADDR_TYPE addr_type, const RawAddress& bda,
-    base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  mock_function_count_map[__func__]++;
-  test::mock::stack_hcic_hciblecmds::btsnd_hcic_ble_remove_from_acceptlist(
-      addr_type, bda, std::move(cb));
 }
 void btsnd_hcic_ble_set_addr_resolution_enable(uint8_t addr_resolution_enable) {
   mock_function_count_map[__func__]++;

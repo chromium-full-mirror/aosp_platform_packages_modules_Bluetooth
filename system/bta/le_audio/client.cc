@@ -1290,8 +1290,9 @@ class LeAudioClientImpl : public LeAudioClient {
     LeAudioDevice* leAudioDevice = leAudioDevices_.FindByAddress(address);
 
     if (!leAudioDevice) {
-      LOG(ERROR) << __func__ << ", leAudioDevice not connected ("
-                 << ADDRESS_TO_LOGGABLE_STR(address) << ")";
+      LOG_WARN("leAudioDevice not connected ( %s )",
+               ADDRESS_TO_LOGGABLE_CSTR(address));
+      callbacks_->OnConnectionState(ConnectionState::DISCONNECTED, address);
       return;
     }
 
@@ -1357,15 +1358,15 @@ class LeAudioClientImpl : public LeAudioClient {
 
     leAudioDevice->SetConnectionState(DeviceConnectState::DISCONNECTING);
 
-    if (acl_force_disconnect) {
-      leAudioDevice->DisconnectAcl();
-      return;
-    }
-
     BtaGattQueue::Clean(leAudioDevice->conn_id_);
     BTA_GATTC_Close(leAudioDevice->conn_id_);
     leAudioDevice->conn_id_ = GATT_INVALID_CONN_ID;
     leAudioDevice->mtu_ = 0;
+
+    /* Remote in bad state, force ACL Disconnection. */
+    if (acl_force_disconnect) {
+      leAudioDevice->DisconnectAcl();
+    }
   }
 
   void DeregisterNotifications(LeAudioDevice* leAudioDevice) {
