@@ -802,6 +802,27 @@ static void dumpMetrics(std::string* output) {
   bluetooth::common::BluetoothMetricsLogger::GetInstance()->WriteString(output);
 }
 
+static int get_remote_pbap_pce_version(const RawAddress* bd_addr) {
+  // Read and restore the PCE version from local storage
+  uint16_t pce_version = 0;
+  size_t version_value_size = sizeof(pce_version);
+  if (!btif_config_get_bin(bd_addr->ToString(), BT_CONFIG_KEY_PBAP_PCE_VERSION,
+                           (uint8_t*)&pce_version, &version_value_size)) {
+    LOG_WARN("Failed to read cached peer PCE version for %s",
+             ADDRESS_TO_LOGGABLE_CSTR(*bd_addr));
+  }
+  return pce_version;
+}
+
+static bool pbap_pse_dynamic_version_upgrade_is_enabled() {
+  if (bluetooth::common::init_flags::
+          pbap_pse_dynamic_version_upgrade_is_enabled()) {
+    return true;
+  }
+  LOG_WARN("PBAP PSE dynamic version upgrade is not enabled");
+  return false;
+}
+
 static const void* get_profile_interface(const char* profile_id) {
   LOG_INFO("%s: id = %s", __func__, profile_id);
 
@@ -873,6 +894,13 @@ static const void* get_profile_interface(const char* profile_id) {
 
   if (is_profile(profile_id, BT_PROFILE_CSIS_CLIENT_ID))
     return btif_csis_client_get_interface();
+
+  bool isBqrEnabled =
+      bluetooth::common::InitFlags::IsBluetoothQualityReportCallbackEnabled();
+  if (isBqrEnabled) {
+    if (is_profile(profile_id, BT_BQR_ID))
+      return bluetooth::bqr::getBluetoothQualityReportInterface();
+  }
 
   return NULL;
 }
@@ -1100,6 +1128,9 @@ EXPORT_SYMBOL bt_interface_t bluetoothInterface = {
     .interop_match_addr_or_name = interop_match_addr_or_name,
     .interop_database_add_remove_addr = interop_database_add_remove_addr,
     .interop_database_add_remove_name = interop_database_add_remove_name,
+    .get_remote_pbap_pce_version = get_remote_pbap_pce_version,
+    .pbap_pse_dynamic_version_upgrade_is_enabled =
+        pbap_pse_dynamic_version_upgrade_is_enabled,
 };
 
 // callback reporting helpers

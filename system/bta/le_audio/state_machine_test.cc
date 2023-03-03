@@ -173,6 +173,11 @@ class StateMachineTest : public Test {
   uint8_t channel_count_ = kLeAudioCodecLC3ChannelCountSingleChannel;
   uint16_t sample_freq_ = codec_specific::kCapSamplingFrequency16000Hz;
 
+  /* Use to simulated error status on Cis creation */
+  bool overwrite_cis_status_;
+  uint8_t overwrite_cis_status_idx_;
+  std::vector<uint8_t> cis_status_;
+
   void SetUp() override {
     bluetooth::common::InitFlags::Load(test_flags);
     reset_mock_function_count_map();
@@ -180,6 +185,10 @@ class StateMachineTest : public Test {
     bluetooth::manager::SetMockBtmInterface(&btm_interface);
     gatt::SetMockBtaGattInterface(&gatt_interface);
     gatt::SetMockBtaGattQueue(&gatt_queue);
+
+    overwrite_cis_status_idx_ = 0;
+    overwrite_cis_status_ = false;
+    cis_status_.clear();
 
     ::le_audio::AudioSetConfigurationProvider::Initialize();
     LeAudioGroupStateMachine::Initialize(&mock_callbacks_);
@@ -369,7 +378,12 @@ class StateMachineTest : public Test {
                 bluetooth::hci::iso_manager::cis_establish_cmpl_evt evt;
 
                 // Fill proper values if needed
-                evt.status = 0x00;
+                if (overwrite_cis_status_) {
+                  evt.status = cis_status_[overwrite_cis_status_idx_++];
+                } else {
+                  evt.status = 0;
+                }
+
                 evt.cig_id = group->group_id_;
                 evt.cis_conn_hdl = pair.cis_conn_handle;
                 evt.cig_sync_delay = 0;
@@ -1234,8 +1248,9 @@ TEST_F(StateMachineTest, testConfigureCodecSingle) {
   InjectInitialIdleNotification(group);
 
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1279,8 +1294,9 @@ TEST_F(StateMachineTest, testConfigureCodecMulti) {
 
   // Start the configuration and stream the content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1325,7 +1341,9 @@ TEST_F(StateMachineTest, testConfigureQosSingle) {
   InjectInitialIdleNotification(group);
 
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, context_type, types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1372,8 +1390,9 @@ TEST_F(StateMachineTest, testConfigureQosSingleRecoverCig) {
   InjectInitialIdleNotification(group);
 
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1418,8 +1437,9 @@ TEST_F(StateMachineTest, testConfigureQosMultiple) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1469,8 +1489,9 @@ TEST_F(StateMachineTest, testStreamSingle) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1518,8 +1539,9 @@ TEST_F(StateMachineTest, testStreamSkipEnablingSink) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1571,8 +1593,9 @@ TEST_F(StateMachineTest, testStreamSkipEnablingSinkSource) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1625,12 +1648,90 @@ TEST_F(StateMachineTest, testStreamMultipleConversational) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
             types::AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING);
+  ASSERT_EQ(1, mock_function_count_map["alarm_cancel"]);
+}
+
+TEST_F(StateMachineTest, testFailedStreamMultipleConversational) {
+  /* Testing here CIS Failed to be established */
+  const auto context_type = kContextTypeConversational;
+  const auto leaudio_group_id = 4;
+  const auto num_devices = 2;
+  overwrite_cis_status_ = true;
+
+  cis_status_.resize(2);
+  cis_status_[0] = 0x00;
+  cis_status_[1] = 0x0e;  // Failed to be established
+
+  // Prepare multiple fake connected devices in a group
+  auto* group =
+      PrepareSingleTestDeviceGroup(leaudio_group_id, context_type, num_devices);
+  ASSERT_EQ(group->Size(), num_devices);
+
+  PrepareConfigureCodecHandler(group);
+  PrepareConfigureQosHandler(group);
+  PrepareEnableHandler(group);
+  PrepareReceiverStartReady(group);
+  PrepareReleaseHandler(group);
+
+  EXPECT_CALL(*mock_iso_manager_, CreateCig(_, _)).Times(1);
+  EXPECT_CALL(*mock_iso_manager_, EstablishCis(_)).Times(AtLeast(1));
+  EXPECT_CALL(*mock_iso_manager_, SetupIsoDataPath(_, _)).Times(0);
+  EXPECT_CALL(*mock_iso_manager_, RemoveIsoDataPath(_, _)).Times(0);
+
+  /* This check is the major one in this test, as we want to make sure,
+   * it will not be called twice but only once (when both bidirectional ASEs are
+   * not in the STREAMING or ENABLING state)
+   */
+  EXPECT_CALL(*mock_iso_manager_, DisconnectCis(_, _)).Times(1);
+
+  EXPECT_CALL(*mock_iso_manager_, RemoveCig(_, _)).Times(0);
+
+  InjectInitialIdleNotification(group);
+
+  auto* leAudioDevice = group->GetFirstDevice();
+
+  /* First device Control Point actions
+   * Codec Config
+   * QoS Config
+   * Enable
+   * Receiver ready
+   * Release
+   */
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(leAudioDevice->conn_id_,
+                                              leAudioDevice->ctp_hdls_.val_hdl,
+                                              _, GATT_WRITE_NO_RSP, _, _))
+      .Times(5);
+  leAudioDevice = group->GetNextDevice(leAudioDevice);
+
+  /* Second device Control Point actions
+   * Codec Config
+   * QoS Config
+   * Enable (failed on CIS established - therefore no Receiver Ready)
+   * Release
+   */
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(leAudioDevice->conn_id_,
+                                              leAudioDevice->ctp_hdls_.val_hdl,
+                                              _, GATT_WRITE_NO_RSP, _, _))
+      .Times(4);
+
+  /* Prepare DisconnectCis mock to not symulate CisDisconnection */
+  ON_CALL(*mock_iso_manager_, DisconnectCis).WillByDefault(Return());
+
+  // Start the configuration and stream Media content
+  ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
+
+  // Check if group has transitioned to a proper state
+  ASSERT_EQ(group->GetState(), types::AseState::BTA_LE_AUDIO_ASE_STATE_IDLE);
   ASSERT_EQ(1, mock_function_count_map["alarm_cancel"]);
 }
 
@@ -1678,8 +1779,9 @@ TEST_F(StateMachineTest, testStreamMultiple) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1731,8 +1833,9 @@ TEST_F(StateMachineTest, testUpdateMetadataMultiple) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   testing::Mock::VerifyAndClearExpectations(&gatt_queue);
 
@@ -1760,8 +1863,8 @@ TEST_F(StateMachineTest, testUpdateMetadataMultiple) {
   const auto metadata_context_type =
       kContextTypeMedia | kContextTypeSoundEffects;
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      metadata_context_type));
+      group, context_type,
+      {.sink = metadata_context_type, .source = metadata_context_type}));
 
   /* This is just update metadata - watchdog is not used */
   ASSERT_EQ(0, mock_function_count_map["alarm_cancel"]);
@@ -1812,8 +1915,9 @@ TEST_F(StateMachineTest, testDisableSingle) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1887,8 +1991,9 @@ TEST_F(StateMachineTest, testDisableMultiple) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -1991,8 +2096,9 @@ TEST_F(StateMachineTest, testDisableBidirectional) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2062,8 +2168,9 @@ TEST_F(StateMachineTest, testReleaseSingle) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2141,8 +2248,9 @@ TEST_F(StateMachineTest, testReleaseCachingSingle) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2223,8 +2331,9 @@ TEST_F(StateMachineTest,
 
   // Start the configuration and stream Ringtone content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2245,8 +2354,9 @@ TEST_F(StateMachineTest,
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2332,8 +2442,9 @@ TEST_F(StateMachineTest,
 
   // Start the configuration and stream Conversational content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2355,8 +2466,9 @@ TEST_F(StateMachineTest,
   // Start the configuration and stream Media content
   context_type = kContextTypeMedia;
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2404,8 +2516,9 @@ TEST_F(StateMachineTest, testReleaseMultiple) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2469,8 +2582,9 @@ TEST_F(StateMachineTest, testReleaseBidirectional) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -2525,8 +2639,9 @@ TEST_F(StateMachineTest, testDisableAndReleaseBidirectional) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Suspend the stream
   LeAudioGroupStateMachine::Get()->SuspendStream(group);
@@ -2634,8 +2749,9 @@ TEST_F(StateMachineTest, testAseAutonomousRelease) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Validate new GroupStreamStatus
   EXPECT_CALL(mock_callbacks_,
@@ -2706,8 +2822,9 @@ TEST_F(StateMachineTest, testAseAutonomousRelease2Devices) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check streaming will continue
   EXPECT_CALL(mock_callbacks_,
@@ -2750,8 +2867,9 @@ TEST_F(StateMachineTest, testStateTransitionTimeoutOnIdleState) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Disconnect device
   LeAudioGroupStateMachine::Get()->ProcessHciNotifAclDisconnected(
@@ -2759,6 +2877,32 @@ TEST_F(StateMachineTest, testStateTransitionTimeoutOnIdleState) {
 
   // Make sure timeout is cleared
   ASSERT_TRUE(fake_osi_alarm_set_on_mloop_.cb == nullptr);
+}
+
+TEST_F(StateMachineTest, testStateIdleNotifyAclDisconnectedRemoveCig) {
+  const auto context_type = kContextTypeRingtone;
+  const int leaudio_group_id = 4;
+
+  // Prepare fake connected device group
+  auto* group = PrepareSingleTestDeviceGroup(leaudio_group_id, context_type);
+  group->SetCigState(types::CigState::CREATED);
+
+  // Assert current state
+  ASSERT_TRUE(group->GetState() ==
+              types::AseState::BTA_LE_AUDIO_ASE_STATE_IDLE);
+  ASSERT_FALSE(group->IsInTransition());
+  ASSERT_TRUE(group->GetCigState() == types::CigState::CREATED);
+
+  // Expect RemoveCig to be called
+  EXPECT_CALL(*mock_iso_manager_, RemoveCig(group->group_id_, _)).Times(1);
+
+  // Disconnect device
+  auto* leAudioDevice = group->GetFirstDevice();
+  LeAudioGroupStateMachine::Get()->ProcessHciNotifAclDisconnected(
+      group, leAudioDevice);
+
+  // Assert Cig state transition to NONE after REMOVING
+  ASSERT_TRUE(group->GetCigState() == types::CigState::NONE);
 }
 
 TEST_F(StateMachineTest, testStateTransitionTimeout) {
@@ -2784,8 +2928,9 @@ TEST_F(StateMachineTest, testStateTransitionTimeout) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if timeout is fired
   EXPECT_CALL(mock_callbacks_, OnStateTransitionTimeout(leaudio_group_id));
@@ -2834,8 +2979,9 @@ TEST_F(StateMachineTest, testConfigureDataPathForHost) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 }
 TEST_F(StateMachineTest, testConfigureDataPathForAdsp) {
   const auto context_type = kContextTypeRingtone;
@@ -2875,8 +3021,9 @@ TEST_F(StateMachineTest, testConfigureDataPathForAdsp) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 }
 
 static void InjectAclDisconnected(LeAudioDeviceGroup* group,
@@ -2919,8 +3066,9 @@ TEST_F(StateMachineTest, testStreamConfigurationAdspDownMix) {
 
   // Start the configuration and stream Media content
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   ASSERT_EQ(
       static_cast<int>(
@@ -3038,8 +3186,9 @@ TEST_F(StateMachineTest, testAttachDeviceToTheStream) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -3146,8 +3295,9 @@ TEST_F(StateMachineTest, testAttachDeviceToTheConversationalStream) {
 
   // Start the configuration and stream Conversational content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -3256,7 +3406,9 @@ TEST_F(StateMachineTest, StartStreamAfterConfigure) {
   // Start the configuration and stream Media content
   group->SetPendingConfiguration();
   LeAudioGroupStateMachine::Get()->ConfigureStream(
-      group, context_type, types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
 
@@ -3269,7 +3421,9 @@ TEST_F(StateMachineTest, StartStreamAfterConfigure) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, context_type, types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
 }
@@ -3321,7 +3475,9 @@ TEST_F(StateMachineTest, StartStreamCachedConfig) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, context_type, types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
 
@@ -3355,7 +3511,9 @@ TEST_F(StateMachineTest, StartStreamCachedConfig) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, context_type, types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
   ASSERT_EQ(1, mock_function_count_map["alarm_cancel"]);
@@ -3420,7 +3578,9 @@ TEST_F(StateMachineTest, BoundedHeadphonesConversationalToMediaChannelCount_2) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, initial_context_type, types::AudioContexts(initial_context_type));
+      group, initial_context_type,
+      {.sink = types::AudioContexts(initial_context_type),
+       .source = types::AudioContexts(initial_context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
 
@@ -3448,7 +3608,9 @@ TEST_F(StateMachineTest, BoundedHeadphonesConversationalToMediaChannelCount_2) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, new_context_type, types::AudioContexts(new_context_type));
+      group, new_context_type,
+      {.sink = types::AudioContexts(new_context_type),
+       .source = types::AudioContexts(new_context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
 }
@@ -3512,7 +3674,9 @@ TEST_F(StateMachineTest, BoundedHeadphonesConversationalToMediaChannelCount_1) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, initial_context_type, types::AudioContexts(initial_context_type));
+      group, initial_context_type,
+      {.sink = types::AudioContexts(initial_context_type),
+       .source = types::AudioContexts(initial_context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
 
@@ -3545,7 +3709,9 @@ TEST_F(StateMachineTest, BoundedHeadphonesConversationalToMediaChannelCount_1) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, new_context_type, types::AudioContexts(new_context_type));
+      group, new_context_type,
+      {.sink = types::AudioContexts(new_context_type),
+       .source = types::AudioContexts(new_context_type)});
 
   testing::Mock::VerifyAndClearExpectations(&mock_callbacks_);
   ASSERT_EQ(1, mock_function_count_map["alarm_cancel"]);
@@ -3593,8 +3759,9 @@ TEST_F(StateMachineTest, lateCisDisconnectedEvent_ConfiguredByUser) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -3680,8 +3847,9 @@ TEST_F(StateMachineTest, lateCisDisconnectedEvent_AutonomousConfigured) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -3772,8 +3940,9 @@ TEST_F(StateMachineTest, lateCisDisconnectedEvent_Idle) {
 
   // Start the configuration and stream Media content
   LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)});
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -3865,8 +4034,9 @@ TEST_F(StateMachineTest, StreamReconfigureAfterCisLostTwoDevices) {
   // Start the configuration and stream Media content
   context_type = kContextTypeMedia;
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),
@@ -3887,7 +4057,6 @@ TEST_F(StateMachineTest, StreamReconfigureAfterCisLostTwoDevices) {
     leAudioDevice = group->GetNextDevice(leAudioDevice);
   }
 
-  LOG(INFO) << "GK A1";
   group->ReloadAudioLocations();
   group->ReloadAudioDirections();
   group->UpdateAudioContextTypeAvailability();
@@ -3896,13 +4065,11 @@ TEST_F(StateMachineTest, StreamReconfigureAfterCisLostTwoDevices) {
   leAudioDevice = group->GetFirstDevice();
   int device_cnt = num_devices;
   while (leAudioDevice) {
-    LOG(INFO) << "GK A11";
     leAudioDevice->conn_id_ = device_cnt--;
     leAudioDevice->SetConnectionState(DeviceConnectState::CONNECTED);
     leAudioDevice = group->GetNextDevice(leAudioDevice);
   }
 
-  LOG(INFO) << "GK A2";
   InjectInitialIdleNotification(group);
 
   group->ReloadAudioLocations();
@@ -3932,8 +4099,9 @@ TEST_F(StateMachineTest, StreamReconfigureAfterCisLostTwoDevices) {
   // Start the configuration and stream Conversational content
   context_type = kContextTypeConversational;
   ASSERT_TRUE(LeAudioGroupStateMachine::Get()->StartStream(
-      group, static_cast<LeAudioContextType>(context_type),
-      types::AudioContexts(context_type)));
+      group, context_type,
+      {.sink = types::AudioContexts(context_type),
+       .source = types::AudioContexts(context_type)}));
 
   // Check if group has transitioned to a proper state
   ASSERT_EQ(group->GetState(),

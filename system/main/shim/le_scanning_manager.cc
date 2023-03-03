@@ -104,6 +104,8 @@ class DefaultScanningCallback : public ::ScanningCallbacks {
     LogUnused();
   };
 
+  void OnBigInfoReport(uint16_t sync_handle, bool encrypted) override {LogUnused(); };
+
  private:
   static void LogUnused() {
     LOG_WARN("BLE Scanning callbacks have not been registered");
@@ -535,6 +537,7 @@ void BleScannerInterfaceImpl::OnTrackAdvFoundLost(
                              &on_found_on_lost_info.advertiser_address_type);
   }
 
+  track_info.monitor_handle = on_found_on_lost_info.monitor_handle;
   track_info.advertiser_address = raw_address;
   track_info.advertiser_address_type =
       on_found_on_lost_info.advertiser_address_type;
@@ -628,6 +631,12 @@ void BleScannerInterfaceImpl::OnPeriodicSyncTransferred(
                                   pa_source, status, ToRawAddress(address)));
 }
 
+void BleScannerInterfaceImpl::OnBigInfoReport(uint16_t sync_handle, bool encrypted) {
+  do_in_jni_thread(FROM_HERE,
+                   base::BindOnce(&ScanningCallbacks::OnBigInfoReport,
+                   base::Unretained(scanning_callbacks_), sync_handle, encrypted));
+}
+
 void BleScannerInterfaceImpl::OnTimeout() {}
 void BleScannerInterfaceImpl::OnFilterEnable(bluetooth::hci::Enable enable,
                                              uint8_t status) {}
@@ -699,6 +708,10 @@ bool BleScannerInterfaceImpl::parse_filter_command(
   advertising_packet_content_filter_command.company_mask =
       apcf_command.company_mask;
   advertising_packet_content_filter_command.ad_type = apcf_command.ad_type;
+  advertising_packet_content_filter_command.org_id = apcf_command.org_id;
+  advertising_packet_content_filter_command.tds_flags = apcf_command.tds_flags;
+  advertising_packet_content_filter_command.tds_flags_mask =
+      apcf_command.tds_flags_mask;
   advertising_packet_content_filter_command.data.assign(
       apcf_command.data.begin(), apcf_command.data.end());
   advertising_packet_content_filter_command.data_mask.assign(
