@@ -678,6 +678,34 @@ public class AdapterService extends Service {
         mMetricsLogger = metricsLogger;
     }
 
+
+    /**
+     *  Log L2CAP CoC Client Connection Metrics
+     *
+     *  @param device Bluetooth device
+     *  @param port port of socket
+     *  @param isSecured if secured API is called
+     *  @param result transaction result of the connection
+     *  @param connectionLatencyMillis latency of the connection
+     */
+    public void logL2capcocClientConnection(
+            BluetoothDevice device,
+            int port,
+            boolean isSecured,
+            int result,
+            long connectionLatencyMillis,
+            int appUid) {
+
+        int metricId = getMetricId(device);
+        Log.i(TAG, "Statslog L2capcoc client connection. metricId "
+                + metricId + " port " + port + " isSecured " + isSecured
+                + " result " + result + " connectionLatencyMillis " + connectionLatencyMillis
+                + " appUid " + appUid);
+        BluetoothStatsLog.write(
+                BluetoothStatsLog.BLUETOOTH_L2CAP_COC_CLIENT_CONNECTION,
+                metricId, port, isSecured, result, connectionLatencyMillis, appUid);
+    }
+
     @RequiresPermission(allOf = {
             android.Manifest.permission.BLUETOOTH_CONNECT,
             android.Manifest.permission.UPDATE_DEVICE_STATS,
@@ -3422,6 +3450,26 @@ public class AdapterService extends Service {
         }
 
         @Override
+        public void logL2capcocClientConnection(
+                BluetoothDevice device,
+                int port,
+                boolean isSecured,
+                int result,
+                long connectionLatencyMillis) {
+            AdapterService service = getService();
+            if (service == null) {
+                return;
+            }
+            service.logL2capcocClientConnection(
+                    device,
+                    port,
+                    isSecured,
+                    result,
+                    connectionLatencyMillis,
+                    Binder.getCallingUid());
+        }
+
+        @Override
         public void sdpSearch(BluetoothDevice device, ParcelUuid uuid, AttributionSource source,
                 SynchronousResultReceiver receiver) {
             try {
@@ -4598,29 +4646,29 @@ public class AdapterService extends Service {
 
         @RequiresPermission(android.Manifest.permission.BLUETOOTH_SCAN)
         @Override
-        public void isOffloadedTransportDiscoveryDataScanSupported(
+        public void getOffloadedTransportDiscoveryDataScanSupported(
                 AttributionSource source, SynchronousResultReceiver receiver) {
             try {
-                receiver.send(isOffloadedTransportDiscoveryDataScanSupported(source));
+                receiver.send(getOffloadedTransportDiscoveryDataScanSupported(source));
             } catch (RuntimeException e) {
                 receiver.propagateException(e);
             }
         }
 
-        private int isOffloadedTransportDiscoveryDataScanSupported(
+        private int getOffloadedTransportDiscoveryDataScanSupported(
                 AttributionSource attributionSource) {
             AdapterService service = getService();
             if (service == null
                     || !callerIsSystemOrActiveOrManagedUser(service, TAG,
-                            "isOffloadedTransportDiscoveryDataScanSupported")
+                            "getOffloadedTransportDiscoveryDataScanSupported")
                     || !Utils.checkScanPermissionForDataDelivery(
                             service, attributionSource,
-                            "isOffloadedTransportDiscoveryDataScanSupported")) {
+                            "getOffloadedTransportDiscoveryDataScanSupported")) {
                 return BluetoothStatusCodes.ERROR_MISSING_BLUETOOTH_SCAN_PERMISSION;
             }
             enforceBluetoothPrivilegedPermission(service);
 
-            return service.isOffloadedTransportDiscoveryDataScanSupported();
+            return service.getOffloadedTransportDiscoveryDataScanSupported();
         }
     }
 
@@ -5846,9 +5894,9 @@ public class AdapterService extends Service {
 
     /**
      * Return if offloaded TDS filter is supported.
-     * @return true if supported
+     * @return  {@code BluetoothStatusCodes.FEATURE_SUPPORTED} if supported
      */
-    public int isOffloadedTransportDiscoveryDataScanSupported() {
+    public int getOffloadedTransportDiscoveryDataScanSupported() {
         if (mAdapterProperties.isOffloadedTransportDiscoveryDataScanSupported()) {
             return BluetoothStatusCodes.FEATURE_SUPPORTED;
         }

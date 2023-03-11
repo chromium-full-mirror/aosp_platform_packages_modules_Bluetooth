@@ -1657,17 +1657,15 @@ void bta_dm_queue_disc(tBTA_DM_MSG* p_data) {
  *
  ******************************************************************************/
 void bta_dm_execute_queued_request() {
-  if (bta_dm_search_cb.p_pending_search) {
+  tBTA_DM_MSG* p_pending_discovery = (tBTA_DM_MSG*)fixed_queue_try_dequeue(
+      bta_dm_search_cb.pending_discovery_queue);
+  if (p_pending_discovery) {
+    LOG_INFO("%s Start pending discovery", __func__);
+    bta_sys_sendmsg(p_pending_discovery);
+  } else if (bta_dm_search_cb.p_pending_search) {
     LOG_INFO("%s Start pending search", __func__);
     bta_sys_sendmsg(bta_dm_search_cb.p_pending_search);
     bta_dm_search_cb.p_pending_search = NULL;
-  } else {
-    tBTA_DM_MSG* p_pending_discovery = (tBTA_DM_MSG*)fixed_queue_try_dequeue(
-        bta_dm_search_cb.pending_discovery_queue);
-    if (p_pending_discovery) {
-      LOG_INFO("%s Start pending discovery", __func__);
-      bta_sys_sendmsg(p_pending_discovery);
-    }
   }
 }
 
@@ -1857,18 +1855,26 @@ static void bta_dm_discover_next_device(void) {
  * Returns          void
  *
  ******************************************************************************/
-static void bta_dm_discover_device(const RawAddress& remote_bd_addr) {
+static tBT_TRANSPORT bta_dm_determine_discovery_transport(
+    const RawAddress& remote_bd_addr) {
   tBT_TRANSPORT transport = BT_TRANSPORT_BR_EDR;
   if (bta_dm_search_cb.transport == BT_TRANSPORT_AUTO) {
     tBT_DEVICE_TYPE dev_type;
     tBLE_ADDR_TYPE addr_type;
 
     BTM_ReadDevInfo(remote_bd_addr, &dev_type, &addr_type);
-    if (dev_type == BT_DEVICE_TYPE_BLE || addr_type == BLE_ADDR_RANDOM)
+    if (dev_type == BT_DEVICE_TYPE_BLE || addr_type == BLE_ADDR_RANDOM) {
       transport = BT_TRANSPORT_LE;
+    }
   } else {
     transport = bta_dm_search_cb.transport;
   }
+  return transport;
+}
+
+static void bta_dm_discover_device(const RawAddress& remote_bd_addr) {
+  const tBT_TRANSPORT transport =
+      bta_dm_determine_discovery_transport(remote_bd_addr);
 
   VLOG(1) << __func__ << " BDA: " << ADDRESS_TO_LOGGABLE_STR(remote_bd_addr);
 
@@ -4391,13 +4397,14 @@ void bta_dm_set_event_filter_connection_setup_all_devices() {
  *
  * Description     Allow the device to be woken by HID devices
  *
- * Parameters      std::vector of (Address, Address Type)
+ * Parameters      std::vector of Classic Address and LE (Address, Address Type)
  *
  *******************************************************************************/
 void bta_dm_allow_wake_by_hid(
+    std::vector<RawAddress> classic_hid_devices,
     std::vector<std::pair<RawAddress, uint8_t>> le_hid_devices) {
-  // Autoplumbed
-  bluetooth::shim::BTM_AllowWakeByHid(le_hid_devices);
+  bluetooth::shim::BTM_AllowWakeByHid(std::move(classic_hid_devices),
+                                      std::move(le_hid_devices));
 }
 
 /*******************************************************************************
@@ -4409,9 +4416,10 @@ void bta_dm_allow_wake_by_hid(
  * Parameters
  *
  *******************************************************************************/
-void bta_dm_restore_filter_accept_list() {
+void bta_dm_restore_filter_accept_list(
+    std::vector<std::pair<RawAddress, uint8_t>> le_devices) {
   // Autoplumbed
-  bluetooth::shim::BTM_RestoreFilterAcceptList();
+  bluetooth::shim::BTM_RestoreFilterAcceptList(le_devices);
 }
 
 /*******************************************************************************
@@ -4569,6 +4577,10 @@ tBTA_DM_PEER_DEVICE* allocate_device_for(const RawAddress& bd_addr,
 
 void bta_dm_remname_cback(const tBTM_REMOTE_DEV_NAME* p) {
   ::bta_dm_remname_cback(p);
+}
+
+tBT_TRANSPORT bta_dm_determine_discovery_transport(const RawAddress& bd_addr) {
+  return ::bta_dm_determine_discovery_transport(bd_addr);
 }
 
 }  // namespace testing
