@@ -1,13 +1,5 @@
 //! Rust compiler backend.
 
-// The `format-push-string` lint was briefly enabled present in Rust
-// 1.62. It is now moved the disabled "restriction" category instead.
-// See https://github.com/rust-lang/rust-clippy/issues/9077 for the
-// problems with this lint.
-//
-// Remove this when we use Rust 1.63 or later.
-#![allow(clippy::format_push_string)]
-
 use crate::{ast, lint};
 use heck::ToUpperCamelCase;
 use quote::{format_ident, quote};
@@ -270,9 +262,7 @@ fn generate_data_struct(
             ) -> Result<Self> {
                 let mut cell = Cell::new(#span);
                 let packet = Self::parse_inner(&mut cell #(, #parse_arg_names)*)?;
-                if !cell.get().is_empty() {
-                    return Err(Error::InvalidPacketError);
-                }
+                // TODO(mgeisler): communicate back to user if !cell.get().is_empty()?
                 Ok(packet)
             }
 
@@ -603,9 +593,7 @@ fn generate_packet_decl(
             pub fn parse(#span: &[u8]) -> Result<Self> {
                 let mut cell = Cell::new(#span);
                 let packet = Self::parse_inner(&mut cell)?;
-                if !cell.get().is_empty() {
-                    return Err(Error::InvalidPacketError);
-                }
+                // TODO(mgeisler): communicate back to user if !cell.get().is_empty()?
                 Ok(packet)
             }
 
