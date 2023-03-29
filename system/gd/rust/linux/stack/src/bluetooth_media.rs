@@ -78,6 +78,9 @@ pub trait IBluetoothMedia {
     // Set the device as the active A2DP device
     fn set_active_device(&mut self, address: String);
 
+    // Reset the active A2DP device
+    fn reset_active_device(&mut self);
+
     // Set the device as the active HFP device
     fn set_hfp_active_device(&mut self, address: String);
 
@@ -215,6 +218,7 @@ impl BluetoothAudioDevice {
 pub enum MediaActions {
     Connect(String),
     Disconnect(String),
+    ForceEnterConnected(String), // Only used for qualification.
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -340,7 +344,7 @@ impl BluetoothMedia {
 
         self.connected_profiles.entry(addr).or_insert_with(HashSet::new).remove(&profile);
 
-        if is_profile_critical {
+        if is_profile_critical && self.is_complete_profiles_required() {
             self.notify_critical_profile_disconnected(addr);
         }
 
@@ -449,7 +453,9 @@ impl BluetoothMedia {
                         self.a2dp_caps.remove(&addr);
                         self.a2dp_audio_state.remove(&addr);
                         self.rm_connected_profile(addr, uuid::Profile::A2dpSink, true);
-                        self.disconnect(addr.to_string());
+                        if self.is_complete_profiles_required() {
+                            self.disconnect(addr.to_string());
+                        }
                     }
                     _ => {
                         self.a2dp_states.insert(addr, state);
@@ -579,6 +585,7 @@ impl BluetoothMedia {
         match action {
             MediaActions::Connect(address) => self.connect(address),
             MediaActions::Disconnect(address) => self.disconnect(address),
+            MediaActions::ForceEnterConnected(address) => self.force_enter_connected(address),
         }
     }
 
@@ -622,7 +629,9 @@ impl BluetoothMedia {
                         self.hfp_cap.remove(&addr);
                         self.hfp_audio_state.remove(&addr);
                         self.rm_connected_profile(addr, uuid::Profile::Hfp, true);
-                        self.disconnect(addr.to_string());
+                        if self.is_complete_profiles_required() {
+                            self.disconnect(addr.to_string());
+                        }
                     }
                     BthfConnectionState::Connecting => {
                         info!("[{}]: hfp connecting.", DisplayAddress(&addr));
@@ -913,6 +922,18 @@ impl BluetoothMedia {
         let _ = txl.send(Message::Media(MediaActions::Disconnect(addr.to_string()))).await;
     }
 
+    async fn wait_force_enter_connected(
+        txl: &Sender<Message>,
+        addr: &RawAddress,
+        first_conn_ts: Instant,
+    ) {
+        let now_ts = Instant::now();
+        let total_duration = Duration::from_secs(CONNECT_MISSING_PROFILES_TIMEOUT_SEC);
+        let sleep_duration = (first_conn_ts + total_duration).saturating_duration_since(now_ts);
+        sleep(sleep_duration).await;
+        let _ = txl.send(Message::Media(MediaActions::ForceEnterConnected(addr.to_string()))).await;
+    }
+
     fn notify_media_capability_updated(&mut self, addr: RawAddress) {
         let mut guard = self.fallback_tasks.lock().unwrap();
         let mut states = self.device_states.lock().unwrap();
@@ -978,11 +999,16 @@ impl BluetoothMedia {
         let device_states = self.device_states.clone();
         let txl = self.tx.clone();
         let ts = first_conn_ts;
+        let is_complete_profiles_required = self.is_complete_profiles_required();
         match states.get(&addr).unwrap() {
             DeviceConnectionStates::Initiating => {
                 let task = topstack::get_runtime().spawn(async move {
                     // As initiator we can just immediately start connecting
                     let _ = txl.send(Message::Media(MediaActions::Connect(addr.to_string()))).await;
+                    if !is_complete_profiles_required {
+                        BluetoothMedia::wait_force_enter_connected(&txl, &addr, ts).await;
+                        return;
+                    }
                     BluetoothMedia::wait_retry(&tasks, &device_states, &txl, &addr, ts).await;
                     BluetoothMedia::wait_disconnect(&tasks, &device_states, &txl, &addr, ts).await;
                 });
@@ -990,6 +1016,10 @@ impl BluetoothMedia {
             }
             DeviceConnectionStates::ConnectingBeforeRetry => {
                 let task = topstack::get_runtime().spawn(async move {
+                    if !is_complete_profiles_required {
+                        BluetoothMedia::wait_force_enter_connected(&txl, &addr, ts).await;
+                        return;
+                    }
                     BluetoothMedia::wait_retry(&tasks, &device_states, &txl, &addr, ts).await;
                     BluetoothMedia::wait_disconnect(&tasks, &device_states, &txl, &addr, ts).await;
                 });
@@ -997,6 +1027,10 @@ impl BluetoothMedia {
             }
             DeviceConnectionStates::ConnectingAfterRetry => {
                 let task = topstack::get_runtime().spawn(async move {
+                    if !is_complete_profiles_required {
+                        BluetoothMedia::wait_force_enter_connected(&txl, &addr, ts).await;
+                        return;
+                    }
                     BluetoothMedia::wait_disconnect(&tasks, &device_states, &txl, &addr, ts).await;
                 });
                 guard.insert(addr, Some((task, ts)));
@@ -1400,6 +1434,34 @@ impl BluetoothMedia {
         }
         true
     }
+
+    // Per MPS v1.0 (Multi-Profile Specification), disconnecting or failing to connect
+    // a profile should not affect the others.
+    // Allow partial profiles connection during qualification (phone operations are enabled).
+    fn is_complete_profiles_required(&self) -> bool {
+        !self.phone_ops_enabled
+    }
+
+    // Force the media enters the FullyConnected state and then triggers a retry.
+    // This function is only used for qualification as a replacement of normal retry.
+    // Usually PTS initiates the connection of the necessary profiles, and Floss should notify
+    // CRAS of the new audio device regardless of the unconnected profiles.
+    // Still retry in the end because some test cases require that.
+    fn force_enter_connected(&mut self, address: String) {
+        let addr = match RawAddress::from_string(address.clone()) {
+            None => {
+                warn!("Invalid device address for force_enter_connected");
+                return;
+            }
+            Some(addr) => addr,
+        };
+        self.device_states
+            .lock()
+            .unwrap()
+            .insert(addr.clone(), DeviceConnectionStates::FullyConnected);
+        self.notify_media_capability_updated(addr);
+        self.connect(address);
+    }
 }
 
 fn get_a2dp_dispatcher(tx: Sender<Message>) -> A2dpCallbacksDispatcher {
@@ -1775,6 +1837,14 @@ impl IBluetoothMedia for BluetoothMedia {
     }
 
     fn set_active_device(&mut self, address: String) {
+        // During MPS tests, there might be some A2DP stream manipulation unexpected to CRAS.
+        // CRAS would then attempt to reset the active device. Ignore it during test.
+        // TODO(b/265988575): CRAS is migrating to use ResetActiveDevice instead. Remove this
+        // after the migration is done.
+        if !self.is_complete_profiles_required() && address == String::from("00:00:00:00:00:00") {
+            return;
+        }
+
         let addr = match RawAddress::from_string(address.clone()) {
             None => {
                 warn!("Invalid device address for set_active_device");
@@ -1783,11 +1853,32 @@ impl IBluetoothMedia for BluetoothMedia {
             Some(addr) => addr,
         };
 
-        match self.a2dp.as_mut() {
-            Some(a2dp) => a2dp.set_active_device(addr),
-            None => warn!("Uninitialized A2DP to set active device"),
+        match self.a2dp_states.get(&addr) {
+            Some(BtavConnectionState::Connected) => {
+                if let Some(a2dp) = self.a2dp.as_mut() {
+                    a2dp.set_active_device(addr);
+                    self.uinput.set_active_device(addr.to_string());
+                } else {
+                    warn!("Uninitialized A2DP to set active device");
+                }
+            }
+            _ => warn!("[{}] Not connected or disconnected A2DP address", address),
+        };
+    }
+
+    fn reset_active_device(&mut self) {
+        // During MPS tests, there might be some A2DP stream manipulation unexpected to CRAS.
+        // CRAS would then attempt to reset the active device. Ignore it during test.
+        if !self.is_complete_profiles_required() {
+            return;
         }
-        self.uinput.set_active_device(addr.to_string());
+
+        if let Some(a2dp) = self.a2dp.as_mut() {
+            a2dp.set_active_device(RawAddress::empty());
+        } else {
+            warn!("Uninitialized A2DP to set active device");
+        }
+        self.uinput.set_active_device(RawAddress::empty().to_string());
     }
 
     fn set_hfp_active_device(&mut self, address: String) {
@@ -1799,11 +1890,15 @@ impl IBluetoothMedia for BluetoothMedia {
             Some(addr) => addr,
         };
 
-        match self.hfp.as_mut() {
-            Some(hfp) => {
-                hfp.set_active_device(addr);
+        match self.hfp_states.get(&addr) {
+            Some(BthfConnectionState::SlcConnected) => {
+                if let Some(hfp) = self.hfp.as_mut() {
+                    hfp.set_active_device(addr);
+                } else {
+                    warn!("Uninitialized HFP to set active device");
+                }
             }
-            None => warn!("Uninitialized HFP to set active device"),
+            _ => warn!("[{}] Not connected or disconnected HFP address", address),
         }
     }
 
