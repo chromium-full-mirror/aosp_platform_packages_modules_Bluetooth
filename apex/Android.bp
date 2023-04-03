@@ -23,6 +23,7 @@ apex {
     compat_configs: [
         "bluetooth-compat-config",
         "framework-bluetooth-compat-config",
+        "bluetoothapk-platform-compat-config",
     ],
     apps: ["Bluetooth"],
 
@@ -48,7 +49,7 @@ apex {
     ],
     key: "com.android.btservices.key",
     certificate: ":com.android.btservices.certificate",
-    updatable: false,
+    updatable: true,
     compressible: false,
 }
 

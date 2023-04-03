@@ -12,6 +12,7 @@ mod ffi {
         fn delay_hidh_cleanup_until_hidh_ready_start_is_enabled() -> bool;
         fn gd_hal_snoop_logger_filtering_is_enabled() -> bool;
         fn btm_dm_flush_discovery_queue_on_search_cancel_is_enabled() -> bool;
+        fn classic_discovery_only_is_enabled() -> bool;
         fn clear_hidd_interrupt_cid_on_disconnect_is_enabled() -> bool;
         fn device_iot_config_logging_is_enabled() -> bool;
         fn dynamic_avrcp_version_enhancement_is_enabled() -> bool;
@@ -25,12 +26,12 @@ mod ffi {
         fn gd_remote_name_request_is_enabled() -> bool;
         fn gd_rust_is_enabled() -> bool;
         fn gd_security_is_enabled() -> bool;
+        fn get_default_log_level() -> i32;
         fn get_hci_adapter() -> i32;
+        fn get_log_level_for_tag(tag: &str) -> i32;
         fn hfp_dynamic_version_is_enabled() -> bool;
         fn irk_rotation_is_enabled() -> bool;
-        fn is_debug_logging_enabled_for_tag(tag: &str) -> bool;
         fn leaudio_targeted_announcement_reconnection_mode_is_enabled() -> bool;
-        fn logging_debug_enabled_for_all_is_enabled() -> bool;
         fn pass_phy_update_callback_is_enabled() -> bool;
         fn pbap_pse_dynamic_version_upgrade_is_enabled() -> bool;
         fn periodic_advertising_adi_is_enabled() -> bool;
