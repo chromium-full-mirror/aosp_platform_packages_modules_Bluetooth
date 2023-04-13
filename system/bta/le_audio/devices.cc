@@ -75,6 +75,9 @@ std::ostream& operator<<(std::ostream& os, const DeviceConnectState& state) {
     case DeviceConnectState::DISCONNECTING:
       char_value_ = "DISCONNECTING";
       break;
+    case DeviceConnectState::DISCONNECTING_AND_RECOVER:
+      char_value_ = "DISCONNECTING_AND_RECOVER";
+      break;
     case DeviceConnectState::PENDING_REMOVAL:
       char_value_ = "PENDING_REMOVAL";
       break;
@@ -905,6 +908,10 @@ bool LeAudioDeviceGroup::ReloadAudioDirections(void) {
 
 bool LeAudioDeviceGroup::IsInTransition(void) {
   return target_state_ != current_state_;
+}
+
+bool LeAudioDeviceGroup::IsStreaming(void) {
+  return current_state_ == AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING;
 }
 
 bool LeAudioDeviceGroup::IsReleasingOrIdle(void) {

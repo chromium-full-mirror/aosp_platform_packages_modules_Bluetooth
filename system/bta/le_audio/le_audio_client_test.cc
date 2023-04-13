@@ -4073,10 +4073,11 @@ TEST_F(UnicastTest, TwoEarbuds2ndDisconnected) {
     InjectCisDisconnected(group_id, ase.cis_conn_hdl);
   }
 
-  EXPECT_CALL(mock_gatt_interface_,
-              Open(_, device->address_,
-                   BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, false))
-      .Times(1);
+  /* It is called twice. Once with BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS,
+   * and then after delay with BTM_BLE_BKG_CONNECT_ALLOW_LIST
+   */
+  EXPECT_CALL(mock_gatt_interface_, Open(_, device->address_, _, false))
+      .Times(2);
 
   // Record NumOfConnected when groupStateMachine_ gets notified about the
   // disconnection
@@ -4641,6 +4642,10 @@ TEST_F(UnicastTest, SpeakerStreamingTimeout) {
 
   // Verify Data transfer on one audio source cis
   TestAudioDataTransfer(group_id, cis_count_out, cis_count_in, 1920);
+
+  // Do not accept direct connect, but expect it to arrive.
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _))
+      .WillByDefault(Return());
 
   state_machine_callbacks_->OnStateTransitionTimeout(group_id);
 
