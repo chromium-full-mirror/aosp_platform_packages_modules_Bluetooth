@@ -69,6 +69,10 @@ void SyspropsModule::parse_config(std::string file_path) {
       "bluetooth.device.default_name",
       "bluetooth.core.gap.le.privacy.enabled",
       "bluetooth.device.class_of_device",
+      "bluetooth.device_id.product_id",
+      "bluetooth.device_id.product_version",
+      "bluetooth.device_id.vendor_id",
+      "bluetooth.device_id.vendor_id_source",
       // BR/EDR
       "bluetooth.core.classic.page_scan_type",
       "bluetooth.core.classic.page_scan_interval",
