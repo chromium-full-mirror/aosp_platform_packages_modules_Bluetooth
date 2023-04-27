@@ -48,6 +48,7 @@
 #include "include/hardware/bluetooth_headset_callbacks.h"
 #include "include/hardware/bluetooth_headset_interface.h"
 #include "include/hardware/bt_hf.h"
+#include "internal_include/stack_config.h"
 #include "main/shim/dumpsys.h"
 #include "osi/include/log.h"
 #include "stack/btm/btm_sco_hfp_hal.h"
@@ -148,6 +149,12 @@ static tBTA_SERVICE_MASK get_BTIF_HF_SERVICES() {
       android::sysprop::bluetooth::Hfp::hf_services().value_or(
           BTA_HSP_SERVICE_MASK | BTA_HFP_SERVICE_MASK);
   return hf_services;
+#elif TARGET_FLOSS
+  if (stack_config_get_interface()->get_pts_exclued_hsp_in_sdp_record()) {
+    return BTA_HFP_SERVICE_MASK;
+  } else {
+    return BTA_HSP_SERVICE_MASK | BTA_HFP_SERVICE_MASK;
+  }
 #else
   return BTA_HSP_SERVICE_MASK | BTA_HFP_SERVICE_MASK;
 #endif
