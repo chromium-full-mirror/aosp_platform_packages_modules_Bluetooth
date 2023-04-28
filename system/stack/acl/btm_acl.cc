@@ -95,8 +95,8 @@ void l2c_link_hci_conn_comp(tHCI_STATUS status, uint16_t handle,
 void BTM_db_reset(void);
 
 extern tBTM_CB btm_cb;
-extern void btm_iot_save_remote_properties(tACL_CONN* p_acl_cb);
-extern void btm_iot_save_remote_versions(tACL_CONN* p_acl_cb);
+void btm_iot_save_remote_properties(tACL_CONN* p_acl_cb);
+void btm_iot_save_remote_versions(tACL_CONN* p_acl_cb);
 
 struct StackAclBtmAcl {
   tACL_CONN* acl_allocate_connection();
@@ -2801,11 +2801,13 @@ bool acl_create_le_connection_with_id(uint8_t id, const RawAddress& bd_addr,
       .bda = bd_addr,
       .type = addr_type,
   };
-  if (address_with_type.type == BLE_ADDR_PUBLIC) {
-    gatt_find_in_device_record(bd_addr, &address_with_type);
-  }
-  LOG_DEBUG("Creating le direct connection to:%s",
-            ADDRESS_TO_LOGGABLE_CSTR(address_with_type));
+
+  gatt_find_in_device_record(bd_addr, &address_with_type);
+
+  LOG_DEBUG("Creating le direct connection to:%s type:%s (initial type: %s)",
+            ADDRESS_TO_LOGGABLE_CSTR(address_with_type),
+            AddressTypeText(address_with_type.type).c_str(),
+            AddressTypeText(addr_type).c_str());
 
   if (address_with_type.type == BLE_ADDR_ANONYMOUS) {
     LOG_WARN(

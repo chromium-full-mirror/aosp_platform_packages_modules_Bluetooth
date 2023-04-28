@@ -282,9 +282,9 @@ static void btif_stats_add_bond_event(const RawAddress& bd_addr,
 /******************************************************************************
  *  Externs
  *****************************************************************************/
-extern bt_status_t btif_sdp_execute_service(bool b_enable);
-extern void btif_iot_update_remote_info(tBTA_DM_AUTH_CMPL* p_auth_cmpl,
-                                        bool is_ble, bool is_ssp);
+bt_status_t btif_sdp_execute_service(bool b_enable);
+void btif_iot_update_remote_info(tBTA_DM_AUTH_CMPL* p_auth_cmpl, bool is_ble,
+                                 bool is_ssp);
 
 /******************************************************************************
  *  Functions
@@ -2837,13 +2837,6 @@ bt_status_t btif_dm_get_adapter_property(bt_property_t* prop) {
       uint32_t* tmt = (uint32_t*)prop->val;
       *tmt = 120; /* default to 120s, if not found in NV */
       prop->len = sizeof(uint32_t);
-    } break;
-
-    case BT_PROPERTY_CLASS_OF_DEVICE: {
-      DEV_CLASS dev_class;
-      btif_dm_get_local_class_of_device(dev_class);
-      memcpy(prop->val, dev_class, sizeof(DEV_CLASS));
-      prop->len = sizeof(DEV_CLASS);
     } break;
 
       // While fetching IO_CAP* values for the local device, we maintain
