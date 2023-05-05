@@ -127,7 +127,6 @@ pub enum Message {
 
     // Qualification Only
     QaAddMediaPlayer(String, bool),
-    QaRfcommSendMsc(u8, String),
 }
 
 /// Represents suspend mode of a module.
@@ -353,9 +352,6 @@ impl Stack {
                 // Qualification Only
                 Message::QaAddMediaPlayer(name, browsing_supported) => {
                     bluetooth_media.lock().unwrap().add_player(name, browsing_supported);
-                }
-                Message::QaRfcommSendMsc(dlci, addr) => {
-                    bluetooth_socketmgr.lock().unwrap().rfcomm_send_msc(dlci, addr);
                 }
             }
         }
