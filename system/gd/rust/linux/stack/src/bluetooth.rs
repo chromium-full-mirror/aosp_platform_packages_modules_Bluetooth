@@ -20,11 +20,14 @@ use bt_topshim::{
 };
 
 use bt_utils::array_utils;
+use bt_utils::cod::{is_cod_hid_combo, is_cod_hid_keyboard};
 use btif_macros::{btif_callback, btif_callbacks_dispatcher};
 
 use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
+use num_traits::pow;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::Write;
@@ -402,6 +405,9 @@ pub trait IBluetoothCallback: RPCProxy {
     /// When there is a pin request to display the event to client.
     fn on_pin_request(&mut self, remote_device: BluetoothDevice, cod: u32, min_16_digit: bool);
 
+    /// When there is a auto-gen pin to display the event to client.
+    fn on_pin_display(&mut self, remote_device: BluetoothDevice, pincode: String);
+
     /// When a bonding attempt has completed.
     fn on_bond_state_changed(&mut self, status: u32, device_address: String, state: u32);
 
@@ -745,7 +751,7 @@ impl Bluetooth {
     }
 
     /// Returns adapter's discoverable mode.
-    pub(crate) fn get_discoverable_mode(&self) -> BtDiscMode {
+    pub fn get_discoverable_mode_internal(&self) -> BtDiscMode {
         let off_mode = BtDiscMode::NonDiscoverable;
 
         match self.properties.get(&BtPropertyType::AdapterScanMode) {
@@ -759,6 +765,16 @@ impl Bluetooth {
             },
             _ => off_mode,
         }
+    }
+
+    /// Caches the discoverable mode into BluetoothQA.
+    pub fn cache_discoverable_mode_into_qa(&self) {
+        let disc_mode = self.get_discoverable_mode_internal();
+
+        let txl = self.tx.clone();
+        tokio::spawn(async move {
+            let _ = txl.send(Message::QaOnDiscoverableModeChanged(disc_mode)).await;
+        });
     }
 
     /// Returns all bonded and connected devices.
@@ -1213,6 +1229,8 @@ impl BtifBluetoothCallbacks for Bluetooth {
 
         // Update local property cache
         for prop in properties {
+            self.properties.insert(prop.get_type(), prop.clone());
+
             match &prop {
                 BluetoothProperty::BdAddr(bdaddr) => {
                     self.update_local_address(&bdaddr);
@@ -1241,6 +1259,8 @@ impl BtifBluetoothCallbacks for Bluetooth {
                     });
                 }
                 BluetoothProperty::AdapterScanMode(mode) => {
+                    self.cache_discoverable_mode_into_qa();
+
                     self.callbacks.for_all_callbacks(|callback| {
                         callback
                             .on_discoverable_changed(*mode == BtScanMode::ConnectableDiscoverable);
@@ -1248,8 +1268,6 @@ impl BtifBluetoothCallbacks for Bluetooth {
                 }
                 _ => {}
             }
-
-            self.properties.insert(prop.get_type(), prop.clone());
 
             self.callbacks.for_all_callbacks(|callback| {
                 callback.on_adapter_property_changed(prop.get_type());
@@ -1356,15 +1374,36 @@ impl BtifBluetoothCallbacks for Bluetooth {
         cod: u32,
         min_16_digit: bool,
     ) {
-        // Currently this supports many agent because we accept many callbacks.
-        // TODO(b/274706838): We need a way to select the default agent.
-        self.callbacks.for_all_callbacks(|callback| {
-            callback.on_pin_request(
-                BluetoothDevice::new(remote_addr.to_string(), remote_name.clone()),
-                cod,
-                min_16_digit,
-            );
-        });
+        let device = BluetoothDevice::new(remote_addr.to_string(), remote_name.clone());
+
+        let digits = match min_16_digit {
+            true => 16,
+            false => 6,
+        };
+
+        if is_cod_hid_keyboard(cod) || is_cod_hid_combo(cod) {
+            debug!("auto gen pin for device {} (cod={:#x})", device.address, cod);
+            // generate a random pin code to display.
+            let pin = rand::random::<u64>() % pow(10, digits);
+            let display_pin = format!("{:06}", pin);
+
+            // Currently this supports many agent because we accept many callbacks.
+            // TODO(b/274706838): We need a way to select the default agent.
+            self.callbacks.for_all_callbacks(|callback| {
+                callback.on_pin_display(device.clone(), display_pin.clone());
+            });
+
+            let pin_vec = display_pin.chars().map(|d| d.try_into().unwrap()).collect::<Vec<u8>>();
+
+            self.set_pin(device, true, pin_vec);
+        } else {
+            debug!("sending pin request for device {} (cod={:#x}) to clients", device.address, cod);
+            // Currently this supports many agent because we accept many callbacks.
+            // TODO(b/274706838): We need a way to select the default agent.
+            self.callbacks.for_all_callbacks(|callback| {
+                callback.on_pin_request(device.clone(), cod, min_16_digit);
+            });
+        }
     }
 
     fn bond_state(

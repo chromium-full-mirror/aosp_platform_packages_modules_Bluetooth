@@ -535,6 +535,9 @@ impl IBluetoothCallback for IBluetoothCallbackDBus {
     #[dbus_method("OnPinRequest")]
     fn on_pin_request(&mut self, remote_device: BluetoothDevice, cod: u32, min_16_digit: bool) {}
 
+    #[dbus_method("OnPinDisplay")]
+    fn on_pin_display(&mut self, remote_device: BluetoothDevice, pincode: String) {}
+
     #[dbus_method("OnBondStateChanged")]
     fn on_bond_state_changed(&mut self, status: u32, address: String, state: u32) {}
 
@@ -2267,6 +2270,14 @@ impl BluetoothQADBus {
 impl IBluetoothQA for BluetoothQADBus {
     #[dbus_method("AddMediaPlayer")]
     fn add_media_player(&self, name: String, browsing_supported: bool) {
+        dbus_generated!()
+    }
+    #[dbus_method("RfcommSendMsc")]
+    fn rfcomm_send_msc(&self, dlci: u8, addr: String) {
+        dbus_generated!()
+    }
+    #[dbus_method("GetDiscoverableMode")]
+    fn get_discoverable_mode(&self) -> BtDiscMode {
         dbus_generated!()
     }
 }
