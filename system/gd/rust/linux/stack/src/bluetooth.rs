@@ -378,6 +378,13 @@ pub trait IBluetoothCallback: RPCProxy {
     /// When any adapter property changes.
     fn on_adapter_property_changed(&mut self, prop: BtPropertyType);
 
+    /// When any device properties change.
+    fn on_device_properties_changed(
+        &mut self,
+        remote_device: BluetoothDevice,
+        props: Vec<BtPropertyType>,
+    );
+
     /// When any of the adapter local address is changed.
     fn on_address_changed(&mut self, addr: String);
 
@@ -1554,19 +1561,18 @@ impl BtifBluetoothCallbacks for Bluetooth {
                 Bluetooth::send_metrics_remote_device_info(d);
 
                 let info = d.info.clone();
-                let has_uuids = d
-                    .properties
-                    .get(&BtPropertyType::Uuids)
-                    .and_then(|prop| match prop {
-                        BluetoothProperty::Uuids(uu) => Some(uu.len() > 0),
-                        _ => None,
-                    })
-                    .map_or(false, |v| v);
 
-                // Services are resolved when uuids are fetched.
-                d.services_resolved = has_uuids;
+                if !d.services_resolved {
+                    let has_uuids = properties.iter().any(|prop| match prop {
+                        BluetoothProperty::Uuids(uu) => uu.len() > 0,
+                        _ => false,
+                    });
 
-                if d.wait_to_connect && has_uuids {
+                    // Services are resolved when uuids are fetched.
+                    d.services_resolved |= has_uuids;
+                }
+
+                if d.wait_to_connect && d.services_resolved {
                     d.wait_to_connect = false;
 
                     let sent_info = info.clone();
@@ -1578,6 +1584,14 @@ impl BtifBluetoothCallbacks for Bluetooth {
                             .await;
                     });
                 }
+
+                let info = &d.info.clone();
+                self.callbacks.for_all_callbacks(|callback| {
+                    callback.on_device_properties_changed(
+                        info.clone(),
+                        properties.clone().into_iter().map(|x| x.get_type()).collect(),
+                    );
+                });
 
                 self.bluetooth_admin
                     .lock()

@@ -399,7 +399,7 @@ tBTA_DM_STATE bta_dm_search_get_state() { return bta_dm_search_cb.state; }
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_init_cb(void) {
+static void bta_dm_init_cb(void) {
   bta_dm_cb = {};
   bta_dm_cb.disable_timer = alarm_new("bta_dm.disable_timer");
   bta_dm_cb.switch_delay_timer = alarm_new("bta_dm.switch_delay_timer");
@@ -420,7 +420,7 @@ void bta_dm_init_cb(void) {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_deinit_cb(void) {
+static void bta_dm_deinit_cb(void) {
   /*
    * TODO: Should alarm_free() the bta_dm_cb timers during graceful
    * shutdown.
@@ -1157,7 +1157,7 @@ void bta_dm_remote_name_cmpl(const tBTA_DM_MSG* p_data) {
                      PRIVATE_NAME(remote_name_msg.bd_name)));
 
   tBTM_INQ_INFO* p_btm_inq_info = BTM_InqDbRead(remote_name_msg.bd_addr);
-  if (remote_name_msg.bd_name[0] != '\0' && bta_dm_search_cb.p_btm_inq_info) {
+  if (!bd_name_is_empty(remote_name_msg.bd_name) && p_btm_inq_info) {
     p_btm_inq_info->appl_knows_rem_name = true;
   }
 
@@ -4800,6 +4800,9 @@ tBTM_STATUS bta_dm_sp_cback(tBTM_SP_EVT event, tBTM_SP_EVT_DATA* p_data) {
 }
 
 void btm_set_local_io_caps(uint8_t io_caps) { ::btm_local_io_caps = io_caps; }
+
+void bta_dm_init_cb() { ::bta_dm_init_cb(); }
+void bta_dm_deinit_cb() { ::bta_dm_deinit_cb(); }
 
 }  // namespace testing
 }  // namespace legacy

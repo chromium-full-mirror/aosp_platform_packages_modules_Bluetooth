@@ -33,6 +33,7 @@ namespace rootcanal {
 constexpr uint16_t kNumCommandPackets = 0x01;
 constexpr uint16_t kLeMaximumDataLength = 64;
 constexpr uint16_t kLeMaximumDataTime = 0x148;
+constexpr uint8_t kTransmitPowerLevel = -20;
 
 static int next_instance_id() {
   static int instance_counter = 0;
@@ -1359,13 +1360,40 @@ void DualModeController::WriteScanEnable(CommandView command) {
       scan_enable == bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN ||
       scan_enable == bluetooth::hci::ScanEnable::PAGE_SCAN_ONLY;
 
-  INFO(id_, "{} | WriteScanEnable {}", GetAddress().ToString(),
+  INFO(id_, "{} | WriteScanEnable {}", GetAddress(),
        bluetooth::hci::ScanEnableText(scan_enable));
 
   link_layer_controller_.SetInquiryScanEnable(inquiry_scan);
   link_layer_controller_.SetPageScanEnable(page_scan);
   send_event_(bluetooth::hci::WriteScanEnableCompleteBuilder::Create(
       kNumCommandPackets, ErrorCode::SUCCESS));
+}
+
+void DualModeController::ReadTransmitPowerLevel(CommandView command) {
+  auto command_view = bluetooth::hci::ReadTransmitPowerLevelView::Create(command);
+  ASSERT(command_view.IsValid());
+
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+  ErrorCode status = link_layer_controller_.HasAclConnection(connection_handle)
+                         ? ErrorCode::SUCCESS
+                         : ErrorCode::UNKNOWN_CONNECTION;
+
+  send_event_(bluetooth::hci::ReadTransmitPowerLevelCompleteBuilder::Create(
+      kNumCommandPackets, status, connection_handle, kTransmitPowerLevel));
+}
+
+void DualModeController::ReadEnhancedTransmitPowerLevel(CommandView command) {
+  auto command_view = bluetooth::hci::ReadEnhancedTransmitPowerLevelView::Create(command);
+  ASSERT(command_view.IsValid());
+
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+  ErrorCode status = link_layer_controller_.HasAclConnection(connection_handle)
+                         ? ErrorCode::SUCCESS
+                         : ErrorCode::UNKNOWN_CONNECTION;
+
+  send_event_(bluetooth::hci::ReadEnhancedTransmitPowerLevelCompleteBuilder::Create(
+      kNumCommandPackets, status, connection_handle, kTransmitPowerLevel,
+      kTransmitPowerLevel, kTransmitPowerLevel));
 }
 
 void DualModeController::ReadSynchronousFlowControlEnable(CommandView command) {
@@ -1552,8 +1580,8 @@ void DualModeController::LeReadLocalSupportedFeatures(CommandView command) {
       bluetooth::hci::LeReadLocalSupportedFeaturesView::Create(command);
   ASSERT(command_view.IsValid());
   uint64_t le_features = link_layer_controller_.GetLeSupportedFeatures();
-  INFO(id_, "{} | LeReadLocalSupportedFeatures {:016x}",
-       GetAddress().ToString(), le_features);
+  INFO(id_, "{} | LeReadLocalSupportedFeatures {:016x}", GetAddress(),
+       le_features);
 
   send_event_(
       bluetooth::hci::LeReadLocalSupportedFeaturesCompleteBuilder::Create(
@@ -1620,7 +1648,7 @@ void DualModeController::LeSetAdvertisingEnable(CommandView command) {
       bluetooth::hci::LeSetAdvertisingEnableView::Create(command);
   ASSERT(command_view.IsValid());
 
-  INFO(id_, "{} | LeSetAdvertisingEnable ({})", GetAddress().ToString(),
+  INFO(id_, "{} | LeSetAdvertisingEnable ({})", GetAddress(),
        command_view.GetAdvertisingEnable() == bluetooth::hci::Enable::ENABLED);
 
   ErrorCode status = link_layer_controller_.LeSetAdvertisingEnable(
@@ -1645,7 +1673,7 @@ void DualModeController::LeSetScanEnable(CommandView command) {
   auto command_view = bluetooth::hci::LeSetScanEnableView::Create(command);
   ASSERT(command_view.IsValid());
 
-  INFO(id_, "{} | LeSetScanEnable ({})", GetAddress().ToString(),
+  INFO(id_, "{} | LeSetScanEnable ({})", GetAddress(),
        command_view.GetLeScanEnable() == bluetooth::hci::Enable::ENABLED);
 
   ErrorCode status = link_layer_controller_.LeSetScanEnable(
@@ -3290,8 +3318,8 @@ const std::unordered_map<OpCode, DualModeController::CommandHandler>
         //&DualModeController::ReadHoldModeActivity},
         //{OpCode::WRITE_HOLD_MODE_ACTIVITY,
         //&DualModeController::WriteHoldModeActivity},
-        //{OpCode::READ_TRANSMIT_POWER_LEVEL,
-        //&DualModeController::ReadTransmitPowerLevel},
+        {OpCode::READ_TRANSMIT_POWER_LEVEL,
+         &DualModeController::ReadTransmitPowerLevel},
         {OpCode::READ_SYNCHRONOUS_FLOW_CONTROL_ENABLE,
          &DualModeController::ReadSynchronousFlowControlEnable},
         {OpCode::WRITE_SYNCHRONOUS_FLOW_CONTROL_ENABLE,
@@ -3350,8 +3378,8 @@ const std::unordered_map<OpCode, DualModeController::CommandHandler>
         //&DualModeController::ReadFlowControlMode},
         //{OpCode::WRITE_FLOW_CONTROL_MODE,
         //&DualModeController::WriteFlowControlMode},
-        //{OpCode::READ_ENHANCED_TRANSMIT_POWER_LEVEL,
-        //&DualModeController::ReadEnhancedTransmitPowerLevel},
+        {OpCode::READ_ENHANCED_TRANSMIT_POWER_LEVEL,
+         &DualModeController::ReadEnhancedTransmitPowerLevel},
         //{OpCode::READ_LE_HOST_SUPPORT,
         //&DualModeController::ReadLeHostSupport},
         {OpCode::WRITE_LE_HOST_SUPPORT,
