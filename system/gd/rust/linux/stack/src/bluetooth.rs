@@ -4,8 +4,8 @@ use bt_topshim::btif::{
     BaseCallbacks, BaseCallbacksDispatcher, BluetoothInterface, BluetoothProperty, BtAclState,
     BtBondState, BtConnectionDirection, BtConnectionState, BtDeviceType, BtDiscMode,
     BtDiscoveryState, BtHciErrorCode, BtPinCode, BtPropertyType, BtScanMode, BtSspVariant, BtState,
-    BtStatus, BtTransport, BtVendorProductInfo, DisplayAddress, RawAddress, ToggleableProfile,
-    Uuid, Uuid128Bit,
+    BtStatus, BtThreadEvent, BtTransport, BtVendorProductInfo, DisplayAddress, RawAddress,
+    ToggleableProfile, Uuid, Uuid128Bit,
 };
 use bt_topshim::{
     metrics,
@@ -379,6 +379,15 @@ impl BluetoothDeviceContext {
     }
 }
 
+/// Structure to track all the signals for SIGTERM.
+pub struct SigData {
+    pub enabled: Mutex<bool>,
+    pub enabled_notify: Condvar,
+
+    pub thread_attached: Mutex<bool>,
+    pub thread_notify: Condvar,
+}
+
 /// The interface for adapter callbacks registered through `IBluetooth::register_callback`.
 pub trait IBluetoothCallback: RPCProxy {
     /// When any adapter property changes.
@@ -497,7 +506,7 @@ pub struct Bluetooth {
     discoverable_timeout: Option<JoinHandle<()>>,
 
     /// Used to notify signal handler that we have turned off the stack.
-    sig_notifier: Arc<(Mutex<bool>, Condvar)>,
+    sig_notifier: Arc<(SigData)>,
 }
 
 impl Bluetooth {
@@ -506,7 +515,7 @@ impl Bluetooth {
         adapter_index: i32,
         hci_index: i32,
         tx: Sender<Message>,
-        sig_notifier: Arc<(Mutex<bool>, Condvar)>,
+        sig_notifier: Arc<(SigData)>,
         intf: Arc<Mutex<BluetoothInterface>>,
         bluetooth_admin: Arc<Mutex<Box<BluetoothAdmin>>>,
         bluetooth_gatt: Arc<Mutex<Box<BluetoothGatt>>>,
@@ -1170,6 +1179,9 @@ pub(crate) trait BtifBluetoothCallbacks {
         min_16_digit: bool,
     ) {
     }
+
+    #[btif_callback(ThreadEvent)]
+    fn thread_event(&mut self, event: BtThreadEvent) {}
 }
 
 #[btif_callbacks_dispatcher(dispatch_hid_host_callbacks, HHCallbacks)]
@@ -1237,8 +1249,8 @@ impl BtifBluetoothCallbacks for Bluetooth {
                 }
 
                 // Let the signal notifier know we are turned off.
-                *self.sig_notifier.0.lock().unwrap() = false;
-                self.sig_notifier.1.notify_all();
+                *self.sig_notifier.enabled.lock().unwrap() = false;
+                self.sig_notifier.enabled_notify.notify_all();
             }
 
             BtState::On => {
@@ -1262,8 +1274,8 @@ impl BtifBluetoothCallbacks for Bluetooth {
                 self.set_connectable(true);
 
                 // Notify the signal notifier that we are turned on.
-                *self.sig_notifier.0.lock().unwrap() = true;
-                self.sig_notifier.1.notify_all();
+                *self.sig_notifier.enabled.lock().unwrap() = true;
+                self.sig_notifier.enabled_notify.notify_all();
 
                 // Signal that the stack is up and running.
                 match self.create_pid_file() {
@@ -1718,6 +1730,21 @@ impl BtifBluetoothCallbacks for Bluetooth {
             }
             None => (),
         };
+    }
+
+    fn thread_event(&mut self, event: BtThreadEvent) {
+        match event {
+            BtThreadEvent::Associate => {
+                // Let the signal notifier know stack is initialized.
+                *self.sig_notifier.thread_attached.lock().unwrap() = true;
+                self.sig_notifier.thread_notify.notify_all();
+            }
+            BtThreadEvent::Disassociate => {
+                // Let the signal notifier know stack is done.
+                *self.sig_notifier.thread_attached.lock().unwrap() = false;
+                self.sig_notifier.thread_notify.notify_all();
+            }
+        }
     }
 }
 
