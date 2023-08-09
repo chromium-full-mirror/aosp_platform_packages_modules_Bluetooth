@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use log::{error, trace};
-use once_cell::sync::OnceCell;
+use std::sync::RwLock;
 
 use crate::{
     do_in_rust_thread,
@@ -19,12 +19,14 @@ use super::{
     server::isolation_manager::IsolationManager,
 };
 
-static ARBITER: OnceCell<Arc<Mutex<IsolationManager>>> = OnceCell::new();
+static ARBITER: RwLock<Option<Arc<Mutex<IsolationManager>>>> = RwLock::new(None);
 
 /// Initialize the Arbiter
 pub fn initialize_arbiter() -> Arc<Mutex<IsolationManager>> {
     let arbiter = Arc::new(Mutex::new(IsolationManager::new()));
-    ARBITER.set(arbiter.clone()).unwrap_or_else(|_| panic!("Rust stack should only start up once"));
+    let mut lock = ARBITER.write().unwrap();
+    assert!(lock.is_none(), "Rust stack should only start up once");
+    *lock = Some(arbiter.clone());
 
     StoreCallbacksFromRust(
         on_le_connect,
@@ -38,10 +40,21 @@ pub fn initialize_arbiter() -> Arc<Mutex<IsolationManager>> {
     arbiter
 }
 
+/// Clean the Arbiter
+pub fn clean_arbiter() {
+    let mut lock = ARBITER.write().unwrap();
+    *lock = None
+}
+
 /// Acquire the mutex holding the Arbiter and provide a mutable reference to the
 /// supplied closure
 pub fn with_arbiter<T>(f: impl FnOnce(&mut IsolationManager) -> T) -> T {
-    f(ARBITER.get().unwrap().lock().as_mut().unwrap())
+    f(ARBITER.read().unwrap().as_ref().expect("Rust stack is not started").lock().as_mut().unwrap())
+}
+
+/// Check if the Arbiter is initialized.
+pub fn has_arbiter() -> bool {
+    ARBITER.read().unwrap().is_some()
 }
 
 /// Test to see if a buffer contains a valid ATT packet with an opcode we
@@ -81,6 +94,13 @@ fn on_le_connect(tcb_idx: u8, advertiser: u8) {
 }
 
 fn on_le_disconnect(tcb_idx: u8) {
+    // Disconnection events may be received after a FactoryReset
+    // is initiated for Bluetooth and the rust arbiter is taken
+    // down.
+    if !has_arbiter() {
+        return;
+    }
+
     let tcb_idx = TransportIndex(tcb_idx);
     let was_isolated = with_arbiter(|arbiter| arbiter.is_connection_isolated(tcb_idx));
     if was_isolated {

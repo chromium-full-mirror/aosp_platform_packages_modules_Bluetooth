@@ -1,4 +1,3 @@
-//
 //  Copyright 2022 Google, Inc.
 //
 //  Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +31,7 @@ fn main() {
     install_generated_module(
         "hci_packets.rs",
         "HCI_PACKETS_PREBUILT",
-        &PathBuf::from("../packets/hci/hci_packets.pdl").canonicalize().unwrap(),
+        &PathBuf::from("../packets/hci_packets.pdl").canonicalize().unwrap(),
     );
 }
 
@@ -61,8 +60,8 @@ fn generate_module(in_file: &PathBuf) {
 
     // Find the pdl tool. Expecting it at CARGO_HOME/bin
     let pdl = match env::var("CARGO_HOME") {
-        Ok(dir) => PathBuf::from(dir).join("bin").join("pdl"),
-        Err(_) => PathBuf::from("pdl"),
+        Ok(dir) => PathBuf::from(dir).join("bin").join("pdlc"),
+        Err(_) => PathBuf::from("pdlc"),
     };
 
     if !Path::new(pdl.as_os_str()).exists() {

@@ -455,8 +455,9 @@ extern struct NotifyBondingCanceled NotifyBondingCanceled;
 // Params: const uint8_t* p
 // Return: void
 struct btm_create_conn_cancel_complete {
-  std::function<void(const uint8_t* p)> body{[](const uint8_t* p) {}};
-  void operator()(const uint8_t* p) { body(p); };
+  std::function<void(const uint8_t* p, uint16_t evt_len)> body{
+      [](const uint8_t* p, uint16_t evt_len) {}};
+  void operator()(const uint8_t* p, uint16_t evt_len) { body(p, evt_len); };
 };
 extern struct btm_create_conn_cancel_complete btm_create_conn_cancel_complete;
 
@@ -503,8 +504,9 @@ extern struct btm_proc_sp_req_evt btm_proc_sp_req_evt;
 // Params: uint8_t* p
 // Return: void
 struct btm_read_local_oob_complete {
-  std::function<void(uint8_t* p)> body{[](uint8_t* p) {}};
-  void operator()(uint8_t* p) { body(p); };
+  std::function<void(uint8_t* p, uint16_t evt_len)> body{
+      [](uint8_t* p, uint16_t evt_len) {}};
+  void operator()(uint8_t* p, uint16_t evt_len) { body(p, evt_len); };
 };
 extern struct btm_read_local_oob_complete btm_read_local_oob_complete;
 

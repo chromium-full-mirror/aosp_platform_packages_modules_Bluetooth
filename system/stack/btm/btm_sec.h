@@ -382,6 +382,16 @@ bool BTM_PeerSupportsSecureConnections(const RawAddress& bd_addr);
 
 /*******************************************************************************
  *
+ * Function         BTM_GetInitialSecurityMode
+ *
+ * Description      This function is called to retrieve the configured
+ *                  security mode.
+ *
+ ******************************************************************************/
+uint8_t BTM_GetSecurityMode();
+
+/*******************************************************************************
+ *
  * Function         btm_sec_l2cap_access_req
  *
  * Description      This function is called by the L2CAP to grant permission to
@@ -459,7 +469,7 @@ void btm_sec_conn_req(const RawAddress& bda, uint8_t* dc);
  * Returns          void
  *
  ******************************************************************************/
-void btm_create_conn_cancel_complete(const uint8_t* p);
+void btm_create_conn_cancel_complete(const uint8_t* p, uint16_t evt_len);
 
 /*******************************************************************************
  *
@@ -587,7 +597,7 @@ void btm_rem_oob_req(const uint8_t* p);
  * Returns          void
  *
  ******************************************************************************/
-void btm_read_local_oob_complete(uint8_t* p);
+void btm_read_local_oob_complete(uint8_t* p, uint16_t evt_len);
 
 /*******************************************************************************
  *

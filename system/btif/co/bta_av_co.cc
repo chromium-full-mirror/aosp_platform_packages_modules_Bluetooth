@@ -36,6 +36,7 @@
 #include "device/include/device_iot_config.h"
 #include "include/hardware/bt_av.h"
 #include "osi/include/osi.h"  // UNUSED_ATTR
+#include "osi/include/allocator.h"
 #include "stack/include/a2dp_codec_api.h"
 #include "stack/include/a2dp_error_codes.h"
 #include "stack/include/avdt_api.h"
@@ -403,13 +404,6 @@ class BtaAvCo {
    * @return the Source encoder interface for the current codec
    */
   const tA2DP_ENCODER_INTERFACE* GetSourceEncoderInterface();
-
-  /**
-   * Get the Sink decoder interface for the current codec.
-   *
-   * @return the Sink decoder interface for the current codec
-   */
-  const tA2DP_DECODER_INTERFACE* GetSinkDecoderInterface();
 
   /**
    * Set the codec user configuration.
@@ -1378,6 +1372,12 @@ BT_HDR* BtaAvCo::GetNextSourceDataPacket(const uint8_t* p_codec_info,
   p_buf = btif_a2dp_source_audio_readbuf();
   if (p_buf == nullptr) return nullptr;
 
+  if (p_buf->offset < 4) {
+    osi_free(p_buf);
+    APPL_TRACE_ERROR("No space for timestamp in packet, dropped");
+    return nullptr;
+  }
+
   /*
    * Retrieve the timestamp information from the media packet,
    * and set up the packet header.
@@ -1391,6 +1391,8 @@ BT_HDR* BtaAvCo::GetNextSourceDataPacket(const uint8_t* p_codec_info,
       !A2DP_BuildCodecHeader(p_codec_info, p_buf, p_buf->layer_specific)) {
     APPL_TRACE_ERROR("%s: unsupported codec type (%d)", __func__,
                      A2DP_GetCodecType(p_codec_info));
+    osi_free(p_buf);
+    return nullptr;
   }
 
   if (ContentProtectEnabled() && (active_peer_ != nullptr) &&
@@ -1437,8 +1439,8 @@ void BtaAvCo::UpdateMtu(tBTA_AV_HNDL bta_av_handle,
 }
 
 bool BtaAvCo::SetActivePeer(const RawAddress& peer_address) {
-  VLOG(1) << __func__ << ": peer_address="
-          << ADDRESS_TO_LOGGABLE_STR(peer_address);
+  LOG(INFO) << __func__
+            << ": peer_address=" << ADDRESS_TO_LOGGABLE_STR(peer_address);
 
   std::lock_guard<std::recursive_mutex> lock(codec_lock_);
 
@@ -1494,12 +1496,6 @@ const tA2DP_ENCODER_INTERFACE* BtaAvCo::GetSourceEncoderInterface() {
   std::lock_guard<std::recursive_mutex> lock(codec_lock_);
 
   return A2DP_GetEncoderInterface(codec_config_);
-}
-
-const tA2DP_DECODER_INTERFACE* BtaAvCo::GetSinkDecoderInterface() {
-  std::lock_guard<std::recursive_mutex> lock(codec_lock_);
-
-  return A2DP_GetDecoderInterface(codec_config_);
 }
 
 bool BtaAvCo::SetCodecUserConfig(
@@ -2252,10 +2248,6 @@ void bta_av_co_get_peer_params(const RawAddress& peer_address,
 
 const tA2DP_ENCODER_INTERFACE* bta_av_co_get_encoder_interface(void) {
   return bta_av_co_cb.GetSourceEncoderInterface();
-}
-
-const tA2DP_DECODER_INTERFACE* bta_av_co_get_decoder_interface(void) {
-  return bta_av_co_cb.GetSinkDecoderInterface();
 }
 
 bool bta_av_co_set_codec_user_config(

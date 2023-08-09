@@ -52,20 +52,16 @@ class InitFlags final {
     return init_flags::btm_dm_flush_discovery_queue_on_search_cancel_is_enabled();
   }
 
-  inline static bool IsSnoopLoggerSocketEnabled() {
-    return init_flags::gd_hal_snoop_logger_socket_is_enabled();
-  }
-
-  inline static bool IsSnoopLoggerFilteringEnabled() {
-    return init_flags::gd_hal_snoop_logger_filtering_is_enabled();
-  }
-
   inline static bool IsBluetoothQualityReportCallbackEnabled() {
     return init_flags::bluetooth_quality_report_callback_is_enabled();
   }
 
   inline static bool IsTargetedAnnouncementReconnectionMode() {
     return init_flags::leaudio_targeted_announcement_reconnection_mode_is_enabled();
+  }
+
+  inline static bool IsLeAudioHealthBasedActionsEnabled() {
+    return init_flags::leaudio_enable_health_based_actions_is_enabled();
   }
 
   inline static bool UseRsiFromCachedInquiryResults() {

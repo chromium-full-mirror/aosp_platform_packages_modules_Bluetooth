@@ -1,22 +1,22 @@
-/******************************************************************************
+/*
+ * Copyright 2022 The Android Open Source Project
  *
- *  Copyright 2022 The Android Open Source Project
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at:
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #pragma once
+
+#include <packet_runtime.h>
 
 #include <array>
 #include <cstring>
@@ -24,13 +24,12 @@
 #include <optional>
 #include <ostream>
 #include <string>
-
-#include "packet/custom_field_fixed_size_interface.h"
+#include <vector>
 
 namespace bluetooth {
 namespace hci {
 
-class Address final : public packet::CustomFieldFixedSizeInterface<Address> {
+class Address final : public pdl::packet::Builder {
  public:
   static constexpr size_t kLength = 6;
 
@@ -45,10 +44,6 @@ class Address final : public packet::CustomFieldFixedSizeInterface<Address> {
   Address(const uint8_t (&address)[kLength]);
   Address(std::initializer_list<uint8_t> l);
 
-  // CustomFieldFixedSizeInterface methods
-  inline uint8_t* data() override { return address.data(); }
-  inline const uint8_t* data() const override { return address.data(); }
-
   // storage::Serializable methods
   std::string ToString() const;
   static std::optional<Address> FromString(const std::string& from);
@@ -61,6 +56,17 @@ class Address final : public packet::CustomFieldFixedSizeInterface<Address> {
   bool operator!=(const Address& rhs) const { return !(*this == rhs); }
 
   bool IsEmpty() const { return *this == kEmpty; }
+  uint8_t* data() { return address.data(); }
+  uint8_t const* data() const { return address.data(); }
+
+  // Packet parser interface.
+  static bool Parse(pdl::packet::slice& input, Address* output);
+
+  // Packet builder interface.
+  size_t GetSize() const override { return kLength; }
+  void Serialize(std::vector<uint8_t>& output) const override {
+    output.insert(output.end(), address.begin(), address.end());
+  }
 
   // Converts |string| to Address and places it in |to|. If |from| does
   // not represent a Bluetooth address, |to| is not modified and this function

@@ -80,6 +80,7 @@
 #include "gd/common/lru_cache.h"
 #include "internal_include/stack_config.h"
 #include "main/shim/dumpsys.h"
+#include "main/shim/le_advertising_manager.h"
 #include "main/shim/shim.h"
 #include "osi/include/allocator.h"
 #include "osi/include/log.h"
@@ -601,11 +602,6 @@ static void bond_state_changed(bt_status_t status, const RawAddress& bd_addr,
   GetInterfaceToProfiles()->events->invoke_bond_state_changed_cb(
       status, bd_addr, state, pairing_cb.fail_reason);
 
-  int dev_type;
-  if (!btif_get_device_type(bd_addr, &dev_type)) {
-    dev_type = BT_DEVICE_TYPE_BREDR;
-  }
-
   if ((state == BT_BOND_STATE_NONE) && (pairing_cb.bd_addr != bd_addr)
       && is_bonding_or_sdp()) {
     LOG_WARN("Ignoring bond state changed for unexpected device: %s pairing: %s",
@@ -877,18 +873,27 @@ static void btif_dm_cb_create_bond_le(const RawAddress bd_addr,
  *                  encrypted
  *
  ******************************************************************************/
-uint16_t btif_dm_get_connection_state(const RawAddress* bd_addr) {
-  uint16_t rc = BTA_DmGetConnectionState(*bd_addr);
-
-  if (rc != 0) {
-    if (BTM_IsEncrypted(*bd_addr, BT_TRANSPORT_BR_EDR)) {
+uint16_t btif_dm_get_connection_state(const RawAddress& bd_addr) {
+  uint16_t rc = 0;
+  if (BTA_DmGetConnectionState(bd_addr)) {
+    rc = (uint16_t) true;
+    if (BTM_IsEncrypted(bd_addr, BT_TRANSPORT_BR_EDR)) {
       rc |= ENCRYPTED_BREDR;
     }
-    if (BTM_IsEncrypted(*bd_addr, BT_TRANSPORT_LE)) {
+    if (BTM_IsEncrypted(bd_addr, BT_TRANSPORT_LE)) {
       rc |= ENCRYPTED_LE;
     }
+  } else {
+    LOG_INFO("Acl is not connected to peer:%s",
+             ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
   }
 
+  BTM_LogHistory(
+      kBtmLogTag, bd_addr, "Get connection state",
+      base::StringPrintf("connected:%c classic_encrypted:%c le_encrypted:%c",
+                         (rc & (int)true) ? 'T' : 'F',
+                         (rc & ENCRYPTED_BREDR) ? 'T' : 'F',
+                         (rc & ENCRYPTED_LE) ? 'T' : 'F'));
   return rc;
 }
 
@@ -1143,9 +1148,8 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
   bt_bond_state_t state = BT_BOND_STATE_NONE;
   bool skip_sdp = false;
 
-  BTIF_TRACE_DEBUG("%s: bond state=%d, success=%d, key_present=%d", __func__,
-                   pairing_cb.state, p_auth_cmpl->success,
-                   p_auth_cmpl->key_present);
+  LOG_INFO("%s: bond state=%d, success=%d, key_present=%d", __func__,
+           pairing_cb.state, p_auth_cmpl->success, p_auth_cmpl->key_present);
 
   pairing_cb.fail_reason = p_auth_cmpl->fail_reason;
 
@@ -1285,6 +1289,8 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
     // Do not call bond_state_changed_cb yet. Wait until remote service
     // discovery is complete
   } else {
+    LOG_WARN("Bonding failed with failure reason: 0x%02x",
+             p_auth_cmpl->fail_reason);
     bool is_bonded_device_removed = false;
     // Map the HCI fail reason  to  bt status
     switch (p_auth_cmpl->fail_reason) {
@@ -3142,7 +3148,7 @@ static std::optional<uint8_t> oob_advertiser_id_;
 static void stop_oob_advertiser() {
   // For chasing an advertising bug b/237023051
   LOG_DEBUG("oob_advertiser_id: %d", oob_advertiser_id_.value());
-  auto advertiser = get_ble_advertiser_instance();
+  auto advertiser = bluetooth::shim::get_ble_advertiser_instance();
   advertiser->Unregister(oob_advertiser_id_.value());
   oob_advertiser_id_ = {};
 }
@@ -3206,7 +3212,7 @@ static void start_advertising_callback(uint8_t id, tBT_TRANSPORT transport,
     return;
   }
   LOG_DEBUG("OOB advertiser with id %hhd", id);
-  auto advertiser = get_ble_advertiser_instance();
+  auto advertiser = bluetooth::shim::get_ble_advertiser_instance();
   advertiser->GetOwnAddress(
       id, base::Bind(&get_address_callback, transport, is_valid, c, r));
 }
@@ -3214,7 +3220,7 @@ static void start_advertising_callback(uint8_t id, tBT_TRANSPORT transport,
 static void timeout_cb(uint8_t id, tBTM_STATUS status) {
   LOG_INFO("OOB advertiser with id %hhd timed out with status %hhd", id,
            status);
-  auto advertiser = get_ble_advertiser_instance();
+  auto advertiser = bluetooth::shim::get_ble_advertiser_instance();
   advertiser->Unregister(id);
   SMP_ClearLocScOobData();
   waiting_on_oob_advertiser_start = false;
@@ -3238,7 +3244,7 @@ static void id_status_callback(tBT_TRANSPORT transport, bool is_valid,
   oob_advertiser_id_ = id;
   LOG_INFO("oob_advertiser_id: %d", id);
 
-  auto advertiser = get_ble_advertiser_instance();
+  auto advertiser = bluetooth::shim::get_ble_advertiser_instance();
   AdvertiseParameters parameters{};
   parameters.advertising_event_properties =
       0x0045 /* connectable, discoverable, tx power */;
@@ -3265,7 +3271,7 @@ static void id_status_callback(tBT_TRANSPORT transport, bool is_valid,
 // Step One: Start the advertiser
 static void start_oob_advertiser(tBT_TRANSPORT transport, bool is_valid,
                                  const Octet16& c, const Octet16& r) {
-  auto advertiser = get_ble_advertiser_instance();
+  auto advertiser = bluetooth::shim::get_ble_advertiser_instance();
   advertiser->RegisterAdvertiser(
       base::Bind(&id_status_callback, transport, is_valid, c, r));
 }
@@ -3516,7 +3522,8 @@ static void btif_dm_ble_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
     bond_state_changed(status, bd_addr, BT_BOND_STATE_BONDING);
   }
   bond_state_changed(status, bd_addr, state);
-  // TODO(240451061): Calling `stop_oob_advertiser();` gets command disallowed...
+  // TODO(240451061): Calling `stop_oob_advertiser();` gets command
+  // disallowed...
 }
 
 void btif_dm_load_ble_local_keys(void) {

@@ -137,8 +137,8 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
     log_history_ = nullptr;
   }
 
-  bool AttachToStream(LeAudioDeviceGroup* group,
-                      LeAudioDevice* leAudioDevice) override {
+  bool AttachToStream(LeAudioDeviceGroup* group, LeAudioDevice* leAudioDevice,
+                      BidirectionalPair<std::vector<uint8_t>> ccids) override {
     LOG(INFO) << __func__ << " group id: " << group->group_id_
               << " device: " << ADDRESS_TO_LOGGABLE_STR(leAudioDevice->address_);
 
@@ -155,11 +155,6 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
       return false;
     }
 
-    BidirectionalPair<std::vector<uint8_t>> ccids = {
-        .sink = le_audio::ContentControlIdKeeper::GetInstance()->GetAllCcids(
-            group->GetMetadataContexts().sink),
-        .source = le_audio::ContentControlIdKeeper::GetInstance()->GetAllCcids(
-            group->GetMetadataContexts().source)};
     if (!group->Configure(group->GetConfigurationContextType(),
                           group->GetMetadataContexts(), ccids)) {
       LOG_ERROR(" failed to set ASE configuration");
@@ -568,15 +563,14 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
 
     auto ases_pair = leAudioDevice->GetAsesByCisConnHdl(conn_hdl);
     if (ases_pair.sink && (ases_pair.sink->data_path_state ==
-                           AudioStreamDataPathState::DATA_PATH_ESTABLISHED)) {
+                           AudioStreamDataPathState::DATA_PATH_REMOVING)) {
       ases_pair.sink->data_path_state =
           AudioStreamDataPathState::CIS_DISCONNECTING;
       do_disconnect = true;
     }
 
-    if (ases_pair.source &&
-        ases_pair.source->data_path_state ==
-            AudioStreamDataPathState::DATA_PATH_ESTABLISHED) {
+    if (ases_pair.source && ases_pair.source->data_path_state ==
+                                AudioStreamDataPathState::DATA_PATH_REMOVING) {
       ases_pair.source->data_path_state =
           AudioStreamDataPathState::CIS_DISCONNECTING;
       do_disconnect = true;
@@ -672,7 +666,10 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
     if ((group->GetState() == AseState::BTA_LE_AUDIO_ASE_STATE_IDLE) &&
         !group->IsInTransition()) {
       LOG_INFO("group: %d is in IDLE", group->group_id_);
-      group->UpdateAudioContextTypeAvailability();
+      group->ReloadAudioLocations();
+      group->ReloadAudioDirections();
+      group->UpdateAudioContextAvailability();
+      group->InvalidateCachedConfigurations();
 
       /* When OnLeAudioDeviceSetStateTimeout happens, group will transition
        * to IDLE, and after that an ACL disconnect will be triggered. We need
@@ -696,7 +693,10 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
     /* Update the current group audio context availability which could change
      * due to disconnected group member.
      */
-    group->UpdateAudioContextTypeAvailability();
+    group->ReloadAudioLocations();
+    group->ReloadAudioDirections();
+    group->UpdateAudioContextAvailability();
+    group->InvalidateCachedConfigurations();
 
     if (group->IsAnyDeviceConnected()) {
       /*
@@ -704,17 +704,25 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
        * changed notify upper layer so the offloader can be updated with CIS
        * information.
        */
-      if (!group->HaveAllCisesDisconnected() &&
-          (group->GetState() == AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING) &&
-          (group->GetTargetState() ==
-           AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING)) {
-        /* We keep streaming but want others to let know user that it might be
-         * need to update offloader with new CIS configuration
-         */
-        state_machine_callbacks_->StatusReportCb(group->group_id_,
-                                                 GroupStreamStatus::STREAMING);
+      if (!group->HaveAllCisesDisconnected()) {
+        /* some CISes are connected */
+
+        if ((group->GetState() == AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING) &&
+            (group->GetTargetState() ==
+             AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING)) {
+          /* We keep streaming but want others to let know user that it might
+           * be need to update offloader with new CIS configuration
+           */
+          state_machine_callbacks_->StatusReportCb(
+              group->group_id_, GroupStreamStatus::STREAMING);
+        } else {
+          LOG_WARN("group_id %d not in streaming, CISes are still there",
+                   group->group_id_);
+          group->PrintDebugState();
+        }
+
+        return;
       }
-      return;
     }
 
     /* Group is not connected and all the CISes are down.
@@ -854,12 +862,16 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
     if (ases_pair.sink && ases_pair.sink->data_path_state ==
                               AudioStreamDataPathState::DATA_PATH_ESTABLISHED) {
       value |= bluetooth::hci::iso_manager::kRemoveIsoDataPathDirectionInput;
+      ases_pair.sink->data_path_state =
+          AudioStreamDataPathState::DATA_PATH_REMOVING;
     }
 
     if (ases_pair.source &&
         ases_pair.source->data_path_state ==
             AudioStreamDataPathState::DATA_PATH_ESTABLISHED) {
       value |= bluetooth::hci::iso_manager::kRemoveIsoDataPathDirectionOutput;
+      ases_pair.source->data_path_state =
+          AudioStreamDataPathState::DATA_PATH_REMOVING;
     }
 
     if (value == 0) {
@@ -896,11 +908,13 @@ class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
           ases_pair.sink->state == AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING) {
         ases_pair.sink->state =
             AseState::BTA_LE_AUDIO_ASE_STATE_CODEC_CONFIGURED;
+        ases_pair.sink->active = false;
       }
       if (ases_pair.source && ases_pair.source->state ==
                                   AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING) {
         ases_pair.source->state =
             AseState::BTA_LE_AUDIO_ASE_STATE_CODEC_CONFIGURED;
+        ases_pair.source->active = false;
       }
     }
 

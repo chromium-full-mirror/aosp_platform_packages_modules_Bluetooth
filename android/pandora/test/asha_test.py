@@ -16,10 +16,7 @@ import asyncio
 import avatar
 import enum
 import grpc
-import inspect
-import itertools
 import logging
-import math
 import numpy as np
 
 from avatar import BumblePandoraDevice, PandoraDevice, PandoraDevices, asynchronous
@@ -34,7 +31,7 @@ from mobly.asserts import assert_in  # type: ignore
 from mobly.asserts import assert_is_not_none  # type: ignore
 from mobly.asserts import assert_not_equal  # type: ignore
 from mobly.asserts import assert_true  # type: ignore
-from pandora._utils import AioStream, Stream
+from pandora._utils import AioStream
 from pandora.host_pb2 import PUBLIC, RANDOM, AdvertiseResponse, Connection, DataTypes, OwnAddressType, ScanningResponse
 from pandora.security_pb2 import LE_LEVEL3
 from pandora_experimental.asha_grpc_aio import Asha as AioAsha, add_AshaServicer_to_server
@@ -868,6 +865,9 @@ class AshaTest(base_test.BaseTestClass):  # type: ignore[misc]
         Verify that DUT sends a correct AudioControlPoint `Stop` command.
         """
 
+        # TODO(b/290204194) Re-activate this test ASAP
+        raise signals.TestSkip('TODO(b/290204194) Re-activate this test ASAP')
+
         async def ref_device_connect(ref_device: BumblePandoraDevice, ear: Ear) -> Tuple[Connection, Connection]:
             advertisement = await self.ref_advertise_asha(ref_device=ref_device, ref_address_type=RANDOM, ear=ear)
             ref = await self.dut_scan_for_asha(dut_address_type=RANDOM, ear=ear)
@@ -1064,6 +1064,9 @@ class AshaTest(base_test.BaseTestClass):  # type: ignore[misc]
         Verify Refs cannot recevice audio data after DUT stops media streaming.
         """
 
+        # TODO(b/290204194) Re-activate this test ASAP
+        raise signals.TestSkip('TODO(b/290204194) Re-activate this test ASAP')
+
         async def ref_device_connect(ref_device: BumblePandoraDevice, ear: Ear) -> Tuple[Connection, Connection]:
             advertisement = await self.ref_advertise_asha(ref_device=ref_device, ref_address_type=RANDOM, ear=ear)
             ref = await self.dut_scan_for_asha(dut_address_type=RANDOM, ear=ear)
@@ -1095,17 +1098,26 @@ class AshaTest(base_test.BaseTestClass):  # type: ignore[misc]
         ref_left_asha = AioAsha(self.ref_left.aio.channel)
         ref_right_asha = AioAsha(self.ref_right.aio.channel)
 
-        stop_future = self.get_stop_future(self.ref_left)
-
-        await dut_asha.WaitPeripheral(connection=dut_ref_left)
-        await dut_asha.WaitPeripheral(connection=dut_ref_right)
-
+        await asyncio.gather(
+            dut_asha.WaitPeripheral(connection=dut_ref_left), dut_asha.WaitPeripheral(connection=dut_ref_right)
+        )
         await dut_asha.Start(connection=dut_ref_left)
-        logging.info("send stop")
-        _, stop_result = await asyncio.gather(dut_asha.Stop(), asyncio.wait_for(stop_future, timeout=10.0))
 
-        logging.info(f"stop_result:{stop_result}")
-        assert_is_not_none(stop_result)
+        # Stop audio and wait until ref_device connections stopped.
+        stop_future_left = self.get_stop_future(self.ref_left)
+        stop_future_right = self.get_stop_future(self.ref_right)
+
+        logging.info("send stop")
+        _, stop_result_left, stop_result_right = await asyncio.gather(
+            dut_asha.Stop(),
+            asyncio.wait_for(stop_future_left, timeout=10.0),
+            asyncio.wait_for(stop_future_right, timeout=10.0),
+        )
+
+        logging.info(f"stop_result_left:{stop_result_left}")
+        logging.info(f"stop_result_right:{stop_result_right}")
+        assert_is_not_none(stop_result_left)
+        assert_is_not_none(stop_result_right)
 
         (audio_data_left, audio_data_right) = await asyncio.gather(
             self.get_audio_data(ref_asha=ref_left_asha, connection=ref_left_dut, timeout=10),

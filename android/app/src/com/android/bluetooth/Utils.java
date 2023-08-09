@@ -423,7 +423,6 @@ public final class Utils {
      * @return the list of AssociationInfo objects
      */
     @RequiresPermission("android.permission.MANAGE_COMPANION_DEVICES")
-    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     // TODO(b/193460475): Android Lint handles change from SystemApi to public incorrectly.
     // CompanionDeviceManager#getAllAssociations() is public in U,
     // but existed in T as an identical SystemApi.
@@ -979,6 +978,9 @@ public final class Utils {
         return (int) (TimeUnit.MILLISECONDS.toMicros(milliseconds) / MICROS_PER_UNIT);
     }
 
+    private static boolean sIsInstrumentationTestModeCacheSet = false;
+    private static boolean sInstrumentationTestModeCache = false;
+
     /**
      * Check if we are running in BluetoothInstrumentationTest context by trying to load
      * com.android.bluetooth.FileSystemWriteTest. If we are not in Instrumentation test mode, this
@@ -989,11 +991,16 @@ public final class Utils {
      * @return true if in BluetoothInstrumentationTest, false otherwise
      */
     public static boolean isInstrumentationTestMode() {
-        try {
-            return Class.forName("com.android.bluetooth.FileSystemWriteTest") != null;
-        } catch (ClassNotFoundException exception) {
-            return false;
+        if (!sIsInstrumentationTestModeCacheSet) {
+            try {
+                sInstrumentationTestModeCache =
+                        Class.forName("com.android.bluetooth.FileSystemWriteTest") != null;
+            } catch (ClassNotFoundException exception) {
+                sInstrumentationTestModeCache = false;
+            }
+            sIsInstrumentationTestModeCacheSet = true;
         }
+        return sInstrumentationTestModeCache;
     }
 
     /**

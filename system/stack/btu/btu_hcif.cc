@@ -94,10 +94,10 @@ static void btu_hcif_esco_connection_chg_evt(uint8_t* p);
 static void btu_hcif_io_cap_request_evt(const uint8_t* p);
 
 static void btu_ble_ll_conn_param_upd_evt(uint8_t* p, uint16_t evt_len);
-static void btu_ble_proc_ltk_req(uint8_t* p);
+static void btu_ble_proc_ltk_req(uint8_t* p, uint16_t evt_len);
 static void btu_hcif_encryption_key_refresh_cmpl_evt(uint8_t* p);
 static void btu_ble_data_length_change_evt(uint8_t* p, uint16_t evt_len);
-static void btu_ble_rc_param_req_evt(uint8_t* p);
+static void btu_ble_rc_param_req_evt(uint8_t* p, uint8_t len);
 
 /**
  * Log HCI event metrics that are not handled in special functions
@@ -314,16 +314,16 @@ void btu_hcif_process_event(UNUSED_ATTR uint8_t controller_id,
           btm_ble_process_adv_pkt(ble_evt_len, p);
           break;
         case HCI_BLE_LL_CONN_PARAM_UPD_EVT:
-          btu_ble_ll_conn_param_upd_evt(p, hci_evt_len);
+          btu_ble_ll_conn_param_upd_evt(p, ble_evt_len);
           break;
         case HCI_BLE_READ_REMOTE_FEAT_CMPL_EVT:
-          btm_ble_read_remote_features_complete(p);
+          btm_ble_read_remote_features_complete(p, ble_evt_len);
           break;
         case HCI_BLE_LTK_REQ_EVT: /* received only at peripheral device */
-          btu_ble_proc_ltk_req(p);
+          btu_ble_proc_ltk_req(p, ble_evt_len);
           break;
         case HCI_BLE_RC_PARAM_REQ_EVT:
-          btu_ble_rc_param_req_evt(p);
+          btu_ble_rc_param_req_evt(p, ble_evt_len);
           break;
         case HCI_BLE_DATA_LENGTH_CHANGE_EVT:
           btu_ble_data_length_change_evt(p, hci_evt_len);
@@ -937,8 +937,7 @@ static void btu_hcif_encryption_change_evt(uint8_t* p) {
 
   if (status != HCI_SUCCESS || encr_enable == 0 ||
       BTM_IsBleConnection(handle) ||
-      (bluetooth::common::init_flags::read_encryption_key_size_is_enabled() &&
-       !controller_get_interface()->supports_read_encryption_key_size()) ||
+      !controller_get_interface()->supports_read_encryption_key_size() ||
       // Skip encryption key size check when using set_min_encryption_key_size
       (bluetooth::common::init_flags::set_min_encryption_is_enabled() &&
        controller_get_interface()->supports_set_min_encryption_key_size())) {
@@ -1063,8 +1062,7 @@ static void btu_hcif_esco_connection_chg_evt(uint8_t* p) {
  *
  ******************************************************************************/
 static void btu_hcif_hdl_command_complete(uint16_t opcode, uint8_t* p,
-                                          uint16_t evt_len,
-                                          void* p_cplt_cback) {
+                                          uint16_t evt_len) {
   switch (opcode) {
     case HCI_INQUIRY_CANCEL:
       /* Tell inquiry processing that we are done */
@@ -1074,7 +1072,7 @@ static void btu_hcif_hdl_command_complete(uint16_t opcode, uint8_t* p,
       break;
 
     case HCI_DELETE_STORED_LINK_KEY:
-      btm_delete_stored_link_key_complete(p);
+      btm_delete_stored_link_key_complete(p, evt_len);
       break;
 
     case HCI_READ_LOCAL_NAME:
@@ -1082,11 +1080,11 @@ static void btu_hcif_hdl_command_complete(uint16_t opcode, uint8_t* p,
       break;
 
     case HCI_GET_LINK_QUALITY:
-      btm_read_link_quality_complete(p);
+      btm_read_link_quality_complete(p, evt_len);
       break;
 
     case HCI_READ_RSSI:
-      btm_read_rssi_complete(p);
+      btm_read_rssi_complete(p, evt_len);
       break;
 
     case HCI_READ_FAILED_CONTACT_COUNTER:
@@ -1098,32 +1096,26 @@ static void btu_hcif_hdl_command_complete(uint16_t opcode, uint8_t* p,
       break;
 
     case HCI_READ_TRANSMIT_POWER_LEVEL:
-      btm_read_tx_power_complete(p, false);
+      btm_read_tx_power_complete(p, evt_len, false);
       break;
 
     case HCI_CREATE_CONNECTION_CANCEL:
-      btm_create_conn_cancel_complete(p);
+      btm_create_conn_cancel_complete(p, evt_len);
       break;
 
     case HCI_READ_LOCAL_OOB_DATA:
-      btm_read_local_oob_complete(p);
+      btm_read_local_oob_complete(p, evt_len);
       break;
 
     case HCI_READ_INQ_TX_POWER_LEVEL:
       break;
 
-    /* BLE Commands sComplete*/
-    case HCI_BLE_RAND:
-    case HCI_BLE_ENCRYPT:
-      btm_ble_rand_enc_complete(p, opcode, (tBTM_RAND_ENC_CB*)p_cplt_cback);
-      break;
-
     case HCI_BLE_READ_ADV_CHNL_TX_POWER:
-      btm_read_tx_power_complete(p, true);
+      btm_read_tx_power_complete(p, evt_len, true);
       break;
 
     case HCI_BLE_WRITE_ADV_ENABLE:
-      btm_ble_write_adv_enable_complete(p);
+      btm_ble_write_adv_enable_complete(p, evt_len);
       break;
 
     case HCI_BLE_CREATE_LL_CONN:
@@ -1189,8 +1181,7 @@ static void btu_hcif_hdl_command_complete(uint16_t opcode, uint8_t* p,
  * Returns          void
  *
  ******************************************************************************/
-static void btu_hcif_command_complete_evt_on_task(BT_HDR* event,
-                                                  void* context) {
+static void btu_hcif_command_complete_evt_on_task(BT_HDR* event) {
   command_opcode_t opcode;
   // 2 for event header: event code (1) + parameter length (1)
   // 1 for num_hci_pkt command credit
@@ -1201,15 +1192,16 @@ static void btu_hcif_command_complete_evt_on_task(BT_HDR* event,
   // 2 for event header: event code (1) + parameter length (1)
   // 3 for command complete header: num_hci_pkt (1) + opcode (2)
   uint16_t param_len = static_cast<uint16_t>(event->len - 5);
-  btu_hcif_hdl_command_complete(opcode, stream, param_len, context);
+  btu_hcif_hdl_command_complete(opcode, stream, param_len);
 
   osi_free(event);
 }
 
-static void btu_hcif_command_complete_evt(BT_HDR* response, void* context) {
+static void btu_hcif_command_complete_evt(BT_HDR* response,
+                                          void* /* context */) {
   do_in_main_thread(
       FROM_HERE,
-      base::BindOnce(btu_hcif_command_complete_evt_on_task, response, context));
+      base::BindOnce(btu_hcif_command_complete_evt_on_task, response));
 }
 
 /*******************************************************************************
@@ -1222,8 +1214,7 @@ static void btu_hcif_command_complete_evt(BT_HDR* response, void* context) {
  *
  ******************************************************************************/
 static void btu_hcif_hdl_command_status(uint16_t opcode, uint8_t status,
-                                        const uint8_t* p_cmd,
-                                        void* p_vsc_status_cback) {
+                                        const uint8_t* p_cmd) {
   CHECK_NE(p_cmd, nullptr) << "Null command for opcode 0x" << loghex(opcode);
   p_cmd++;  // Skip parameter total length
 
@@ -1333,9 +1324,8 @@ static void btu_hcif_hdl_command_status(uint16_t opcode, uint8_t status,
 }
 
 void bluetooth::legacy::testing::btu_hcif_hdl_command_status(
-    uint16_t opcode, uint8_t status, const uint8_t* p_cmd,
-    void* p_vsc_status_cback) {
-  ::btu_hcif_hdl_command_status(opcode, status, p_cmd, p_vsc_status_cback);
+    uint16_t opcode, uint8_t status, const uint8_t* p_cmd) {
+  ::btu_hcif_hdl_command_status(opcode, status, p_cmd);
 }
 
 /*******************************************************************************
@@ -1347,8 +1337,7 @@ void bluetooth::legacy::testing::btu_hcif_hdl_command_status(
  * Returns          void
  *
  ******************************************************************************/
-static void btu_hcif_command_status_evt_on_task(uint8_t status, BT_HDR* event,
-                                                void* context) {
+static void btu_hcif_command_status_evt_on_task(uint8_t status, BT_HDR* event) {
   command_opcode_t opcode;
   uint8_t* stream = event->data + event->offset;
   STREAM_TO_UINT16(opcode, stream);
@@ -1357,15 +1346,15 @@ static void btu_hcif_command_status_evt_on_task(uint8_t status, BT_HDR* event,
   // No need to check length since stream is written by us
   btu_hcif_log_command_metrics(opcode, stream + 1, status, true);
 
-  btu_hcif_hdl_command_status(opcode, status, stream, context);
+  btu_hcif_hdl_command_status(opcode, status, stream);
   osi_free(event);
 }
 
 static void btu_hcif_command_status_evt(uint8_t status, BT_HDR* command,
-                                        void* context) {
-  do_in_main_thread(FROM_HERE,
-                    base::BindOnce(btu_hcif_command_status_evt_on_task, status,
-                                   command, context));
+                                        void* /* context */) {
+  do_in_main_thread(
+      FROM_HERE,
+      base::BindOnce(btu_hcif_command_status_evt_on_task, status, command));
 }
 
 /*******************************************************************************
@@ -1543,6 +1532,11 @@ static void btu_ble_ll_conn_param_upd_evt(uint8_t* p, uint16_t evt_len) {
   uint16_t latency;
   uint16_t timeout;
 
+  if (evt_len < 9) {
+     LOG_ERROR("Bogus event packet, too short");
+     return;
+  }
+
   STREAM_TO_UINT8(status, p);
   STREAM_TO_UINT16(handle, p);
   STREAM_TO_UINT16(interval, p);
@@ -1553,9 +1547,21 @@ static void btu_ble_ll_conn_param_upd_evt(uint8_t* p, uint16_t evt_len) {
                                 interval, latency, timeout);
 }
 
-static void btu_ble_proc_ltk_req(uint8_t* p) {
+static void btu_ble_proc_ltk_req(uint8_t* p, uint16_t evt_len) {
   uint16_t ediv, handle;
   uint8_t* pp;
+
+  // following the spec in Core_v5.3/Vol 4/Part E
+  // / 7.7.65.5 LE Long Term Key Request event
+  // A BLE Long Term Key Request event contains:
+  // - 1-byte subevent (already consumed in btu_hcif_process_event)
+  // - 2-byte connection handler
+  // - 8-byte random number
+  // - 2 byte Encrypted_Diversifier
+  if (evt_len < 2 + 8 + 2) {
+    LOG_ERROR("Event packet too short");
+    return;
+  }
 
   STREAM_TO_UINT16(handle, p);
   pp = p + 8;
@@ -1585,9 +1591,14 @@ static void btu_ble_data_length_change_evt(uint8_t* p, uint16_t evt_len) {
 /**********************************************
  * End of BLE Events Handler
  **********************************************/
-static void btu_ble_rc_param_req_evt(uint8_t* p) {
+static void btu_ble_rc_param_req_evt(uint8_t* p, uint8_t len) {
   uint16_t handle;
   uint16_t int_min, int_max, latency, timeout;
+
+  if (len < 10) {
+    LOG(ERROR) << __func__ << "bogus event packet, too short";
+    return;
+  }
 
   STREAM_TO_UINT16(handle, p);
   STREAM_TO_UINT16(int_min, p);

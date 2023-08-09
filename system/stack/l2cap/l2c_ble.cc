@@ -111,9 +111,9 @@ bool L2CA_UpdateBleConnParams(const RawAddress& rem_bda, uint16_t min_int,
     return (false);
   }
 
-  VLOG(2) << __func__ << ": BD_ADDR=" << rem_bda << ", min_int=" << min_int
-          << ", max_int=" << max_int << ", min_ce_len=" << min_ce_len
-          << ", max_ce_len=" << max_ce_len;
+  VLOG(2) << __func__ << ": BD_ADDR=" << ADDRESS_TO_LOGGABLE_STR(rem_bda)
+          << ", min_int=" << min_int << ", max_int=" << max_int
+          << ", min_ce_len=" << min_ce_len << ", max_ce_len=" << max_ce_len;
 
   p_lcb->min_interval = min_int;
   p_lcb->max_interval = max_int;
@@ -157,13 +157,14 @@ bool L2CA_EnableUpdateBleConnParams(const RawAddress& rem_bda, bool enable) {
     return false;
   }
 
-  VLOG(2) << __func__ << " - BD_ADDR " << rem_bda
+  VLOG(2) << __func__ << " - BD_ADDR " << ADDRESS_TO_LOGGABLE_STR(rem_bda)
           << StringPrintf(" enable %d current upd state 0x%02x", enable,
                           p_lcb->conn_update_mask);
 
   if (p_lcb->transport != BT_TRANSPORT_LE) {
-    LOG(WARNING) << __func__ << " - BD_ADDR " << rem_bda
-                 << " not LE, link role " << p_lcb->LinkRole();
+    LOG(WARNING) << __func__ << " - BD_ADDR "
+                 << ADDRESS_TO_LOGGABLE_STR(rem_bda) << " not LE, link role "
+                 << p_lcb->LinkRole();
     return false;
   }
 
@@ -656,7 +657,8 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
               L2CAP_LE_RESULT_SOURCE_CID_ALREADY_ALLOCATED;
         } else {
           /* Allocate a ccb for this.*/
-          temp_p_ccb = l2cu_allocate_ccb(p_lcb, 0);
+          temp_p_ccb = l2cu_allocate_ccb(
+              p_lcb, 0, con_info.psm == BT_PSM_EATT /* is_eatt */);
           if (temp_p_ccb == NULL) {
             LOG_ERROR("L2CAP - unable to allocate CCB");
             p_lcb->pending_ecoc_connection_cids[i] = 0;
@@ -1003,7 +1005,8 @@ void l2cble_process_sig_cmd(tL2C_LCB* p_lcb, uint8_t* p, uint16_t pkt_len) {
       }
 
       /* Allocate a ccb for this.*/
-      p_ccb = l2cu_allocate_ccb(p_lcb, 0);
+      p_ccb = l2cu_allocate_ccb(p_lcb, 0,
+                                con_info.psm == BT_PSM_EATT /* is_eatt */);
       if (p_ccb == NULL) {
         L2CAP_TRACE_ERROR("L2CAP - unable to allocate CCB");
         l2cu_reject_ble_connection(p_ccb, id, L2CAP_CONN_NO_RESOURCES);

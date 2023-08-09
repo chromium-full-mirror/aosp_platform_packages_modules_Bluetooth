@@ -36,6 +36,12 @@ TEST(InitFlagsTest, test_leaudio_targeted_announcement_reconnection_mode) {
   ASSERT_TRUE(InitFlags::IsTargetedAnnouncementReconnectionMode());
 }
 
+TEST(InitFlagsTest, test_leaudio_enable_health_based_actions) {
+  const char* input[] = {"INIT_leaudio_enable_health_based_actions=true", nullptr};
+  InitFlags::Load(input);
+  ASSERT_TRUE(InitFlags::IsLeAudioHealthBasedActionsEnabled());
+}
+
 TEST(InitFlagsTest, test_enable_debug_logging_for_all) {
   const char* input[] = {"INIT_default_log_level=5", nullptr};
   InitFlags::Load(input);
@@ -81,22 +87,10 @@ TEST(InitFlagsTest, test_debug_logging_multiple_flags) {
   ASSERT_EQ(InitFlags::GetDefaultLogLevel(), LOG_TAG_WARN);
 }
 
-TEST(InitFlagsTest, test_enable_snoop_logger_socket) {
-  const char* input[] = {"INIT_gd_hal_snoop_logger_socket=true", nullptr};
-  InitFlags::Load(input);
-  ASSERT_TRUE(InitFlags::IsSnoopLoggerSocketEnabled());
-}
-
 TEST(InitFlagsTest, test_device_iot_config_logging_is_enabled) {
   const char* input[] = {"INIT_device_iot_config_logging=true", nullptr};
   InitFlags::Load(input);
   ASSERT_TRUE(InitFlags::IsDeviceIotConfigLoggingEnabled());
-}
-
-TEST(InitFlagsTest, test_enable_snoop_logger_filtering) {
-  const char* input[] = {"INIT_gd_hal_snoop_logger_filtering=true", nullptr};
-  InitFlags::Load(input);
-  ASSERT_TRUE(InitFlags::IsSnoopLoggerFilteringEnabled());
 }
 
 TEST(InitFlagsTest, test_enable_bluetooth_quality_report_callback) {

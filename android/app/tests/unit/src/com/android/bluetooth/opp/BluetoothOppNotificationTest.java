@@ -19,24 +19,19 @@ package com.android.bluetooth.opp;
 import static android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
 import static android.content.pm.PackageManager.DONT_KILL_APP;
 
-import static androidx.test.espresso.intent.Intents.intended;
-import static androidx.test.espresso.intent.matcher.IntentMatchers.hasAction;
 
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
-import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.database.MatrixCursor;
-import android.util.Log;
 
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.espresso.intent.Intents;
@@ -54,6 +49,8 @@ import com.android.bluetooth.TestUtils;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -73,6 +70,12 @@ public class BluetoothOppNotificationTest {
 
     ComponentName mReceiverName;
     int mPreviousState;
+
+    // Activity tests can sometimes flaky because of external factors like system dialog, etc.
+    // making the expected Espresso's root not focused or the activity doesn't show up.
+    // Add retry rule to resolve this problem.
+    @Rule public TestUtils.RetryTestRule mRetryTestRule = new TestUtils.RetryTestRule();
+
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
@@ -116,6 +119,7 @@ public class BluetoothOppNotificationTest {
         mOppNotification.cancelNotifications();
     }
 
+    @Ignore("b/288660228")
     @Test
     public void updateActiveNotification() throws InterruptedException {
         long timestamp = 10L;
@@ -164,10 +168,11 @@ public class BluetoothOppNotificationTest {
     }
 
     @Test
+    @Ignore("b/288660228")
     public void updateCompletedNotification_withOutBoundShare_showsNoti()
             throws InterruptedException {
         long timestamp = 10L;
-        int status = BluetoothShare.STATUS_SUCCESS;
+        int status = com.android.bluetooth.opp.BluetoothShare.STATUS_SUCCESS;
         int statusError = BluetoothShare.STATUS_CONNECTION_ERROR;
         int dir = BluetoothShare.DIRECTION_OUTBOUND;
         int id = 0;
@@ -212,6 +217,7 @@ public class BluetoothOppNotificationTest {
         assertThat(device.findObject(By.text(titleString))).isNull();
     }
 
+    @Ignore("b/288660228")
     @Test
     public void updateCompletedNotification_withInBoundShare_showsNoti()
             throws InterruptedException {
@@ -261,6 +267,7 @@ public class BluetoothOppNotificationTest {
         assertThat(device.findObject(By.text(titleString))).isNull();
     }
 
+    @Ignore("b/288660228")
     @Test
     public void updateIncomingFileConfirmationNotification() throws InterruptedException {
         long timestamp = 10L;

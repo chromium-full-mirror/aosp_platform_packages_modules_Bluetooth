@@ -46,6 +46,8 @@ static jmethodID method_onAudioConf;
 static jmethodID method_onSinkAudioLocationAvailable;
 static jmethodID method_onAudioLocalCodecCapabilities;
 static jmethodID method_onAudioGroupCodecConf;
+static jmethodID method_onHealthBasedRecommendationAction;
+static jmethodID method_onHealthBasedGroupRecommendationAction;
 
 static struct {
   jclass clazz;
@@ -135,7 +137,8 @@ class LeAudioClientCallbacksImpl : public LeAudioClientCallbacks {
 
   void OnConnectionState(ConnectionState state,
                          const RawAddress& bd_addr) override {
-    LOG(INFO) << __func__ << ", state:" << int(state);
+    LOG(INFO) << __func__ << ", state:" << int(state)
+              << ", addr: " << bd_addr.ToRedactedStringForLogging();
 
     std::shared_lock<std::shared_timed_mutex> lock(callbacks_mutex);
     CallbackEnv sCallbackEnv(__func__);
@@ -270,6 +273,43 @@ class LeAudioClientCallbacksImpl : public LeAudioClientCallbacks {
         inputCodecConfigObj, outputCodecConfigObj,
         inputSelectableCodecConfigArray, outputSelectableCodecConfigArray);
   }
+
+  void OnHealthBasedRecommendationAction(
+      const RawAddress& bd_addr,
+      bluetooth::le_audio::LeAudioHealthBasedAction action) override {
+    LOG(INFO) << __func__;
+
+    std::shared_lock<std::shared_timed_mutex> lock(callbacks_mutex);
+    CallbackEnv sCallbackEnv(__func__);
+    if (!sCallbackEnv.valid() || mCallbacksObj == nullptr) return;
+
+    ScopedLocalRef<jbyteArray> addr(
+        sCallbackEnv.get(), sCallbackEnv->NewByteArray(sizeof(RawAddress)));
+    if (!addr.get()) {
+      LOG(ERROR) << "Failed to new jbyteArray bd addr for group status";
+      return;
+    }
+
+    sCallbackEnv->SetByteArrayRegion(addr.get(), 0, sizeof(RawAddress),
+                                     (jbyte*)&bd_addr);
+    sCallbackEnv->CallVoidMethod(mCallbacksObj,
+                                 method_onHealthBasedRecommendationAction,
+                                 addr.get(), (jint)action);
+  }
+
+  void OnHealthBasedGroupRecommendationAction(
+      int group_id,
+      bluetooth::le_audio::LeAudioHealthBasedAction action) override {
+    LOG(INFO) << __func__;
+
+    std::shared_lock<std::shared_timed_mutex> lock(callbacks_mutex);
+    CallbackEnv sCallbackEnv(__func__);
+    if (!sCallbackEnv.valid() || mCallbacksObj == nullptr) return;
+
+    sCallbackEnv->CallVoidMethod(mCallbacksObj,
+                                 method_onHealthBasedGroupRecommendationAction,
+                                 (jint)group_id, (jint)action);
+  }
 };
 
 static LeAudioClientCallbacksImpl sLeAudioClientCallbacks;
@@ -301,6 +341,10 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
                        "Landroid/bluetooth/BluetoothLeAudioCodecConfig;"
                        "[Landroid/bluetooth/BluetoothLeAudioCodecConfig;"
                        "[Landroid/bluetooth/BluetoothLeAudioCodecConfig;)V");
+  method_onHealthBasedRecommendationAction =
+      env->GetMethodID(clazz, "onHealthBasedRecommendationAction", "([BI)V");
+  method_onHealthBasedGroupRecommendationAction = env->GetMethodID(
+      clazz, "onHealthBasedGroupRecommendationAction", "(II)V");
 }
 
 std::vector<btle_audio_codec_config_t> prepareCodecPreferences(
@@ -745,11 +789,15 @@ jobject prepareLeAudioContentMetadataObject(
     JNIEnv* env, const std::map<uint8_t, std::vector<uint8_t>>& metadata) {
   jstring program_info_str = nullptr;
   if (metadata.count(bluetooth::le_audio::kLeAudioMetadataTypeProgramInfo)) {
-    program_info_str = env->NewStringUTF(
-        (const char*)(metadata
-                          .at(bluetooth::le_audio::
-                                  kLeAudioMetadataTypeProgramInfo)
-                          .data()));
+    // Convert the metadata vector to string with null terminator
+    std::string p_str(
+        (const char*)metadata
+            .at(bluetooth::le_audio::kLeAudioMetadataTypeProgramInfo)
+            .data(),
+        metadata.at(bluetooth::le_audio::kLeAudioMetadataTypeProgramInfo)
+            .size());
+
+    program_info_str = env->NewStringUTF(p_str.c_str());
     if (!program_info_str) {
       LOG(ERROR) << "Failed to create new preset name String for preset name";
       return nullptr;
@@ -758,10 +806,14 @@ jobject prepareLeAudioContentMetadataObject(
 
   jstring language_str = nullptr;
   if (metadata.count(bluetooth::le_audio::kLeAudioMetadataTypeLanguage)) {
-    language_str = env->NewStringUTF(
-        (const char*)(metadata
-                          .at(bluetooth::le_audio::kLeAudioMetadataTypeLanguage)
-                          .data()));
+    // Convert the metadata vector to string with null terminator
+    std::string l_str(
+        (const char*)metadata
+            .at(bluetooth::le_audio::kLeAudioMetadataTypeLanguage)
+            .data(),
+        metadata.at(bluetooth::le_audio::kLeAudioMetadataTypeLanguage).size());
+
+    language_str = env->NewStringUTF(l_str.c_str());
     if (!language_str) {
       LOG(ERROR) << "Failed to create new preset name String for language";
       return nullptr;

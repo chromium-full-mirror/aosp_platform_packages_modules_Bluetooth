@@ -1,20 +1,18 @@
-/******************************************************************************
+/*
+ * Copyright 2018 The Android Open Source Project
  *
- *  Copyright 2022 The Android Open Source Project
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at:
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include "hci/address.h"
 
@@ -45,6 +43,20 @@ Address::Address(const uint8_t (&address)[kLength]) {
 
 Address::Address(std::initializer_list<uint8_t> l) {
   std::copy(l.begin(), std::min(l.begin() + kLength, l.end()), data());
+}
+
+bool Address::Parse(pdl::packet::slice& input, Address* output) {
+  if (input.size() < kLength) {
+    return false;
+  }
+
+  std::array<uint8_t, kLength> address{
+      input.read_le<uint8_t>(), input.read_le<uint8_t>(),
+      input.read_le<uint8_t>(), input.read_le<uint8_t>(),
+      input.read_le<uint8_t>(), input.read_le<uint8_t>(),
+  };
+  *output = Address(address);
+  return true;
 }
 
 std::string Address::ToString() const {

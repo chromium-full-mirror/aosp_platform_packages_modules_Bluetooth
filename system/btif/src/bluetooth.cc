@@ -400,28 +400,16 @@ static bool is_profile(const char* p1, const char* p2) {
  *
  ****************************************************************************/
 
-#ifdef OS_ANDROID
-const std::vector<std::string> get_allowed_bt_package_name(void);
-void handle_migration(const std::string& dst,
-                      const std::vector<std::string>& allowed_bt_package_name);
-#endif
-
 static int init(bt_callbacks_t* callbacks, bool start_restricted,
                 bool is_common_criteria_mode, int config_compare_result,
                 const char** init_flags, bool is_atv,
                 const char* user_data_directory) {
+  (void)user_data_directory;
   LOG_INFO(
       "%s: start restricted = %d ; common criteria mode = %d, config compare "
       "result = %d",
       __func__, start_restricted, is_common_criteria_mode,
       config_compare_result);
-
-#ifdef OS_ANDROID
-  if (user_data_directory != nullptr) {
-    handle_migration(std::string(user_data_directory),
-                     get_allowed_bt_package_name());
-  }
-#endif
 
   bluetooth::common::InitFlags::Load(init_flags);
 
@@ -659,8 +647,11 @@ static int cancel_bond(const RawAddress* bd_addr) {
 }
 
 static int remove_bond(const RawAddress* bd_addr) {
-  if (is_restricted_mode() && !btif_storage_is_restricted_device(bd_addr))
+  if (is_restricted_mode() && !btif_storage_is_restricted_device(bd_addr)) {
+    LOG_INFO("%s cannot be removed in restricted mode",
+             ADDRESS_TO_LOGGABLE_CSTR(*bd_addr));
     return BT_STATUS_SUCCESS;
+  }
 
   if (!interface_ready()) return BT_STATUS_NOT_READY;
 
@@ -671,7 +662,9 @@ static int remove_bond(const RawAddress* bd_addr) {
 static int get_connection_state(const RawAddress* bd_addr) {
   if (!interface_ready()) return 0;
 
-  return btif_dm_get_connection_state(bd_addr);
+  if (bd_addr == nullptr) return 0;
+
+  return btif_dm_get_connection_state(*bd_addr);
 }
 
 static int pin_reply(const RawAddress* bd_addr, uint8_t accept, uint8_t pin_len,
