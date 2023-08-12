@@ -19,13 +19,6 @@ cc_defaults {
         // struct BT_HDR is defined as a variable-size header in a struct.
         "-Wno-gnu-variable-sized-type-not-at-end",
     ],
-    product_variables: {
-        debuggable: {
-            cflags: [
-                "-DBLUEDROID_DEBUG",
-            ],
-        },
-    },
 }
 
 cc_defaults {
@@ -36,11 +29,6 @@ cc_defaults {
             sanitize: {
                 misc_undefined: ["bounds"],
             },
-        },
-        host: {
-            static_libs: [
-                "libcutils",
-            ],
         },
     },
     defaults: ["fluoride_types_defaults_fuzzable"],
