@@ -197,6 +197,7 @@ struct HciLayer::impl {
 
     if (waiting_command_ == OpCode::CONTROLLER_DEBUG_INFO && op_code != OpCode::CONTROLLER_DEBUG_INFO) {
       LOG_ERROR("Discarding event that came after timeout 0x%02hx (%s)", op_code, OpCodeText(op_code).c_str());
+      common::StopWatch::DumpStopWatchLog();
       return;
     }
 #ifdef TARGET_FLOSS
