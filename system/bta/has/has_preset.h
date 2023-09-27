@@ -17,8 +17,6 @@
 
 #pragma once
 
-#include <base/logging.h>
-
 #include <optional>
 #include <string>
 

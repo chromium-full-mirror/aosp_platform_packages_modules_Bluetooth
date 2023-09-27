@@ -11,7 +11,6 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=flatbuffers");
     println!("cargo:rustc-link-lib=dylib=protobuf");
     println!("cargo:rustc-link-lib=dylib=resolv");
-    println!("cargo:rustc-link-lib=dylib=lc3");
 
     println!("cargo:rerun-if-changed=build.rs");
 }

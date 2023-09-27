@@ -21,7 +21,6 @@
 
 #include "client_parser.h"
 
-#include <base/logging.h>
 #include <base/strings/string_number_conversions.h>
 #include <endian.h>
 #include <hardware/bt_common_types.h>
