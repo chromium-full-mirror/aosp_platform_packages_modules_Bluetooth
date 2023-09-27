@@ -24,7 +24,6 @@ mod ffi {
         fn dynamic_avrcp_version_enhancement_is_enabled() -> bool;
         fn gatt_robust_caching_client_is_enabled() -> bool;
         fn gatt_robust_caching_server_is_enabled() -> bool;
-        fn gd_l2cap_is_enabled() -> bool;
         fn get_default_log_level() -> i32;
         fn get_hci_adapter() -> i32;
         fn get_log_level_for_tag(tag: &str) -> i32;
@@ -52,6 +51,7 @@ mod ffi {
         fn sdp_return_classic_services_when_le_discovery_fails_is_enabled() -> bool;
         fn use_rsi_from_cached_inqiry_results_is_enabled() -> bool;
         fn get_att_mtu_default() -> i32;
+        fn encryption_in_busy_state_is_enabled() -> bool;
     }
 }
 

@@ -259,6 +259,11 @@ public class A2dpService extends ProfileService {
                 // Do not rethrow as we are shutting down anyway
             }
         }
+        if (mHandler != null) {
+            mHandler.removeCallbacksAndMessages(null);
+            mHandler = null;
+        }
+
         // Step 2: Reset maximum number of connected audio devices
         mMaxConnectedAudioDevices = 1;
 
@@ -713,15 +718,7 @@ public class A2dpService extends ProfileService {
                 .getProfileConnectionPolicy(device, BluetoothProfile.A2DP);
     }
 
-    public boolean isAvrcpAbsoluteVolumeSupported() {
-        // TODO (apanicke): Add a hook here for the AvrcpTargetService.
-        return false;
-    }
-
-
     public void setAvrcpAbsoluteVolume(int volume) {
-        // TODO (apanicke): Instead of using A2DP as a middleman for volume changes, add a binder
-        // service to the new AVRCP Profile and have the audio manager use that instead.
         if (mFactory.getAvrcpTargetService() != null) {
             mFactory.getAvrcpTargetService().sendVolumeChanged(volume);
             return;
@@ -1377,6 +1374,16 @@ public class A2dpService extends ProfileService {
     }
 
     /**
+     * Retrieves the most recently connected device in the A2DP connected devices list.
+     */
+    public BluetoothDevice getFallbackDevice() {
+        DatabaseManager dbManager = mAdapterService.getDatabase();
+        return dbManager != null ? dbManager
+            .getMostRecentlyConnectedDevicesInList(getConnectedDevices())
+            : null;
+    }
+
+    /**
      * Binder object: must be a static class or memory leak may occur.
      */
     @VisibleForTesting
@@ -1543,12 +1550,6 @@ public class A2dpService extends ProfileService {
             } catch (RuntimeException e) {
                 receiver.propagateException(e);
             }
-        }
-
-        @Override
-        public void isAvrcpAbsoluteVolumeSupported(SynchronousResultReceiver receiver) {
-            // TODO (apanicke): Add a hook here for the AvrcpTargetService.
-            receiver.send(false);
         }
 
         @Override

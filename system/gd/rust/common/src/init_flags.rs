@@ -372,7 +372,6 @@ init_flags!(
         dynamic_avrcp_version_enhancement = true,
         gatt_robust_caching_client = true,
         gatt_robust_caching_server,
-        gd_l2cap,
         hci_adapter: i32,
         hfp_dynamic_version = true,
         irk_rotation,
@@ -396,6 +395,7 @@ init_flags!(
         sdp_return_classic_services_when_le_discovery_fails = true,
         use_rsi_from_cached_inqiry_results = false,
         att_mtu_default: i32 = 517,
+        encryption_in_busy_state = true,
     }
     // dynamic flags can be updated at runtime and should be accessed directly
     // to check.
