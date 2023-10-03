@@ -17,6 +17,7 @@
 package com.android.bluetooth.gatt;
 
 import static android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE;
+
 import static com.android.bluetooth.Utils.callerIsSystemOrActiveOrManagedUser;
 import static com.android.bluetooth.Utils.checkCallerTargetSdk;
 import static com.android.bluetooth.Utils.enforceBluetoothPrivilegedPermission;
@@ -354,19 +355,15 @@ public class GattService extends ProfileService {
                         AdvertiseManagerNativeInterface.getInstance(),
                         mAdapterService,
                         mAdvertiserMap);
-        mAdvertiseManager.start();
 
         mScanManager = GattObjectsFactory.getInstance()
                 .createScanManager(this, mAdapterService, mBluetoothAdapterProxy);
-        mScanManager.start();
 
         mPeriodicScanManager = GattObjectsFactory.getInstance()
                 .createPeriodicScanManager(mAdapterService);
-        mPeriodicScanManager.start();
 
         mDistanceMeasurementManager = GattObjectsFactory.getInstance()
                 .createDistanceMeasurementManager(mAdapterService);
-        mDistanceMeasurementManager.start();
 
         mActivityManager = getSystemService(ActivityManager.class);
 
@@ -4561,6 +4558,28 @@ public class GattService extends ProfileService {
         if (DBG) {
             Log.d(TAG, "serverConnect() - address=" + address);
         }
+
+        int importance = mActivityManager.getUidImportance(attributionSource.getUid());
+        if (importance == IMPORTANCE_FOREGROUND_SERVICE) {
+            MetricsLogger.getInstance()
+                    .count(
+                            isDirect
+                                    ? BluetoothProtoEnums
+                                            .GATT_SERVER_CONNECT_IS_DIRECT_IN_FOREGROUND
+                                    : BluetoothProtoEnums
+                                            .GATT_SERVER_CONNECT_IS_AUTOCONNECT_IN_FOREGROUND,
+                            1);
+        } else {
+            MetricsLogger.getInstance()
+                    .count(
+                            isDirect
+                                    ? BluetoothProtoEnums
+                                            .GATT_SERVER_CONNECT_IS_DIRECT_NOT_IN_FOREGROUND
+                                    : BluetoothProtoEnums
+                                            .GATT_SERVER_CONNECT_IS_AUTOCONNECT_NOT_IN_FOREGROUND,
+                            1);
+        }
+
         mNativeInterface.gattServerConnect(serverIf, address, isDirect, transport);
     }
 
