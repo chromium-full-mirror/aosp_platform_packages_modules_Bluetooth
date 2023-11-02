@@ -25,7 +25,7 @@ use crate::bluetooth_adv::{
 };
 use crate::callbacks::Callbacks;
 use crate::uuid::UuidHelper;
-use crate::{Message, RPCProxy, SuspendMode};
+use crate::{APIMessage, BluetoothAPI, Message, RPCProxy, SuspendMode};
 use log::{debug, warn};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::cast::{FromPrimitive, ToPrimitive};
@@ -36,6 +36,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::mpsc::Sender;
+use tokio::time;
 
 struct Client {
     id: Option<i32>,
@@ -387,7 +388,7 @@ pub trait IBluetoothGatt {
     fn start_scan(
         &mut self,
         scanner_id: u8,
-        settings: ScanSettings,
+        settings: Option<ScanSettings>,
         filter: Option<ScanFilter>,
     ) -> BtStatus;
 
@@ -1416,7 +1417,12 @@ impl BluetoothGatt {
         }
     }
 
-    pub fn init_profiles(&mut self, tx: Sender<Message>, adapter: Arc<Mutex<Box<Bluetooth>>>) {
+    pub fn init_profiles(
+        &mut self,
+        tx: Sender<Message>,
+        api_tx: Sender<APIMessage>,
+        adapter: Arc<Mutex<Box<Bluetooth>>>,
+    ) {
         self.gatt = Gatt::new(&self.intf.lock().unwrap()).map(|gatt| Arc::new(Mutex::new(gatt)));
         self.adapter = Some(adapter);
 
@@ -1491,8 +1497,14 @@ impl BluetoothGatt {
 
         let gatt = self.gatt.clone();
         let gatt_async = self.gatt_async.clone();
+        let api_tx_clone = api_tx.clone();
         tokio::spawn(async move {
             gatt_async.lock().await.gatt = gatt;
+            // TODO(b/247093293): Gatt topshim api is only usable some
+            // time after init. Investigate why this delay is needed
+            // and make it a blocking part before removing this.
+            time::sleep(time::Duration::from_millis(500)).await;
+            let _ = api_tx_clone.send(APIMessage::IsReady(BluetoothAPI::Gatt)).await;
         });
     }
 
@@ -1792,7 +1804,7 @@ impl BluetoothGatt {
             scan_type: ScanType::Active,
         };
 
-        self.start_scan(scanner_id, settings, /*filter=*/ None)
+        self.start_scan(scanner_id, Some(settings), /*filter=*/ None)
     }
 
     pub(crate) fn stop_active_scan(&mut self, scanner_id: u8) -> BtStatus {
@@ -1922,7 +1934,7 @@ impl IBluetoothGatt for BluetoothGatt {
     fn start_scan(
         &mut self,
         scanner_id: u8,
-        _settings: ScanSettings,
+        settings: Option<ScanSettings>,
         filter: Option<ScanFilter>,
     ) -> BtStatus {
         let scan_suspend_mode = self.get_scan_suspend_mode();
@@ -1930,15 +1942,12 @@ impl IBluetoothGatt for BluetoothGatt {
             return BtStatus::Busy;
         }
 
-        // We're supposed to directly use the settings provided by the input parameter, but
-        // currently UI is sending temporary variables instead. Therefore, load some preset values
-        // known to work.
-        // TODO(b/217274013): Fix UI plumbing and directly use the provided settings.
-        let settings = ScanSettings {
+        // If the client is not specifying scan settings, the default one will be used.
+        let settings = settings.unwrap_or_else(|| ScanSettings {
             interval: sysprop::get_i32(sysprop::PropertyI32::LeInquiryScanInterval),
             window: sysprop::get_i32(sysprop::PropertyI32::LeInquiryScanWindow),
             scan_type: ScanType::Active,
-        };
+        });
 
         // Multiplexing scanners happens at this layer. The implementations of start_scan
         // and stop_scan maintains the state of all registered scanners and based on the states

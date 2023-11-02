@@ -38,17 +38,12 @@
 #include "osi/include/log.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_types.h"
-#include "stack/include/btu.h"  // do_in_main_thread
+#include "stack/include/main_thread.h"
 
 void BTIF_dm_on_hw_error();
 
 /* system manager control block definition */
 tBTA_SYS_CB bta_sys_cb;
-
-/* trace level */
-/* TODO Hard-coded trace levels -  Needs to be configurable */
-uint8_t appl_trace_level = APPL_INITIAL_TRACE_LEVEL;
-uint8_t btif_trace_level = BT_TRACE_LEVEL_WARNING;
 
 /*******************************************************************************
  *
@@ -87,7 +82,7 @@ void BTA_sys_signal_hw_error() {
 static void bta_sys_event(BT_HDR_RIGID* p_msg) {
   bool freebuf = true;
 
-  APPL_TRACE_EVENT("%s: Event 0x%x", __func__, p_msg->event);
+  LOG_VERBOSE("%s: Event 0x%x", __func__, p_msg->event);
 
   /* get subsystem id from event */
   uint8_t id = (uint8_t)(p_msg->event >> 8);

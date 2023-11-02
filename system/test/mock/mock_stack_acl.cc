@@ -20,23 +20,19 @@
  *
  *  mockcify.pl ver 0.2.1
  */
+// Mock include file to share data between tests and mock
+#include "test/mock/mock_stack_acl.h"
 
 #include <cstdint>
-#include <functional>
-#include <map>
 #include <string>
 
-// Mock include file to share data between tests and mock
+#include "stack/include/acl_client_callbacks.h"
 #include "stack/include/bt_hdr.h"
-#include "test/mock/mock_stack_acl.h"
+#include "test/common/mock_functions.h"
 #include "types/class_of_device.h"
 #include "types/raw_address.h"
 
 // Mocked compile conditionals, if any
-#ifndef UNUSED_ATTR
-#define UNUSED_ATTR
-#endif
-
 // Mocked internal structures, if any
 
 namespace test {
@@ -53,6 +49,7 @@ struct BTM_IsAclConnectionUpFromHandle BTM_IsAclConnectionUpFromHandle;
 struct BTM_IsBleConnection BTM_IsBleConnection;
 struct BTM_IsPhy2mSupported BTM_IsPhy2mSupported;
 struct BTM_ReadRemoteConnectionAddr BTM_ReadRemoteConnectionAddr;
+struct BTM_IsRemoteVersionReceived BTM_IsRemoteVersionReceived;
 struct BTM_ReadRemoteVersion BTM_ReadRemoteVersion;
 struct BTM_is_sniff_allowed_for BTM_is_sniff_allowed_for;
 struct acl_create_le_connection acl_create_le_connection;
@@ -95,7 +92,6 @@ struct BTM_GetMaxPacketSize BTM_GetMaxPacketSize;
 struct BTM_GetNumAclLinks BTM_GetNumAclLinks;
 struct acl_get_supported_packet_types acl_get_supported_packet_types;
 struct BTM_GetPeerSCA BTM_GetPeerSCA;
-struct BTM_SetTraceLevel BTM_SetTraceLevel;
 struct acl_link_role_from_handle acl_link_role_from_handle;
 struct btm_handle_to_acl_index btm_handle_to_acl_index;
 struct BTM_ReadRemoteFeatures BTM_ReadRemoteFeatures;
@@ -156,7 +152,6 @@ struct btm_read_remote_ext_features_complete
 struct btm_read_remote_ext_features_complete_raw
     btm_read_remote_ext_features_complete_raw;
 struct btm_read_remote_ext_features_failed btm_read_remote_ext_features_failed;
-struct btm_read_remote_features_complete btm_read_remote_features_complete;
 struct btm_read_remote_version_complete btm_read_remote_version_complete;
 struct btm_read_rssi_complete btm_read_rssi_complete;
 struct btm_read_rssi_timeout btm_read_rssi_timeout;
@@ -216,6 +211,10 @@ bool BTM_ReadRemoteConnectionAddr(const RawAddress& pseudo_addr,
   inc_func_call_count(__func__);
   return test::mock::stack_acl::BTM_ReadRemoteConnectionAddr(
       pseudo_addr, conn_addr, p_addr_type, ota_address);
+}
+bool BTM_IsRemoteVersionReceived(const RawAddress& addr) {
+  inc_func_call_count(__func__);
+  return test::mock::stack_acl::BTM_IsRemoteVersionReceived(addr);
 }
 bool BTM_ReadRemoteVersion(const RawAddress& addr, uint8_t* lmp_version,
                            uint16_t* manufacturer, uint16_t* lmp_sub_version) {
@@ -392,10 +391,6 @@ uint16_t acl_get_supported_packet_types() {
 uint8_t BTM_GetPeerSCA(const RawAddress& remote_bda, tBT_TRANSPORT transport) {
   inc_func_call_count(__func__);
   return test::mock::stack_acl::BTM_GetPeerSCA(remote_bda, transport);
-}
-uint8_t BTM_SetTraceLevel(uint8_t new_level) {
-  inc_func_call_count(__func__);
-  return test::mock::stack_acl::BTM_SetTraceLevel(new_level);
 }
 uint8_t acl_link_role_from_handle(uint16_t handle) {
   inc_func_call_count(__func__);
@@ -607,7 +602,7 @@ void btm_read_failed_contact_counter_complete(uint8_t* p) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_failed_contact_counter_complete(p);
 }
-void btm_read_failed_contact_counter_timeout(UNUSED_ATTR void* data) {
+void btm_read_failed_contact_counter_timeout(void* data) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_failed_contact_counter_timeout(data);
 }
@@ -615,7 +610,7 @@ void btm_read_link_quality_complete(uint8_t* p, uint16_t evt_len) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_link_quality_complete(p, evt_len);
 }
-void btm_read_link_quality_timeout(UNUSED_ATTR void* data) {
+void btm_read_link_quality_timeout(void* data) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_link_quality_timeout(data);
 }
@@ -638,10 +633,6 @@ void btm_read_remote_ext_features_failed(uint8_t status, uint16_t handle) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_remote_ext_features_failed(status, handle);
 }
-void btm_read_remote_features_complete(uint16_t handle, uint8_t* features) {
-  inc_func_call_count(__func__);
-  test::mock::stack_acl::btm_read_remote_features_complete(handle, features);
-}
 void btm_read_remote_version_complete(tHCI_STATUS status, uint16_t handle,
                                       uint8_t lmp_version,
                                       uint16_t manufacturer,
@@ -654,7 +645,7 @@ void btm_read_rssi_complete(uint8_t* p, uint16_t evt_len) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_rssi_complete(p, evt_len);
 }
-void btm_read_rssi_timeout(UNUSED_ATTR void* data) {
+void btm_read_rssi_timeout(void* data) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_rssi_timeout(data);
 }
@@ -662,7 +653,7 @@ void btm_read_tx_power_complete(uint8_t* p, uint16_t evt_len, bool is_ble) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_tx_power_complete(p, evt_len, is_ble);
 }
-void btm_read_tx_power_timeout(UNUSED_ATTR void* data) {
+void btm_read_tx_power_timeout(void* data) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_read_tx_power_timeout(data);
 }

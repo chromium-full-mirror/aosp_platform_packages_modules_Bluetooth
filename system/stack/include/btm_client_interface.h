@@ -26,9 +26,7 @@
 #include "stack/include/btm_api_types.h"
 #include "stack/include/btm_ble_api_types.h"
 #include "stack/include/btm_status.h"
-#include "stack/include/hci_error_code.h"
 #include "stack/include/security_client_callbacks.h"
-#include "types/bluetooth/uuid.h"
 #include "types/bt_transport.h"
 #include "types/raw_address.h"
 
@@ -49,13 +47,6 @@ struct btm_client_interface_t {
     void (*btm_ble_free)();
     void (*BTM_reset_complete)();
   } lifecycle;
-
-  struct {
-    // Server channel number
-    uint8_t (*BTM_AllocateSCN)(void);
-    bool (*BTM_TryAllocateSCN)(uint8_t scn);
-    bool (*BTM_FreeSCN)(uint8_t scn);
-  } scn;
 
   // Acl peer and lifecycle
   struct {

@@ -21,19 +21,12 @@
  *  mockcify.pl ver 0.2
  */
 
-#include <map>
+#include <cstdint>
 #include <string>
-
-#include "test/common/mock_functions.h"
+#include <vector>
 
 // Original included files, if any
-// NOTE: Since this is a mock file with mock definitions some number of
-//       include files may not be required.  The include-what-you-use
-//       still applies, but crafting proper inclusion is out of scope
-//       for this effort.  This compilation unit may compile as-is, or
-//       may need attention to prune the inclusion set.
 
-#include "btif/include/btif_config.h"
 #include "types/raw_address.h"
 
 // Mocked compile conditionals, if any
@@ -221,6 +214,17 @@ struct btif_config_remove {
   };
 };
 extern struct btif_config_remove btif_config_remove;
+// Name: btif_config_remove_device
+// Params: const std::string& section
+// Returns: void
+struct btif_config_remove_device {
+  std::function<void(const std::string& section)> body{
+      [](const std::string& section) { return; }};
+  void operator()(const std::string& section) {
+    return;
+  };
+};
+extern struct btif_config_remove_device btif_config_remove_device;
 // Name: btif_config_clear
 // Params: void
 // Returns: bool

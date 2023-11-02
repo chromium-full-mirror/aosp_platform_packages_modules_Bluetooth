@@ -31,16 +31,17 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <sstream>
 
 #include "bt_target.h"  // Must be first to define build configuration
 #include "bta/gatt/bta_gattc_int.h"
 #include "bta/gatt/database.h"
+#include "common/init_flags.h"
 #include "device/include/interop.h"
+#include "os/log.h"
 #include "osi/include/allocator.h"
-#include "osi/include/log.h"
 #include "osi/include/osi.h"  // UNUSED_ATTR
 #include "stack/btm/btm_sec.h"
+#include "stack/include/bt_uuid16.h"
 #include "stack/include/gatt_api.h"
 #include "stack/include/sdp_api.h"
 #include "types/bluetooth/uuid.h"
@@ -162,6 +163,12 @@ RobustCachingSupport GetRobustCachingSupport(const tBTA_GATTC_CLCB* p_clcb,
     // speculatively check for the hash every time.
     LOG_DEBUG("database hash characteristic not found, so UNSUPPORTED");
     return RobustCachingSupport::UNSUPPORTED;
+  }
+
+  if (p_clcb->transport == BT_TRANSPORT_LE &&
+      !BTM_IsRemoteVersionReceived(p_clcb->bda)) {
+    LOG_INFO("version info is not ready yet");
+    return RobustCachingSupport::W4_REMOTE_VERSION;
   }
 
   // This is workaround for the embedded devices being already on the market
@@ -343,8 +350,6 @@ void bta_gattc_start_disc_char_dscp(uint16_t conn_id,
 
 descriptor_discovery_done:
   /* all characteristic has been explored, start with next service if any */
-  DVLOG(3) << "all characteristics explored";
-
   bta_gattc_explore_next_service(conn_id, p_srvc_cb);
   return;
 }

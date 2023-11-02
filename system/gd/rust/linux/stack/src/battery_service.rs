@@ -7,10 +7,10 @@ use crate::bluetooth_gatt::{
     BluetoothGatt, BluetoothGattService, IBluetoothGatt, IBluetoothGattCallback,
 };
 use crate::callbacks::Callbacks;
-use crate::uuid;
 use crate::uuid::UuidHelper;
 use crate::Message;
 use crate::RPCProxy;
+use crate::{uuid, APIMessage, BluetoothAPI};
 use bt_topshim::btif::BtTransport;
 use bt_topshim::profiles::gatt::{GattStatus, LePhy};
 use log::debug;
@@ -31,6 +31,8 @@ pub struct BatteryService {
     battery_provider_id: u32,
     /// Sender for callback communication with the main thread.
     tx: Sender<Message>,
+    /// Sender for callback communication with the api message thread.
+    api_tx: Sender<APIMessage>,
     callbacks: Callbacks<dyn IBatteryServiceCallback + Send>,
     /// The GATT client ID needed for GATT calls.
     client_id: Option<i32>,
@@ -98,6 +100,7 @@ impl BatteryService {
         gatt: Arc<Mutex<Box<BluetoothGatt>>>,
         battery_provider_manager: Arc<Mutex<Box<BatteryProviderManager>>>,
         tx: Sender<Message>,
+        api_tx: Sender<APIMessage>,
     ) -> BatteryService {
         let tx = tx.clone();
         let callbacks = Callbacks::new(tx.clone(), Message::BatteryServiceCallbackDisconnected);
@@ -113,6 +116,7 @@ impl BatteryService {
             battery_provider_manager,
             battery_provider_id,
             tx,
+            api_tx,
             callbacks,
             client_id,
             battery_sets,
@@ -126,7 +130,7 @@ impl BatteryService {
         self.gatt.lock().unwrap().register_client(
             // TODO(b/233101174): make dynamic or decide on a static UUID
             String::from("e4d2acffcfaa42198f494606b7412117"),
-            Box::new(GattCallback::new(self.tx.clone())),
+            Box::new(GattCallback::new(self.tx.clone(), self.api_tx.clone())),
             false,
         );
     }
@@ -369,11 +373,12 @@ impl RPCProxy for BatteryProviderCallback {
 
 struct GattCallback {
     tx: Sender<Message>,
+    api_tx: Sender<APIMessage>,
 }
 
 impl GattCallback {
-    fn new(tx: Sender<Message>) -> Self {
-        Self { tx }
+    fn new(tx: Sender<Message>, api_tx: Sender<APIMessage>) -> Self {
+        Self { tx, api_tx }
     }
 }
 
@@ -384,12 +389,14 @@ impl IBluetoothGattCallback for GattCallback {
 
     fn on_client_registered(&mut self, status: GattStatus, client_id: i32) {
         let tx = self.tx.clone();
+        let api_tx = self.api_tx.clone();
         tokio::spawn(async move {
             let _ = tx
                 .send(Message::BatteryService(BatteryServiceActions::OnClientRegistered(
                     status, client_id,
                 )))
                 .await;
+            let _ = api_tx.send(APIMessage::IsReady(BluetoothAPI::Battery)).await;
         });
     }
 

@@ -18,7 +18,6 @@
 #include <fuzzer/FuzzedDataProvider.h>
 
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <vector>
 
@@ -26,6 +25,7 @@
 #include "gd/hal/snoop_logger.h"
 #include "osi/include/allocator.h"
 #include "stack/btm/btm_int_types.h"
+#include "stack/include/bt_psm_types.h"
 #include "stack/include/l2c_api.h"
 #include "stack/include/l2cap_acl_interface.h"
 #include "stack/include/l2cap_controller_interface.h"
@@ -46,7 +46,6 @@ static void ConsumeData(const uint8_t* data, size_t size) {
 }
 
 tBTM_CB btm_cb;
-uint8_t appl_trace_level;
 
 bt_status_t do_in_main_thread(base::Location const&,
                               base::OnceCallback<void()>) {

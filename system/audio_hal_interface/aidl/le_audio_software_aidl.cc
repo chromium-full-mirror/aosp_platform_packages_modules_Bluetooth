@@ -69,6 +69,12 @@ LeAudioTransport::LeAudioTransport(void (*flush)(void),
       start_request_state_(StartRequestState::IDLE){};
 
 BluetoothAudioCtrlAck LeAudioTransport::StartRequest(bool is_low_latency) {
+  // Check if operation is pending already
+  if (GetStartRequestState() == StartRequestState::PENDING_AFTER_RESUME) {
+    LOG_INFO("Start request is already pending. Ignore the request");
+    return BluetoothAudioCtrlAck::PENDING;
+  }
+
   SetStartRequestState(StartRequestState::PENDING_BEFORE_RESUME);
   if (stream_cb_.on_resume_(true)) {
     auto expected = StartRequestState::CONFIRMED;
@@ -138,7 +144,7 @@ bool LeAudioTransport::GetPresentationPosition(uint64_t* remote_delay_report_ns,
 }
 
 void LeAudioTransport::SourceMetadataChanged(
-    const source_metadata_t& source_metadata) {
+    const source_metadata_v7_t& source_metadata) {
   auto track_count = source_metadata.track_count;
 
   if (track_count == 0) {
@@ -150,7 +156,7 @@ void LeAudioTransport::SourceMetadataChanged(
 }
 
 void LeAudioTransport::SinkMetadataChanged(
-    const sink_metadata_t& sink_metadata) {
+    const sink_metadata_v7_t& sink_metadata) {
   auto track_count = sink_metadata.track_count;
 
   if (track_count == 0) {
@@ -286,12 +292,12 @@ bool LeAudioSinkTransport::GetPresentationPosition(
 }
 
 void LeAudioSinkTransport::SourceMetadataChanged(
-    const source_metadata_t& source_metadata) {
+    const source_metadata_v7_t& source_metadata) {
   transport_->SourceMetadataChanged(source_metadata);
 }
 
 void LeAudioSinkTransport::SinkMetadataChanged(
-    const sink_metadata_t& sink_metadata) {
+    const sink_metadata_v7_t& sink_metadata) {
   transport_->SinkMetadataChanged(sink_metadata);
 }
 
@@ -376,12 +382,12 @@ bool LeAudioSourceTransport::GetPresentationPosition(
 }
 
 void LeAudioSourceTransport::SourceMetadataChanged(
-    const source_metadata_t& source_metadata) {
+    const source_metadata_v7_t& source_metadata) {
   transport_->SourceMetadataChanged(source_metadata);
 }
 
 void LeAudioSourceTransport::SinkMetadataChanged(
-    const sink_metadata_t& sink_metadata) {
+    const sink_metadata_v7_t& sink_metadata) {
   transport_->SinkMetadataChanged(sink_metadata);
 }
 
@@ -433,16 +439,16 @@ std::unordered_map<int32_t, uint8_t> sampling_freq_map{
     {192000, ::le_audio::codec_spec_conf::kLeAudioSamplingFreq192000Hz}};
 
 std::unordered_map<int32_t, uint8_t> frame_duration_map{
-    {7500, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameDur7500us},
-    {10000, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameDur10000us}};
+    {7500, ::le_audio::codec_spec_conf::kLeAudioCodecFrameDur7500us},
+    {10000, ::le_audio::codec_spec_conf::kLeAudioCodecFrameDur10000us}};
 
 std::unordered_map<int32_t, uint16_t> octets_per_frame_map{
-    {30, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameLen30},
-    {40, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameLen40},
-    {60, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameLen60},
-    {80, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameLen80},
-    {100, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameLen100},
-    {120, ::le_audio::codec_spec_conf::kLeAudioCodecLC3FrameLen120}};
+    {30, ::le_audio::codec_spec_conf::kLeAudioCodecFrameLen30},
+    {40, ::le_audio::codec_spec_conf::kLeAudioCodecFrameLen40},
+    {60, ::le_audio::codec_spec_conf::kLeAudioCodecFrameLen60},
+    {80, ::le_audio::codec_spec_conf::kLeAudioCodecFrameLen80},
+    {100, ::le_audio::codec_spec_conf::kLeAudioCodecFrameLen100},
+    {120, ::le_audio::codec_spec_conf::kLeAudioCodecFrameLen120}};
 
 std::unordered_map<AudioLocation, uint32_t> audio_location_map{
     {AudioLocation::UNKNOWN,

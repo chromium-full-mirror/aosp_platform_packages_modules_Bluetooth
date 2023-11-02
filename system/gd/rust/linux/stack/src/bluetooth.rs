@@ -47,7 +47,7 @@ use crate::bluetooth_media::{BluetoothMedia, IBluetoothMedia, MediaActions};
 use crate::callbacks::Callbacks;
 use crate::socket_manager::SocketActions;
 use crate::uuid::{Profile, UuidHelper, HOGP};
-use crate::{Message, RPCProxy, SuspendMode};
+use crate::{APIMessage, BluetoothAPI, Message, RPCProxy, SuspendMode};
 
 pub(crate) const FLOSS_VER: u16 = 0x0001;
 const DEFAULT_DISCOVERY_TIMEOUT_MS: u64 = 12800;
@@ -487,7 +487,7 @@ pub trait IBluetoothConnectionCallback: RPCProxy {
 pub struct Bluetooth {
     intf: Arc<Mutex<BluetoothInterface>>,
 
-    adapter_index: i32,
+    virt_index: i32,
     hci_index: i32,
     bonded_devices: HashMap<String, BluetoothDeviceContext>,
     ble_scanner_id: Option<u8>,
@@ -513,6 +513,7 @@ pub struct Bluetooth {
     sdp: Option<Sdp>,
     state: BtState,
     tx: Sender<Message>,
+    api_tx: Sender<APIMessage>,
     // Internal API members
     discoverable_timeout: Option<JoinHandle<()>>,
     cancelling_devices: HashSet<RawAddress>,
@@ -527,9 +528,10 @@ pub struct Bluetooth {
 impl Bluetooth {
     /// Constructs the IBluetooth implementation.
     pub fn new(
-        adapter_index: i32,
+        virt_index: i32,
         hci_index: i32,
         tx: Sender<Message>,
+        api_tx: Sender<APIMessage>,
         sig_notifier: Arc<SigData>,
         intf: Arc<Mutex<BluetoothInterface>>,
         bluetooth_admin: Arc<Mutex<Box<BluetoothAdmin>>>,
@@ -537,7 +539,7 @@ impl Bluetooth {
         bluetooth_media: Arc<Mutex<Box<BluetoothMedia>>>,
     ) -> Bluetooth {
         Bluetooth {
-            adapter_index,
+            virt_index,
             hci_index,
             bonded_devices: HashMap::new(),
             callbacks: Callbacks::new(tx.clone(), Message::AdapterCallbackDisconnected),
@@ -567,6 +569,7 @@ impl Bluetooth {
             sdp: None,
             state: BtState::Off,
             tx,
+            api_tx,
             // Internal API members
             discoverable_timeout: None,
             cancelling_devices: HashSet::new(),
@@ -1044,7 +1047,7 @@ impl Bluetooth {
 
     /// Creates a file to notify btmanagerd the adapter is enabled.
     fn create_pid_file(&self) -> std::io::Result<()> {
-        let file_name = format!("{}/bluetooth{}.pid", PID_DIR, self.adapter_index);
+        let file_name = format!("{}/bluetooth{}.pid", PID_DIR, self.virt_index);
         let mut f = File::create(&file_name)?;
         f.write_all(process::id().to_string().as_bytes())?;
         Ok(())
@@ -1052,7 +1055,7 @@ impl Bluetooth {
 
     /// Removes the file to notify btmanagerd the adapter is disabled.
     fn remove_pid_file(&self) -> std::io::Result<()> {
-        let file_name = format!("{}/bluetooth{}.pid", PID_DIR, self.adapter_index);
+        let file_name = format!("{}/bluetooth{}.pid", PID_DIR, self.virt_index);
         std::fs::remove_file(&file_name)?;
         Ok(())
     }
@@ -1136,7 +1139,7 @@ impl Bluetooth {
         }
         let adapter_addr = self.get_address().to_lowercase();
         match self.uhid_wakeup_source.create(
-            "suspend uhid".to_string(),
+            "VIRTUAL_SUSPEND_UHID".to_string(),
             adapter_addr,
             String::from(BD_ADDR_DEFAULT),
         ) {
@@ -1342,8 +1345,14 @@ impl BtifBluetoothCallbacks for Bluetooth {
 
                 // Inform the rest of the stack we're ready.
                 let txl = self.tx.clone();
+                let api_txl = self.api_tx.clone();
                 tokio::spawn(async move {
                     let _ = txl.send(Message::AdapterReady).await;
+                });
+                tokio::spawn(async move {
+                    let _ = api_txl.send(APIMessage::IsReady(BluetoothAPI::Adapter)).await;
+                    // TODO(b:300202052) make sure media interface is exposed after initialized
+                    let _ = api_txl.send(APIMessage::IsReady(BluetoothAPI::Media)).await;
                 });
             }
         }
@@ -2829,20 +2838,13 @@ impl BtifHHCallbacks for Bluetooth {
         );
     }
 
-    fn get_report(
-        &mut self,
-        mut address: RawAddress,
-        status: BthhStatus,
-        mut data: Vec<u8>,
-        size: i32,
-    ) {
+    fn get_report(&mut self, address: RawAddress, status: BthhStatus, _data: Vec<u8>, size: i32) {
         debug!(
             "Hid host got report: Address({}) Status({:?}) Report Size({:?})",
             DisplayAddress(&address),
             status,
             size
         );
-        self.hh.as_ref().unwrap().get_report_reply(&mut address, status, &mut data, size as u16);
     }
 
     fn handshake(&mut self, address: RawAddress, status: BthhStatus) {

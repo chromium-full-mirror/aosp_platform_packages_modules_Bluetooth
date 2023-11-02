@@ -104,6 +104,7 @@ cc_library_shared {
         "libbt-audio-hal-interface",
         "libbt-bta",
         "libbt-bta-core",
+        "libbt-btu-main-thread",
         "libbt-common",
         "libbt-hci",
         "libbt-sbc-decoder",
@@ -141,6 +142,7 @@ cc_library_shared {
         "libnativehelper",
         "libstatssocket",
         "libvndksupport",
+        "server_configurable_flags",
     ],
     sanitize: {
         scs: true,
@@ -231,8 +233,12 @@ android_app {
         "framework-statsd.stubs.module_lib",
         "framework-tethering.stubs.module_lib",
         "unsupportedappusage",
+
+        // Need to link the class at runtime
+        "framework-bluetooth",
     ],
     static_libs: [
+        "BluetoothApiShims",
         "android.hardware.radio-V1.0-java",
         "android.hardware.radio.sap-V1-java",
         "androidx.annotation_annotation",
@@ -244,6 +250,7 @@ android_app {
         "bluetooth-protos-lite",
         "bluetooth.change-ids",
         "bluetooth.mapsapi",
+        "bluetooth_flags_java_lib",
         "com.android.obex",
         "com.android.vcard",
         "guava",
@@ -252,7 +259,6 @@ android_app {
         "modules-utils-backgroundthread",
         "modules-utils-bytesmatcher",
         "modules-utils-statemachine",
-        "modules-utils-synchronous-result-receiver",
         "net-utils-services-common",
         "networkstack-client",
         "sap-api-java-static",

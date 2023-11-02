@@ -26,14 +26,17 @@
 #include <string.h>
 
 #include "btm_ble_int.h"
+#include "btm_dev.h"
+#include "btm_sec_cb.h"
 #include "device/include/controller.h"
 #include "gap_api.h"
 #include "main/shim/shim.h"
 #include "osi/include/osi.h"  // UNUSED_ATTR
-#include "stack/btm/btm_dev.h"
 #include "stack/crypto_toolbox/crypto_toolbox.h"
 #include "stack/include/acl_api.h"
 #include "stack/include/bt_octets.h"
+#include "stack/include/btm_ble_sec_api.h"
+#include "stack/include/btm_sec_api.h"
 #include "types/ble_address_with_type.h"
 #include "types/raw_address.h"
 
@@ -52,7 +55,11 @@ static RawAddress generate_rpa_from_irk_and_rand(const Octet16& irk,
   address.address[0] = random[2];
 
   /* encrypt with IRK */
-  Octet16 p = crypto_toolbox::aes_128(irk, random, 3);
+  Octet16 r{};
+  r[0] = random[0];
+  r[1] = random[1];
+  r[2] = random[2];
+  Octet16 p = crypto_toolbox::aes_128(irk, r);
 
   /* set hash to be LSB of rpAddress */
   address.address[5] = p[0];
@@ -117,19 +124,19 @@ bool btm_ble_init_pseudo_addr(tBTM_SEC_DEV_REC* p_dev_rec,
  * Resolving Key |irk| */
 static bool rpa_matches_irk(const RawAddress& rpa, const Octet16& irk) {
   /* use the 3 MSB of bd address as prand */
-  uint8_t rand[3];
+  Octet16 rand{};
   rand[0] = rpa.address[2];
   rand[1] = rpa.address[1];
   rand[2] = rpa.address[0];
 
   /* generate X = E irk(R0, R1, R2) and R is random address 3 LSO */
-  Octet16 x = crypto_toolbox::aes_128(irk, &rand[0], 3);
+  Octet16 x = crypto_toolbox::aes_128(irk, rand);
 
   rand[0] = rpa.address[5];
   rand[1] = rpa.address[4];
   rand[2] = rpa.address[3];
 
-  if (memcmp(x.data(), &rand[0], 3) == 0) {
+  if (memcmp(x.data(), rand.data(), 3) == 0) {
     // match
     return true;
   }
@@ -180,9 +187,9 @@ static bool btm_ble_match_random_bda(void* data, void* context) {
  * matched to.
  */
 tBTM_SEC_DEV_REC* btm_ble_resolve_random_addr(const RawAddress& random_bda) {
-  if (btm_cb.sec_dev_rec == nullptr) return nullptr;
-  list_node_t* n = list_foreach(btm_cb.sec_dev_rec, btm_ble_match_random_bda,
-                                (void*)&random_bda);
+  if (btm_sec_cb.sec_dev_rec == nullptr) return nullptr;
+  list_node_t* n = list_foreach(btm_sec_cb.sec_dev_rec,
+                                btm_ble_match_random_bda, (void*)&random_bda);
   return (n == nullptr) ? (nullptr)
                         : (static_cast<tBTM_SEC_DEV_REC*>(list_node(n)));
 }
@@ -193,20 +200,19 @@ tBTM_SEC_DEV_REC* btm_ble_resolve_random_addr(const RawAddress& random_bda) {
 /** Find the security record whose LE identity address is matching */
 static tBTM_SEC_DEV_REC* btm_find_dev_by_identity_addr(
     const RawAddress& bd_addr, uint8_t addr_type) {
-  if (btm_cb.sec_dev_rec == nullptr) return nullptr;
+  if (btm_sec_cb.sec_dev_rec == nullptr) return nullptr;
 
-  list_node_t* end = list_end(btm_cb.sec_dev_rec);
-  for (list_node_t* node = list_begin(btm_cb.sec_dev_rec); node != end;
+  list_node_t* end = list_end(btm_sec_cb.sec_dev_rec);
+  for (list_node_t* node = list_begin(btm_sec_cb.sec_dev_rec); node != end;
        node = list_next(node)) {
     tBTM_SEC_DEV_REC* p_dev_rec =
         static_cast<tBTM_SEC_DEV_REC*>(list_node(node));
     if (p_dev_rec->ble.identity_address_with_type.bda == bd_addr) {
       if ((p_dev_rec->ble.identity_address_with_type.type &
            (~BLE_ADDR_TYPE_ID_BIT)) != (addr_type & (~BLE_ADDR_TYPE_ID_BIT)))
-        BTM_TRACE_WARNING(
-            "%s find pseudo->random match with diff addr type: %d vs %d",
-            __func__, p_dev_rec->ble.identity_address_with_type.type,
-            addr_type);
+        LOG_WARN("%s find pseudo->random match with diff addr type: %d vs %d",
+                 __func__, p_dev_rec->ble.identity_address_with_type.type,
+                 addr_type);
 
       /* found the match */
       return p_dev_rec;

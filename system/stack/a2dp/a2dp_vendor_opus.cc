@@ -565,6 +565,10 @@ bool A2DP_VendorBuildCodecHeaderOpus(UNUSED_ATTR const uint8_t* p_codec_info,
                                      uint16_t frames_per_packet) {
   uint8_t* p;
 
+  if (p_buf->offset < 4 + A2DP_OPUS_MPL_HDR_LEN) {
+    return false;
+  }
+
   p_buf->offset -= A2DP_OPUS_MPL_HDR_LEN;
   p = (uint8_t*)(p_buf + 1) + p_buf->offset;
   p_buf->len += A2DP_OPUS_MPL_HDR_LEN;
@@ -660,14 +664,6 @@ bool A2DP_VendorInitCodecConfigOpus(AvdtpSepConfig* p_cfg) {
                          p_cfg->codec_info) != A2DP_SUCCESS) {
     return false;
   }
-
-#if (BTA_AV_CO_CP_SCMS_T == TRUE)
-  /* Content protection info - support SCMS-T */
-  uint8_t* p = p_cfg->protect_info;
-  *p++ = AVDT_CP_LOSC;
-  UINT16_TO_STREAM(p, AVDT_CP_SCMS_T_ID);
-  p_cfg->num_protect = 1;
-#endif
 
   return true;
 }

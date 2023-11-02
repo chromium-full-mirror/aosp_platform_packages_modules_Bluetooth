@@ -85,11 +85,6 @@
 #define BTA_AV_RET_TOUT 15
 #endif
 
-/* TRUE to use SCMS-T content protection */
-#ifndef BTA_AV_CO_CP_SCMS_T
-#define BTA_AV_CO_CP_SCMS_T FALSE
-#endif
-
 #ifndef BTA_DM_SDP_DB_SIZE
 #define BTA_DM_SDP_DB_SIZE 20000
 #endif
@@ -497,14 +492,6 @@
 
 #ifndef LOCAL_BLE_CONTROLLER_ID
 #define LOCAL_BLE_CONTROLLER_ID 1
-#endif
-
-/*
- * Toggles support for vendor specific extensions such as RPA offloading,
- * feature discovery, multi-adv etc.
- */
-#ifndef BLE_VND_INCLUDED
-#define BLE_VND_INCLUDED TRUE
 #endif
 
 /* The maximum number of simultaneous applications that can register with LE

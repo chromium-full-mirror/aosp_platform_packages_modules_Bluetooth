@@ -37,16 +37,17 @@
 
 #include "btif/include/btif_config.h"
 #include "btif/include/stack_manager.h"
-#include "common/init_flags.h"
 #include "device/include/interop.h"
+#include "os/log.h"
 #include "osi/include/allocator.h"
-#include "osi/include/log.h"
 #include "osi/include/properties.h"
 #include "stack/include/avrc_api.h"
 #include "stack/include/avrc_defs.h"
 #include "stack/include/bt_hdr.h"
+#include "stack/include/bt_psm_types.h"
+#include "stack/include/bt_uuid16.h"
 #include "stack/include/btm_api_types.h"
-#include "stack/include/sdp_api.h"
+#include "stack/include/btm_sec_api_types.h"
 #include "stack/include/sdpdefs.h"
 #include "stack/include/stack_metrics_logging.h"
 #include "stack/sdp/sdpint.h"
@@ -116,13 +117,18 @@ static std::vector<std::pair<uint16_t, uint16_t>> sdpu_find_profile_version(
         uint16_t uuid = p_ssattr->attr_value.v.u16;
         // Next attribute should be the version attribute
         tSDP_DISC_ATTR* version_attr = p_ssattr->p_next_attr;
-        if (SDP_DISC_ATTR_TYPE(version_attr->attr_len_type) != UINT_DESC_TYPE ||
+        if (version_attr == nullptr ||
+            SDP_DISC_ATTR_TYPE(version_attr->attr_len_type) != UINT_DESC_TYPE ||
             SDP_DISC_ATTR_LEN(version_attr->attr_len_type) != 2) {
-          LOG(WARNING) << __func__ << ": Bad version type "
-                       << loghex(
-                              SDP_DISC_ATTR_TYPE(version_attr->attr_len_type))
-                       << ", or length "
-                       << SDP_DISC_ATTR_LEN(version_attr->attr_len_type);
+          if (version_attr == nullptr) {
+            LOG(WARNING) << __func__ << ": version attr not found";
+          } else {
+            LOG(WARNING) << __func__ << ": Bad version type "
+                         << loghex(
+                                SDP_DISC_ATTR_TYPE(version_attr->attr_len_type))
+                         << ", or length "
+                         << SDP_DISC_ATTR_LEN(version_attr->attr_len_type);
+          }
           return std::vector<std::pair<uint16_t, uint16_t>>();
         }
         // High order 8 bits is the major number, low order is the
@@ -431,7 +437,7 @@ void sdpu_release_ccb(tCONN_CB& ccb) {
   ccb.is_attr_search = false;
 
   /* Free the response buffer */
-  if (ccb.rsp_list) SDP_TRACE_DEBUG("releasing SDP rsp_list");
+  if (ccb.rsp_list) LOG_VERBOSE("releasing SDP rsp_list");
   osi_free_and_reset((void**)&ccb.rsp_list);
 }
 
@@ -707,8 +713,8 @@ void sdpu_build_n_send_error(tCONN_CB* p_ccb, uint16_t trans_num,
   uint16_t rsp_param_len;
   BT_HDR* p_buf = (BT_HDR*)osi_malloc(SDP_DATA_BUF_SIZE);
 
-  SDP_TRACE_WARNING("SDP - sdpu_build_n_send_error  code: 0x%x  CID: 0x%x",
-                    error_code, p_ccb->connection_id);
+  LOG_WARN("SDP - sdpu_build_n_send_error  code: 0x%x  CID: 0x%x", error_code,
+           p_ccb->connection_id);
 
   /* Send the packet to L2CAP */
   p_buf->offset = L2CAP_MIN_OFFSET;
@@ -1058,7 +1064,7 @@ bool sdpu_compare_uuid_arrays(const uint8_t* p_uuid1, uint32_t len1,
 
   if (((len1 != 2) && (len1 != 4) && (len1 != 16)) ||
       ((len2 != 2) && (len2 != 4) && (len2 != 16))) {
-    SDP_TRACE_ERROR("%s: invalid length", __func__);
+    LOG_ERROR("%s: invalid length", __func__);
     return false;
   }
 
@@ -1322,7 +1328,7 @@ uint8_t* sdpu_build_partial_attrib_entry(uint8_t* p_out,
   uint16_t attr_len = sdpu_get_attrib_entry_len(p_attr);
 
   if (len > SDP_MAX_ATTR_LEN) {
-    SDP_TRACE_ERROR("%s len %d exceeds SDP_MAX_ATTR_LEN", __func__, len);
+    LOG_ERROR("%s len %d exceeds SDP_MAX_ATTR_LEN", __func__, len);
     len = SDP_MAX_ATTR_LEN;
   }
 

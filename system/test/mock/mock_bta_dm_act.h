@@ -23,38 +23,12 @@
 
 #include <cstdint>
 #include <functional>
-#include <map>
-#include <string>
-
-#include "test/common/mock_functions.h"
 
 // Original included files, if any
-// NOTE: Since this is a mock file with mock definitions some number of
-//       include files may not be required.  The include-what-you-use
-//       still applies, but crafting proper inclusion is out of scope
-//       for this effort.  This compilation unit may compile as-is, or
-//       may need attention to prune from (or add to ) the inclusion set.
 #include <cstdint>
 
 #include "bta/dm/bta_dm_int.h"
-#include "bta/gatt/bta_gattc_int.h"
-#include "bta/include/bta_dm_ci.h"
-#include "btif/include/btif_dm.h"
-#include "btif/include/btif_storage.h"
-#include "btif/include/stack_manager.h"
-#include "gap_api.h"
-#include "main/shim/acl_api.h"
-#include "main/shim/btm_api.h"
-#include "main/shim/dumpsys.h"
-#include "main/shim/shim.h"
-#include "osi/include/fixed_queue.h"
-#include "osi/include/log.h"
-#include "osi/include/osi.h"
-#include "stack/btm/btm_sec.h"
-#include "stack/btm/neighbor_inquiry.h"
-#include "stack/gatt/connection_manager.h"
-#include "stack/include/acl_api.h"
-#include "stack/include/btm_client_interface.h"
+#include "bta/dm/bta_dm_sec_int.h"
 #include "types/raw_address.h"
 
 // Mocked compile conditionals, if any
@@ -431,15 +405,6 @@ struct bta_dm_close_acl {
 };
 extern struct bta_dm_close_acl bta_dm_close_acl;
 
-// Name: bta_dm_close_gatt_conn
-// Params:  tBTA_DM_MSG* p_data
-// Return: void
-struct bta_dm_close_gatt_conn {
-  std::function<void(tBTA_DM_MSG* p_data)> body{[](tBTA_DM_MSG* p_data) {}};
-  void operator()(tBTA_DM_MSG* p_data) { body(p_data); };
-};
-extern struct bta_dm_close_gatt_conn bta_dm_close_gatt_conn;
-
 // Name: bta_dm_confirm
 // Params: const RawAddress& bd_addr, bool accept
 // Return: void
@@ -460,34 +425,6 @@ struct bta_dm_disable {
   void operator()() { body(); };
 };
 extern struct bta_dm_disable bta_dm_disable;
-
-// Name: bta_dm_disc_result
-// Params: tBTA_DM_MSG* p_data
-// Return: void
-struct bta_dm_disc_result {
-  std::function<void(tBTA_DM_MSG* p_data)> body{[](tBTA_DM_MSG* p_data) {}};
-  void operator()(tBTA_DM_MSG* p_data) { body(p_data); };
-};
-extern struct bta_dm_disc_result bta_dm_disc_result;
-
-// Name: bta_dm_remote_name_cmpl
-// Params: const tBTA_DM_MSG* p_data
-// Return: void
-struct bta_dm_remote_name_cmpl {
-  std::function<void(const tBTA_DM_MSG* p_data)> body{
-      [](const tBTA_DM_MSG* p_data) {}};
-  void operator()(const tBTA_DM_MSG* p_data) { body(p_data); };
-};
-extern struct bta_dm_remote_name_cmpl bta_dm_remote_name_cmpl;
-
-// Name: bta_dm_discover
-// Params: tBTA_DM_MSG* p_data
-// Return: void
-struct bta_dm_discover {
-  std::function<void(tBTA_DM_MSG* p_data)> body{[](tBTA_DM_MSG* p_data) {}};
-  void operator()(tBTA_DM_MSG* p_data) { body(p_data); };
-};
-extern struct bta_dm_discover bta_dm_discover;
 
 // Name: bta_dm_eir_update_cust_uuid
 // Params: const tBTA_CUSTOM_UUID& curr, bool adding
@@ -536,33 +473,6 @@ struct bta_dm_encrypt_cback {
 };
 extern struct bta_dm_encrypt_cback bta_dm_encrypt_cback;
 
-// Name: bta_dm_execute_queued_request
-// Params:
-// Return: void
-struct bta_dm_execute_queued_request {
-  std::function<void()> body{[]() {}};
-  void operator()() { body(); };
-};
-extern struct bta_dm_execute_queued_request bta_dm_execute_queued_request;
-
-// Name: bta_dm_free_sdp_db
-// Params:
-// Return: void
-struct bta_dm_free_sdp_db {
-  std::function<void()> body{[]() {}};
-  void operator()() { body(); };
-};
-extern struct bta_dm_free_sdp_db bta_dm_free_sdp_db;
-
-// Name: bta_dm_inq_cmpl
-// Params: uint8_t num
-// Return: void
-struct bta_dm_inq_cmpl {
-  std::function<void(uint8_t num)> body{[](uint8_t num) {}};
-  void operator()(uint8_t num) { body(num); };
-};
-extern struct bta_dm_inq_cmpl bta_dm_inq_cmpl;
-
 // Name: bta_dm_is_search_request_queued
 // Params:
 // Return: bool
@@ -594,24 +504,6 @@ struct bta_dm_process_remove_device {
   void operator()(const RawAddress& bd_addr) { body(bd_addr); };
 };
 extern struct bta_dm_process_remove_device bta_dm_process_remove_device;
-
-// Name: bta_dm_queue_disc
-// Params: tBTA_DM_MSG* p_data
-// Return: void
-struct bta_dm_queue_disc {
-  std::function<void(tBTA_DM_MSG* p_data)> body{[](tBTA_DM_MSG* p_data) {}};
-  void operator()(tBTA_DM_MSG* p_data) { body(p_data); };
-};
-extern struct bta_dm_queue_disc bta_dm_queue_disc;
-
-// Name: bta_dm_queue_search
-// Params: tBTA_DM_MSG* p_data
-// Return: void
-struct bta_dm_queue_search {
-  std::function<void(tBTA_DM_MSG* p_data)> body{[](tBTA_DM_MSG* p_data) {}};
-  void operator()(tBTA_DM_MSG* p_data) { body(p_data); };
-};
-extern struct bta_dm_queue_search bta_dm_queue_search;
 
 // Name: bta_dm_remove_device
 // Params: const RawAddress& bd_addr
@@ -647,15 +539,6 @@ struct bta_dm_sdp_result {
 };
 extern struct bta_dm_sdp_result bta_dm_sdp_result;
 
-// Name: bta_dm_search_cancel
-// Params:
-// Return: void
-struct bta_dm_search_cancel {
-  std::function<void()> body{[]() {}};
-  void operator()() { body(); };
-};
-extern struct bta_dm_search_cancel bta_dm_search_cancel;
-
 // Name: bta_dm_search_cancel_cmpl
 // Params:
 // Return: void
@@ -674,24 +557,6 @@ struct bta_dm_search_cancel_notify {
 };
 extern struct bta_dm_search_cancel_notify bta_dm_search_cancel_notify;
 
-// Name: bta_dm_search_clear_queue
-// Params:
-// Return: void
-struct bta_dm_search_clear_queue {
-  std::function<void()> body{[]() {}};
-  void operator()() { body(); };
-};
-extern struct bta_dm_search_clear_queue bta_dm_search_clear_queue;
-
-// Name: bta_dm_search_cmpl
-// Params:
-// Return: void
-struct bta_dm_search_cmpl {
-  std::function<void()> body{[]() {}};
-  void operator()() { body(); };
-};
-extern struct bta_dm_search_cmpl bta_dm_search_cmpl;
-
 // Name: bta_dm_search_result
 // Params: tBTA_DM_MSG* p_data
 // Return: void
@@ -700,15 +565,6 @@ struct bta_dm_search_result {
   void operator()(tBTA_DM_MSG* p_data) { body(p_data); };
 };
 extern struct bta_dm_search_result bta_dm_search_result;
-
-// Name: bta_dm_search_start
-// Params: tBTA_DM_MSG* p_data
-// Return: void
-struct bta_dm_search_start {
-  std::function<void(tBTA_DM_MSG* p_data)> body{[](tBTA_DM_MSG* p_data) {}};
-  void operator()(tBTA_DM_MSG* p_data) { body(p_data); };
-};
-extern struct bta_dm_search_start bta_dm_search_start;
 
 // Name: bta_dm_set_dev_name
 // Params: const std::vector<uint8_t>& name
@@ -735,16 +591,6 @@ struct bta_dm_set_encryption {
   };
 };
 extern struct bta_dm_set_encryption bta_dm_set_encryption;
-
-// Name: btm_dm_start_gatt_discovery
-// Params: const RawAddress& bd_addr
-// Return: void
-struct btm_dm_start_gatt_discovery {
-  std::function<void(const RawAddress& bd_addr)> body{
-      [](const RawAddress& bd_addr) {}};
-  void operator()(const RawAddress& bd_addr) { body(bd_addr); };
-};
-extern struct btm_dm_start_gatt_discovery btm_dm_start_gatt_discovery;
 
 // Name: handle_remote_features_complete
 // Params: const RawAddress& bd_addr

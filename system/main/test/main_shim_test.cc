@@ -46,6 +46,7 @@
 #include "main/shim/acl.h"
 #include "main/shim/acl_legacy_interface.h"
 #include "main/shim/ble_scanner_interface_impl.h"
+#include "main/shim/dumpsys.h"
 #include "main/shim/helpers.h"
 #include "main/shim/le_advertising_manager.h"
 #include "main/shim/le_scanning_manager.h"
@@ -55,6 +56,7 @@
 #include "os/thread.h"
 #include "packet/packet_view.h"
 #include "stack/btm/btm_int_types.h"
+#include "stack/btm/btm_sec_cb.h"
 #include "stack/include/acl_hci_link_interface.h"
 #include "stack/include/ble_acl_interface.h"
 #include "stack/include/bt_hdr.h"
@@ -83,6 +85,7 @@ const uint8_t kMaxAddressResolutionSize = kMaxLeAcceptlistSize;
 
 tL2C_CB l2cb;
 tBTM_CB btm_cb;
+tBTM_SEC_CB btm_sec_cb;
 btif_hh_cb_t btif_hh_cb;
 
 struct bluetooth::hci::LeScanningManager::impl

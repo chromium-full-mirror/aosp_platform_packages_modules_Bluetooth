@@ -29,6 +29,7 @@
 
 #include "advertise_data_parser.h"
 #include "bta_api.h"
+#include "bta_sec_api.h"
 #include "bta_csis_api.h"
 #include "bta_gatt_api.h"
 #include "bta_gatt_queue.h"
@@ -42,6 +43,7 @@
 #include "main/shim/shim.h"
 #include "osi/include/osi.h"
 #include "osi/include/properties.h"
+#include "osi/include/stack_power_telemetry.h"
 #include "stack/btm/btm_dev.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/crypto_toolbox/crypto_toolbox.h"
@@ -1276,7 +1278,12 @@ class CsisClientImpl : public CsisClient {
                     service_data_len,
                 BTM_BLE_AD_TYPE_RSI, &service_data_len))) {
       RawAddress bda;
-      STREAM_TO_BDADDR(bda, p_service_data);
+      const uint8_t *p_bda = p_service_data;
+      if (service_data_len < RawAddress::kLength) {
+          continue;
+      }
+
+      STREAM_TO_BDADDR(bda, p_bda);
       devices.push_back(std::move(bda));
     }
 
@@ -1305,6 +1312,18 @@ class CsisClientImpl : public CsisClient {
     if (csis_device) {
       DLOG(INFO) << __func__ << " Drop same device .."
                  << ADDRESS_TO_LOGGABLE_STR(result->bd_addr);
+      return;
+    }
+
+    /* Make sure device is not already bonded which could
+     * be a case for dual mode devices where
+     */
+    tBTM_SEC_DEV_REC* p_dev = btm_find_dev(result->bd_addr);
+    if (p_dev && p_dev->is_le_link_key_known()) {
+      LOG_VERBOSE(
+          "Device %s already bonded. Identity address: %s",
+          ADDRESS_TO_LOGGABLE_CSTR(result->bd_addr),
+          ADDRESS_TO_LOGGABLE_CSTR(p_dev->ble.identity_address_with_type));
       return;
     }
 
@@ -1370,6 +1389,8 @@ class CsisClientImpl : public CsisClient {
           if (instance == nullptr) return;
 
           if (event == BTA_DM_INQ_CMPL_EVT) {
+            power_telemetry::GetInstance().LogBleScan(
+                static_cast<int>(p_data->inq_cmpl.num_resps));
             LOG(INFO) << "BLE observe complete. Num Resp: "
                       << static_cast<int>(p_data->inq_cmpl.num_resps);
             csis_ad_type_filter_set(false);
@@ -1446,6 +1467,18 @@ class CsisClientImpl : public CsisClient {
       return;
     }
 
+    /* Make sure device is not already bonded which could
+     * be a case for dual mode devices where
+     */
+    tBTM_SEC_DEV_REC* p_dev = btm_find_dev(result->bd_addr);
+    if (p_dev && p_dev->is_le_link_key_known()) {
+      LOG_VERBOSE(
+          "Device %s already bonded. Identity address: %s",
+          ADDRESS_TO_LOGGABLE_CSTR(result->bd_addr),
+          ADDRESS_TO_LOGGABLE_CSTR(p_dev->ble.identity_address_with_type));
+      return;
+    }
+
     auto all_rsi = GetAllRsiFromAdvertising(result);
     if (all_rsi.empty()) return;
 
@@ -1482,6 +1515,8 @@ class CsisClientImpl : public CsisClient {
           if (instance == nullptr) return;
 
           if (event == BTA_DM_INQ_CMPL_EVT) {
+            power_telemetry::GetInstance().LogBleScan(
+                static_cast<int>(p_data->inq_cmpl.num_resps));
             DLOG(INFO) << "BLE observe complete. Num Resp: "
                        << static_cast<int>(p_data->inq_cmpl.num_resps);
             return;

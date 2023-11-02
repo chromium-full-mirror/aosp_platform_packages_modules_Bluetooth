@@ -17,10 +17,12 @@
 package com.android.bluetooth.a2dp;
 
 import static android.Manifest.permission.BLUETOOTH_CONNECT;
+
 import static com.android.bluetooth.Utils.checkCallerTargetSdk;
 import static com.android.bluetooth.Utils.enforceBluetoothPrivilegedPermission;
 import static com.android.bluetooth.Utils.enforceCdmAssociation;
 import static com.android.bluetooth.Utils.hasBluetoothPrivilegedPermission;
+
 import static java.util.Objects.requireNonNull;
 
 import android.annotation.NonNull;
@@ -63,6 +65,8 @@ import com.android.bluetooth.btservice.MetricsLogger;
 import com.android.bluetooth.btservice.ProfileService;
 import com.android.bluetooth.btservice.ServiceFactory;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
+import com.android.bluetooth.flags.FeatureFlags;
+import com.android.bluetooth.flags.FeatureFlagsImpl;
 import com.android.bluetooth.hfp.HeadsetService;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -86,6 +90,7 @@ public class A2dpService extends ProfileService {
 
     private static A2dpService sA2dpService;
 
+    private final FeatureFlags mFeatureFlags;
     private AdapterService mAdapterService;
     private DatabaseManager mDatabaseManager;
     private HandlerThread mStateMachinesThread;
@@ -125,12 +130,14 @@ public class A2dpService extends ProfileService {
 
     A2dpService() {
         mNativeInterface = requireNonNull(A2dpNativeInterface.getInstance());
+        mFeatureFlags = new FeatureFlagsImpl();
     }
 
     @VisibleForTesting
-    A2dpService(Context ctx, A2dpNativeInterface nativeInterface) {
+    A2dpService(Context ctx, A2dpNativeInterface nativeInterface, FeatureFlags featureFlags) {
         attachBaseContext(ctx);
         mNativeInterface = requireNonNull(nativeInterface);
+        mFeatureFlags = featureFlags;
         onCreate();
     }
 
@@ -1341,11 +1348,13 @@ public class A2dpService extends ProfileService {
         if (toState == BluetoothProfile.STATE_CONNECTED) {
             MetricsLogger.logProfileConnectionEvent(BluetoothMetricsProto.ProfileId.A2DP);
         }
-        // Set the active device if only one connected device is supported and it was connected
-        if (toState == BluetoothProfile.STATE_CONNECTED && (mMaxConnectedAudioDevices == 1)) {
-            setActiveDevice(device);
+        if (!mFeatureFlags.audioRoutingCentralization()) {
+            // Set the active device if only one connected device is supported and it was connected
+            if (toState == BluetoothProfile.STATE_CONNECTED && (mMaxConnectedAudioDevices == 1)) {
+                setActiveDevice(device);
+            }
+            // When disconnected, ActiveDeviceManager will call setActiveDevice(null)
         }
-        // When disconnected, ActiveDeviceManager will call setActiveDevice(null)
 
         // Check if the device is disconnected - if unbond, remove the state machine
         if (toState == BluetoothProfile.STATE_DISCONNECTED) {

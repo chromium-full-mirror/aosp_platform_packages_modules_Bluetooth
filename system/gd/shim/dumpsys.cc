@@ -22,6 +22,7 @@
 
 #include "dumpsys/filter.h"
 #include "module.h"
+#include "module_dumper.h"
 #include "os/log.h"
 #include "os/system_properties.h"
 #include "shim/dumpsys.h"
@@ -176,7 +177,7 @@ os::Handler* Dumpsys::GetGdShimHandler() {
 /**
  * Module methods
  */
-void Dumpsys::ListDependencies(ModuleList* list) const {}
+void Dumpsys::ListDependencies(ModuleList* /* list */) const {}
 
 void Dumpsys::Start() {
   pimpl_ = std::make_unique<impl>(*this, reflection_schema_);

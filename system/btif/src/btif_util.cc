@@ -32,12 +32,11 @@
 
 #include <base/logging.h>
 #include <ctype.h>
+#include <hardware/bt_av.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <hardware/bt_av.h>
 
 #include "avrc_defs.h"
 #include "bta_ag_api.h"
@@ -48,7 +47,6 @@
 #include "bta_hh_api.h"
 #include "btif_common.h"
 #include "btif_dm.h"
-#include "btu.h"
 
 /*******************************************************************************
  *  Constants & Macros
@@ -217,6 +215,7 @@ const char* dump_hf_client_event(uint16_t event) {
     CASE_RETURN_STR(BTA_HF_CLIENT_CONN_EVT)
     CASE_RETURN_STR(BTA_HF_CLIENT_AUDIO_OPEN_EVT)
     CASE_RETURN_STR(BTA_HF_CLIENT_AUDIO_MSBC_OPEN_EVT)
+    CASE_RETURN_STR(BTA_HF_CLIENT_AUDIO_LC3_OPEN_EVT)
     CASE_RETURN_STR(BTA_HF_CLIENT_AUDIO_CLOSE_EVT)
     CASE_RETURN_STR(BTA_HF_CLIENT_SPK_EVT)
     CASE_RETURN_STR(BTA_HF_CLIENT_MIC_EVT)

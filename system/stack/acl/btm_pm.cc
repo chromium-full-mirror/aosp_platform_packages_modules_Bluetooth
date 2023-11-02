@@ -39,12 +39,14 @@
 #include "device/include/controller.h"
 #include "device/include/interop.h"
 #include "main/shim/dumpsys.h"
-#include "main/shim/shim.h"
-#include "osi/include/log.h"
+#include "os/log.h"
 #include "osi/include/osi.h"  // UNUSED_ATTR
+#include "osi/include/stack_power_telemetry.h"
 #include "stack/btm/btm_int_types.h"
+#include "stack/btm/btm_sec_cb.h"
 #include "stack/include/btm_api.h"
 #include "stack/include/btm_api_types.h"
+#include "stack/include/btm_log_history.h"
 #include "stack/include/btm_status.h"
 #include "types/raw_address.h"
 
@@ -727,6 +729,10 @@ void btm_pm_proc_mode_change(tHCI_STATUS hci_status, uint16_t hci_handle,
     l2c_OnHciModeChangeSendPendingPackets(p_cb->bda_);
   }
 
+  (mode != BTM_PM_ST_ACTIVE)
+      ? power_telemetry::GetInstance().LogSniffStarted(hci_handle, p_cb->bda_)
+      : power_telemetry::GetInstance().LogSniffStopped(hci_handle, p_cb->bda_);
+
   /* set req_mode  HOLD mode->ACTIVE */
   if ((mode == BTM_PM_MD_ACTIVE) && (p_cb->req_mode.mode == BTM_PM_MD_HOLD))
     p_cb->req_mode.mode = BTM_PM_MD_ACTIVE;
@@ -837,8 +843,8 @@ static bool btm_pm_device_in_active_or_sniff_mode(void) {
   }
 
   /* Check BLE states */
-  if (!btm_cb.ble_ctr_cb.is_connection_state_idle()) {
-    BTM_TRACE_DEBUG("%s - BLE state is not idle", __func__);
+  if (!btm_sec_cb.ble_ctr_cb.is_connection_state_idle()) {
+    LOG_VERBOSE("%s - BLE state is not idle", __func__);
     return true;
   }
 
@@ -864,7 +870,7 @@ static bool btm_pm_device_in_scan_state(void) {
   /* Check for inquiry */
   if ((btm_cb.btm_inq_vars.inq_active &
        (BTM_BR_INQ_ACTIVE_MASK | BTM_BLE_INQ_ACTIVE_MASK)) != 0) {
-    BTM_TRACE_DEBUG("btm_pm_device_in_scan_state- Inq active");
+    LOG_VERBOSE("btm_pm_device_in_scan_state- Inq active");
     return true;
   }
 

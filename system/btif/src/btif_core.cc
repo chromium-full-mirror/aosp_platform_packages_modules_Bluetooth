@@ -42,6 +42,7 @@
 #include "btif/include/btif_common.h"
 #include "btif/include/btif_config.h"
 #include "btif/include/btif_dm.h"
+#include "btif/include/btif_jni_task.h"
 #include "btif/include/btif_pan.h"
 #include "btif/include/btif_profile_queue.h"
 #include "btif/include/btif_sock.h"
@@ -58,14 +59,13 @@
 #include "stack/include/a2dp_api.h"
 #include "stack/include/btm_api.h"
 #include "stack/include/btm_ble_api.h"
+#include "stack/include/btm_ble_sec_api.h"
 #include "types/bluetooth/uuid.h"
 #include "types/raw_address.h"
 
 using base::PlatformThread;
 using bluetooth::Uuid;
 using bluetooth::common::MessageLoopThread;
-
-static void bt_jni_msg_ready(void* context);
 
 /*******************************************************************************
  *  Constants & Macros
@@ -102,7 +102,6 @@ static tBTA_SERVICE_MASK btif_enabled_services = 0;
  */
 static uint8_t btif_dut_mode = 0;
 
-static MessageLoopThread jni_thread("bt_jni_thread");
 static base::AtExitManager* exit_manager;
 static uid_set_t* uid_set;
 
@@ -113,77 +112,6 @@ void btif_dm_enable_service(tBTA_SERVICE_ID service_id, bool enable);
 #ifdef BTIF_DM_OOB_TEST
 void btif_dm_load_local_oob(void);
 #endif
-
-/*******************************************************************************
- *
- * Function         btif_transfer_context
- *
- * Description      This function switches context to btif task
- *
- *                  p_cback   : callback used to process message in btif context
- *                  event     : event id of message
- *                  p_params  : parameter area passed to callback (copied)
- *                  param_len : length of parameter area
- *                  p_copy_cback : If set this function will be invoked for deep
- *                                 copy
- *
- * Returns          void
- *
- ******************************************************************************/
-
-bt_status_t btif_transfer_context(tBTIF_CBACK* p_cback, uint16_t event,
-                                  char* p_params, int param_len,
-                                  tBTIF_COPY_CBACK* p_copy_cback) {
-  tBTIF_CONTEXT_SWITCH_CBACK* p_msg = (tBTIF_CONTEXT_SWITCH_CBACK*)osi_malloc(
-      sizeof(tBTIF_CONTEXT_SWITCH_CBACK) + param_len);
-
-  BTIF_TRACE_VERBOSE("btif_transfer_context event %d, len %d", event,
-                     param_len);
-
-  /* allocate and send message that will be executed in btif context */
-  p_msg->hdr.event = BT_EVT_CONTEXT_SWITCH_EVT; /* internal event */
-  p_msg->p_cb = p_cback;
-
-  p_msg->event = event; /* callback event */
-
-  /* check if caller has provided a copy callback to do the deep copy */
-  if (p_copy_cback) {
-    p_copy_cback(event, p_msg->p_param, p_params);
-  } else if (p_params) {
-    memcpy(p_msg->p_param, p_params, param_len); /* callback parameter data */
-  }
-
-  return do_in_jni_thread(base::BindOnce(&bt_jni_msg_ready, p_msg));
-}
-
-/**
- * This function posts a task into the btif message loop, that executes it in
- * the JNI message loop.
- **/
-bt_status_t do_in_jni_thread(const base::Location& from_here,
-                             base::OnceClosure task) {
-  if (!jni_thread.DoInThread(from_here, std::move(task))) {
-    LOG(ERROR) << __func__ << ": Post task to task runner failed!";
-    return BT_STATUS_FAIL;
-  }
-  return BT_STATUS_SUCCESS;
-}
-
-bt_status_t do_in_jni_thread(base::OnceClosure task) {
-  return do_in_jni_thread(FROM_HERE, std::move(task));
-}
-
-bool is_on_jni_thread() {
-  return jni_thread.GetThreadId() == PlatformThread::CurrentId();
-}
-
-static void do_post_on_bt_jni(BtJniClosure closure) { closure(); }
-
-void post_on_bt_jni(BtJniClosure closure) {
-  ASSERT(do_in_jni_thread(FROM_HERE, base::BindOnce(do_post_on_bt_jni,
-                                                    std::move(closure))) ==
-         BT_STATUS_SUCCESS);
-}
 
 /*******************************************************************************
  *
@@ -218,22 +146,6 @@ void btif_init_ok() {
 
 /*******************************************************************************
  *
- * Function         btif_task
- *
- * Description      BTIF task handler managing all messages being passed
- *                  Bluetooth HAL and BTA.
- *
- * Returns          void
- *
- ******************************************************************************/
-static void bt_jni_msg_ready(void* context) {
-  tBTIF_CONTEXT_SWITCH_CBACK* p = (tBTIF_CONTEXT_SWITCH_CBACK*)context;
-  if (p->p_cb) p->p_cb(p->event, p->p_param);
-  osi_free(p);
-}
-
-/*******************************************************************************
- *
  * Function         btif_init_bluetooth
  *
  * Description      Creates BTIF task and prepares BT scheduler for startup
@@ -244,7 +156,7 @@ static void bt_jni_msg_ready(void* context) {
 bt_status_t btif_init_bluetooth() {
   LOG_INFO("%s entered", __func__);
   exit_manager = new base::AtExitManager();
-  jni_thread.StartUp();
+  jni_thread_startup();
   GetInterfaceToProfiles()->events->invoke_thread_evt_cb(ASSOCIATE_JVM);
   LOG_INFO("%s finished", __func__);
   return BT_STATUS_SUCCESS;
@@ -326,7 +238,7 @@ bt_status_t btif_cleanup_bluetooth() {
   btif_dm_cleanup();
   GetInterfaceToProfiles()->events->invoke_thread_evt_cb(DISASSOCIATE_JVM);
   btif_queue_release();
-  jni_thread.ShutDown();
+  jni_thread_shutdown();
   delete exit_manager;
   exit_manager = nullptr;
   btif_dut_mode = 0;
@@ -357,7 +269,7 @@ static void btif_dut_mode_cback(UNUSED_ATTR tBTM_VSC_CMPL* p) {
  *
  ******************************************************************************/
 void btif_dut_mode_configure(uint8_t enable) {
-  BTIF_TRACE_DEBUG("%s", __func__);
+  LOG_VERBOSE("%s", __func__);
 
   btif_dut_mode = enable;
   if (enable == 1) {
@@ -376,7 +288,7 @@ void btif_dut_mode_configure(uint8_t enable) {
  *
  ******************************************************************************/
 void btif_dut_mode_send(uint16_t opcode, uint8_t* buf, uint8_t len) {
-  BTIF_TRACE_DEBUG("%s", __func__);
+  LOG_VERBOSE("%s", __func__);
   BTM_VendorSpecificCommand(opcode, len, buf, btif_dut_mode_cback);
 }
 
@@ -502,7 +414,7 @@ static bt_status_t btif_in_get_remote_device_properties(RawAddress* bd_addr) {
 }
 
 static void btif_core_storage_adapter_write(bt_property_t* prop) {
-  BTIF_TRACE_EVENT("type: %d, len %d, 0x%x", prop->type, prop->len, prop->val);
+  LOG_VERBOSE("type: %d, len %d, 0x%p", prop->type, prop->len, prop->val);
   bt_status_t status = btif_storage_set_adapter_property(prop);
   GetInterfaceToProfiles()->events->invoke_adapter_properties_cb(status, 1,
                                                                  prop);
@@ -528,7 +440,7 @@ void btif_remote_properties_evt(bt_status_t status, RawAddress* remote_addr,
  ******************************************************************************/
 
 void btif_get_adapter_properties(void) {
-  BTIF_TRACE_EVENT("%s", __func__);
+  LOG_VERBOSE("%s", __func__);
 
   btif_in_get_adapter_properties();
 }
@@ -542,7 +454,7 @@ void btif_get_adapter_properties(void) {
  ******************************************************************************/
 
 void btif_get_adapter_property(bt_property_type_t type) {
-  BTIF_TRACE_EVENT("%s %d", __func__, type);
+  LOG_VERBOSE("%s %d", __func__, type);
 
   bt_status_t status = BT_STATUS_SUCCESS;
   char buf[512];
@@ -619,8 +531,7 @@ void btif_get_adapter_property(bt_property_type_t type) {
 
     prop.len = sizeof(bt_dynamic_audio_buffer_item_t);
     if (GetInterfaceToProfiles()->config->isA2DPOffloadEnabled() == false) {
-      BTIF_TRACE_DEBUG("%s Get buffer millis for A2DP software encoding",
-                       __func__);
+      LOG_VERBOSE("%s Get buffer millis for A2DP software encoding", __func__);
       for (int i = 0; i < CODEC_TYPE_NUMBER; i++) {
         dynamic_audio_buffer_item.dab_item[i] = {
             .default_buffer_time = DEFAULT_BUFFER_TIME,
@@ -630,7 +541,7 @@ void btif_get_adapter_property(bt_property_type_t type) {
       memcpy(prop.val, &dynamic_audio_buffer_item, prop.len);
     } else {
       if (cmn_vsc_cb.dynamic_audio_buffer_support != 0) {
-        BTIF_TRACE_DEBUG("%s Get buffer millis for A2DP Offload", __func__);
+        LOG_VERBOSE("%s Get buffer millis for A2DP Offload", __func__);
         tBTM_BT_DYNAMIC_AUDIO_BUFFER_CB
             bt_dynamic_audio_buffer_cb[CODEC_TYPE_NUMBER];
         BTM_BleGetDynamicAudioBuffer(bt_dynamic_audio_buffer_cb);
@@ -646,7 +557,7 @@ void btif_get_adapter_property(bt_property_type_t type) {
         }
         memcpy(prop.val, &dynamic_audio_buffer_item, prop.len);
       } else {
-        BTIF_TRACE_DEBUG("%s Don't support Dynamic Audio Buffer", __func__);
+        LOG_VERBOSE("%s Don't support Dynamic Audio Buffer", __func__);
       }
     }
   } else {
@@ -678,8 +589,8 @@ bt_property_t* property_deep_copy(const bt_property_t* prop) {
  ******************************************************************************/
 
 void btif_set_adapter_property(bt_property_t* property) {
-  BTIF_TRACE_EVENT("btif_set_adapter_property type: %d, len %d, 0x%x",
-                   property->type, property->len, property->val);
+  LOG_VERBOSE("btif_set_adapter_property type: %d, len %d, 0x%p",
+              property->type, property->len, property->val);
 
   switch (property->type) {
     case BT_PROPERTY_BDNAME: {
@@ -690,7 +601,7 @@ void btif_set_adapter_property(bt_property_t* property) {
       memcpy(bd_name, property->val, name_len);
       bd_name[name_len] = '\0';
 
-      BTIF_TRACE_EVENT("set property name : %s", (char*)bd_name);
+      LOG_VERBOSE("set property name : %s", (char*)bd_name);
 
       BTA_DmSetDeviceName((const char*)bd_name);
 
@@ -699,7 +610,7 @@ void btif_set_adapter_property(bt_property_t* property) {
 
     case BT_PROPERTY_ADAPTER_SCAN_MODE: {
       bt_scan_mode_t mode = *(bt_scan_mode_t*)property->val;
-      BTIF_TRACE_EVENT("set property scan mode : %x", mode);
+      LOG_VERBOSE("set property scan mode : %x", mode);
 
       if (BTA_DmSetVisibility(mode)) {
         btif_core_storage_adapter_write(property);
@@ -794,8 +705,7 @@ tBTA_SERVICE_MASK btif_get_enabled_services_mask(void) {
 void btif_enable_service(tBTA_SERVICE_ID service_id) {
   btif_enabled_services |= (1 << service_id);
 
-  BTIF_TRACE_DEBUG("%s: current services:0x%x", __func__,
-                   btif_enabled_services);
+  LOG_VERBOSE("%s: current services:0x%x", __func__, btif_enabled_services);
 
   if (btif_is_enabled()) {
     btif_dm_enable_service(service_id, true);
@@ -813,8 +723,7 @@ void btif_enable_service(tBTA_SERVICE_ID service_id) {
 void btif_disable_service(tBTA_SERVICE_ID service_id) {
   btif_enabled_services &= (tBTA_SERVICE_MASK)(~(1 << service_id));
 
-  BTIF_TRACE_DEBUG("%s: Current Services:0x%x", __func__,
-                   btif_enabled_services);
+  LOG_VERBOSE("%s: Current Services:0x%x", __func__, btif_enabled_services);
 
   if (btif_is_enabled()) {
     btif_dm_enable_service(service_id, false);
@@ -864,21 +773,20 @@ void DynamicAudiobufferSizeCompleteCallback(tBTM_VSC_CMPL* p_vsc_cmpl_params) {
 }
 
 bt_status_t btif_set_dynamic_audio_buffer_size(int codec, int size) {
-  BTIF_TRACE_DEBUG("%s", __func__);
+  LOG_VERBOSE("%s", __func__);
 
   tBTM_BLE_VSC_CB cmn_vsc_cb;
   BTM_BleGetVendorCapabilities(&cmn_vsc_cb);
 
   if (!GetInterfaceToProfiles()->config->isA2DPOffloadEnabled()) {
-    BTIF_TRACE_DEBUG("%s Set buffer size (%d) for A2DP software encoding",
-                     __func__, size);
+    LOG_VERBOSE("%s Set buffer size (%d) for A2DP software encoding", __func__,
+                size);
     GetInterfaceToProfiles()
         ->profileSpecific_HACK->btif_av_set_dynamic_audio_buffer_size(
             uint8_t(size));
   } else {
     if (cmn_vsc_cb.dynamic_audio_buffer_support != 0) {
-      BTIF_TRACE_DEBUG("%s Set buffer size (%d) for A2DP offload", __func__,
-                       size);
+      LOG_VERBOSE("%s Set buffer size (%d) for A2DP offload", __func__, size);
       uint16_t firmware_tx_buffer_length_byte;
       uint8_t param[3] = {0};
       uint8_t* p_param = param;

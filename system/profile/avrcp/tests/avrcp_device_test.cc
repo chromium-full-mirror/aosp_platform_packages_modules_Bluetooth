@@ -52,17 +52,27 @@ using ::testing::SaveArg;
 
 bool get_pts_avrcp_test(void) { return false; }
 
-const stack_config_t interface = {nullptr, get_pts_avrcp_test,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
-                                  nullptr, nullptr,
+const stack_config_t interface = {get_pts_avrcp_test,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
                                   nullptr};
 
 // TODO (apanicke): All the tests below are just basic positive unit tests.
@@ -1466,6 +1476,21 @@ TEST_F(AvrcpDeviceTest, setVolumeOnceTest) {
       .Times(1);
 
   test_device->SetVolume(vol);
+  test_device->SetVolume(vol);
+}
+
+TEST_F(AvrcpDeviceTest, setVolumeAfterReconnectionTest) {
+  int vol = 0x48;
+
+  auto set_abs_vol = SetAbsoluteVolumeRequestBuilder::MakeBuilder(vol);
+
+  // Ensure that SetVolume is called twice as DeviceDisconnected will
+  // reset the previous stored volume.
+  EXPECT_CALL(response_cb, Call(_, false, matchPacket(std::move(set_abs_vol))))
+      .Times(2);
+
+  test_device->SetVolume(vol);
+  test_device->DeviceDisconnected();
   test_device->SetVolume(vol);
 }
 

@@ -18,9 +18,12 @@
 
 #include <cstdint>
 
+#include "bt_target.h"  // BTM_NO_SSP_ON_INQUIRY
 #include "osi/include/alarm.h"
 #include "stack/include/bt_device_type.h"
+#include "stack/include/bt_name.h"
 #include "stack/include/btm_api_types.h"
+#include "stack/include/btm_status.h"
 #include "types/ble_address_with_type.h"
 #include "types/raw_address.h"
 
@@ -156,9 +159,7 @@ typedef struct {
                                duplicate store of inquiry results */
   uint16_t remote_name_len;
   tBTM_BD_NAME remote_name;
-  uint8_t remote_name_state;
   uint8_t remote_name_type;
-
 } tBTM_INQ_INFO;
 
 typedef struct {

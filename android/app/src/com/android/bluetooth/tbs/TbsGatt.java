@@ -27,13 +27,10 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattServerCallback;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
-import android.bluetooth.IBluetoothManager;
-import android.bluetooth.IBluetoothStateChangeCallback;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
-import android.os.RemoteException;
 import android.util.Log;
 
 import com.android.bluetooth.BluetoothEventLogger;
@@ -257,16 +254,13 @@ public class TbsGatt {
 
     TbsGatt(TbsService tbsService) {
         mContext = tbsService;
-        mAdapterService =  Objects.requireNonNull(AdapterService.getAdapterService(),
-                "AdapterService shouldn't be null when creating MediaControlCattService");
-        IBluetoothManager mgr = BluetoothAdapter.getDefaultAdapter().getBluetoothManager();
-        if (mgr != null) {
-            try {
-                mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException e) {
-                throw e.rethrowFromSystemServer();
-            }
-        }
+        mAdapterService =
+                Objects.requireNonNull(
+                        AdapterService.getAdapterService(),
+                        "AdapterService shouldn't be null when creating TbsGatt");
+
+        mAdapterService.registerBluetoothStateCallback(
+                mContext.getMainExecutor(), mBluetoothStateChangeCallback);
 
         mBearerProviderNameCharacteristic = new GattCharacteristic(UUID_BEARER_PROVIDER_NAME,
                 BluetoothGattCharacteristic.PROPERTY_READ
@@ -371,6 +365,8 @@ public class TbsGatt {
     }
 
     public void cleanup() {
+        mAdapterService.unregisterBluetoothStateCallback(mBluetoothStateChangeCallback);
+
         if (mBluetoothGattServer == null) {
             return;
         }
@@ -987,11 +983,16 @@ public class TbsGatt {
         }
     }
 
-    private final IBluetoothStateChangeCallback mBluetoothStateChangeCallback =
-            new IBluetoothStateChangeCallback.Stub() {
-                public void onBluetoothStateChange(boolean up) {
-                    if (DBG) Log.d(TAG, "onBluetoothStateChange: up=" + up);
-                    if (up) {
+    private final AdapterService.BluetoothStateCallback mBluetoothStateChangeCallback =
+            new AdapterService.BluetoothStateCallback() {
+                public void onBluetoothStateChange(int prevState, int newState) {
+                    if (DBG) {
+                        Log.d(
+                                TAG,
+                                "onBluetoothStateChange: state="
+                                        + BluetoothAdapter.nameForState(newState));
+                    }
+                    if (newState == BluetoothAdapter.STATE_ON) {
                         restoreCccValuesForStoredDevices();
                     }
                 }

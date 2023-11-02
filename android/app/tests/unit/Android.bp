@@ -31,7 +31,7 @@ java_defaults {
         "frameworks-base-testutils",
         "gson",
         "mockito-target",
-        "truth-prebuilt",
+        "truth",
     ],
 
     asset_dirs: ["src/com/android/bluetooth/btservice/storage/schemas"],
@@ -46,7 +46,7 @@ java_defaults {
 
     test_suites: [
         "automotive-tests",
-        "device-tests",
+        "general-tests",
         "mts-bluetooth",
     ],
 

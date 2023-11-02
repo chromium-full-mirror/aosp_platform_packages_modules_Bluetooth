@@ -23,31 +23,18 @@
 
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <string>
 
 // Original included files, if any
-// NOTE: Since this is a mock file with mock definitions some number of
-//       include files may not be required.  The include-what-you-use
-//       still applies, but crafting proper inclusion is out of scope
-//       for this effort.  This compilation unit may compile as-is, or
-//       may need attention to prune the inclusion set.
-#include <cstdint>
-
 #include "device/include/controller.h"
 #include "stack/acl/acl.h"
 #include "stack/btm/security_device_record.h"
+#include "stack/include/acl_client_callbacks.h"
 #include "stack/include/bt_hdr.h"
-#include "stack/include/btm_client_interface.h"
-#include "test/common/mock_functions.h"
 #include "types/class_of_device.h"
 #include "types/raw_address.h"
 
 // Mocked compile conditionals, if any
-#ifndef UNUSED_ATTR
-#define UNUSED_ATTR
-#endif
-
 namespace test {
 namespace mock {
 namespace stack_acl {
@@ -144,6 +131,15 @@ struct BTM_ReadRemoteConnectionAddr {
   };
 };
 extern struct BTM_ReadRemoteConnectionAddr BTM_ReadRemoteConnectionAddr;
+// Name: BTM_IsRemoteVersionReceived
+// Params: const RawAddress& addr
+// Returns: bool
+struct BTM_IsRemoteVersionReceived {
+  std::function<bool(const RawAddress& addr)> body{
+      [](const RawAddress& addr) { return false; }};
+  bool operator()(const RawAddress& addr) { return body(addr); };
+};
+extern struct BTM_IsRemoteVersionReceived BTM_IsRemoteVersionReceived;
 // Name: BTM_ReadRemoteVersion
 // Params: const RawAddress& addr, uint8_t* lmp_version, uint16_t*
 // manufacturer, uint16_t* lmp_sub_version
@@ -556,15 +552,6 @@ struct BTM_GetPeerSCA {
   };
 };
 extern struct BTM_GetPeerSCA BTM_GetPeerSCA;
-// Name: BTM_SetTraceLevel
-// Params: uint8_t new_level
-// Returns: uint8_t
-struct BTM_SetTraceLevel {
-  std::function<uint8_t(uint8_t new_level)> body{
-      [](uint8_t new_level) { return 0; }};
-  uint8_t operator()(uint8_t new_level) { return body(new_level); };
-};
-extern struct BTM_SetTraceLevel BTM_SetTraceLevel;
 // Name: acl_link_role_from_handle
 // Params: uint16_t handle
 // Returns: uint8_t
@@ -1064,12 +1051,11 @@ struct btm_read_failed_contact_counter_complete {
 extern struct btm_read_failed_contact_counter_complete
     btm_read_failed_contact_counter_complete;
 // Name: btm_read_failed_contact_counter_timeout
-// Params: UNUSED_ATTR void* data
+// Params: void* data
 // Returns: void
 struct btm_read_failed_contact_counter_timeout {
-  std::function<void(UNUSED_ATTR void* data)> body{
-      [](UNUSED_ATTR void* data) { ; }};
-  void operator()(UNUSED_ATTR void* data) { body(data); };
+  std::function<void(void* data)> body{[](void* data) { ; }};
+  void operator()(void* data) { body(data); };
 };
 extern struct btm_read_failed_contact_counter_timeout
     btm_read_failed_contact_counter_timeout;
@@ -1082,12 +1068,11 @@ struct btm_read_link_quality_complete {
 };
 extern struct btm_read_link_quality_complete btm_read_link_quality_complete;
 // Name: btm_read_link_quality_timeout
-// Params: UNUSED_ATTR void* data
+// Params: void* data
 // Returns: void
 struct btm_read_link_quality_timeout {
-  std::function<void(UNUSED_ATTR void* data)> body{
-      [](UNUSED_ATTR void* data) { ; }};
-  void operator()(UNUSED_ATTR void* data) { body(data); };
+  std::function<void(void* data)> body{[](void* data) { ; }};
+  void operator()(void* data) { body(data); };
 };
 extern struct btm_read_link_quality_timeout btm_read_link_quality_timeout;
 // Name: btm_read_remote_ext_features
@@ -1136,18 +1121,6 @@ struct btm_read_remote_ext_features_failed {
 };
 extern struct btm_read_remote_ext_features_failed
     btm_read_remote_ext_features_failed;
-// Name: btm_read_remote_features_complete
-// Params: uint16_t handle, uint8_t* features
-// Returns: void
-struct btm_read_remote_features_complete {
-  std::function<void(uint16_t handle, uint8_t* features)> body{
-      [](uint16_t handle, uint8_t* features) { ; }};
-  void operator()(uint16_t handle, uint8_t* features) {
-    body(handle, features);
-  };
-};
-extern struct btm_read_remote_features_complete
-    btm_read_remote_features_complete;
 // Name: btm_read_remote_version_complete
 // Params: tHCI_STATUS status, uint16_t handle, uint8_t lmp_version, uint16_t
 // manufacturer, uint16_t lmp_subversion Returns: void
@@ -1172,12 +1145,11 @@ struct btm_read_rssi_complete {
 };
 extern struct btm_read_rssi_complete btm_read_rssi_complete;
 // Name: btm_read_rssi_timeout
-// Params: UNUSED_ATTR void* data
+// Params: void* data
 // Returns: void
 struct btm_read_rssi_timeout {
-  std::function<void(UNUSED_ATTR void* data)> body{
-      [](UNUSED_ATTR void* data) { ; }};
-  void operator()(UNUSED_ATTR void* data) { body(data); };
+  std::function<void(void* data)> body{[](void* data) { ; }};
+  void operator()(void* data) { body(data); };
 };
 extern struct btm_read_rssi_timeout btm_read_rssi_timeout;
 // Name: btm_read_tx_power_complete
@@ -1192,12 +1164,11 @@ struct btm_read_tx_power_complete {
 };
 extern struct btm_read_tx_power_complete btm_read_tx_power_complete;
 // Name: btm_read_tx_power_timeout
-// Params: UNUSED_ATTR void* data
+// Params: void* data
 // Returns: void
 struct btm_read_tx_power_timeout {
-  std::function<void(UNUSED_ATTR void* data)> body{
-      [](UNUSED_ATTR void* data) { ; }};
-  void operator()(UNUSED_ATTR void* data) { body(data); };
+  std::function<void(void* data)> body{[](void* data) { ; }};
+  void operator()(void* data) { body(data); };
 };
 extern struct btm_read_tx_power_timeout btm_read_tx_power_timeout;
 // Name: btm_rejectlist_role_change_device

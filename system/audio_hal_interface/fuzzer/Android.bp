@@ -46,6 +46,7 @@ cc_defaults {
         "libstatslog",
         "libstatssocket",
         "libz",
+        "server_configurable_flags",
     ],
     static_libs: [
         "libFraunhoferAAC",
@@ -60,6 +61,7 @@ cc_defaults {
         "libbt-audio-hal-interface",
         "libbt-bta",
         "libbt-bta-core",
+        "libbt-btu-main-thread",
         "libbt-common",
         "libbt-hci",
         "libbt-sbc-decoder",

@@ -58,10 +58,10 @@ import com.android.bluetooth.btservice.CompanionManager;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -261,6 +261,32 @@ public class GattServiceTest {
         verify(appScanStats).recordScanStart(
                 mPiInfo.settings, mPiInfo.filters, false, false, scannerId);
         verify(mScanManager).startScan(any());
+    }
+
+    @Test
+    public void continuePiStartScanCheckUid() {
+        int scannerId = 1;
+
+        mPiInfo.settings = new ScanSettings.Builder().build();
+        mPiInfo.callingUid = 123;
+        mApp.info = mPiInfo;
+
+        AppScanStats appScanStats = mock(AppScanStats.class);
+        doReturn(appScanStats).when(mScannerMap).getAppScanStatsById(scannerId);
+
+        mService.continuePiStartScan(scannerId, mApp);
+
+        verify(appScanStats)
+                .recordScanStart(mPiInfo.settings, mPiInfo.filters, false, false, scannerId);
+        verify(mScanManager)
+                .startScan(
+                        argThat(
+                                new ArgumentMatcher<ScanClient>() {
+                                    @Override
+                                    public boolean matches(ScanClient client) {
+                                        return mPiInfo.callingUid == client.appUid;
+                                    }
+                                }));
     }
 
     @Test
@@ -691,7 +717,6 @@ public class GattServiceTest {
                 mAttributionSource);
     }
 
-    @Ignore("b/265327402")
     @Test
     public void registerSync() {
         ScanResult scanResult = new ScanResult(mDevice, 1, 2, 3, 4, 5, 6, 7, null, 8);
@@ -700,6 +725,7 @@ public class GattServiceTest {
         IPeriodicAdvertisingCallback callback = mock(IPeriodicAdvertisingCallback.class);
 
         mService.registerSync(scanResult, skip, timeout, callback, mAttributionSource);
+        verify(mPeriodicScanManager).startSync(scanResult, skip, timeout, callback);
     }
 
     @Test
@@ -708,9 +734,9 @@ public class GattServiceTest {
         int syncHandle = 2;
 
         mService.transferSync(mDevice, serviceData, syncHandle, mAttributionSource);
+        verify(mPeriodicScanManager).transferSync(mDevice, serviceData, syncHandle);
     }
 
-    @Ignore("b/265327402")
     @Test
     public void transferSetInfo() {
         int serviceData = 1;
@@ -719,14 +745,15 @@ public class GattServiceTest {
 
         mService.transferSetInfo(mDevice, serviceData, advHandle, callback,
                 mAttributionSource);
+        verify(mPeriodicScanManager).transferSetInfo(mDevice, serviceData, advHandle, callback);
     }
 
-    @Ignore("b/265327402")
     @Test
     public void unregisterSync() {
         IPeriodicAdvertisingCallback callback = mock(IPeriodicAdvertisingCallback.class);
 
         mService.unregisterSync(callback, mAttributionSource);
+        verify(mPeriodicScanManager).stopSync(callback);
     }
 
     @Test

@@ -21,6 +21,7 @@
 
 #include "btm_iso_api.h"
 #include "btm_iso_api_types.h"
+#include "device_groups.h"
 #include "devices.h"
 #include "hardware/bt_le_audio.h"
 #include "le_audio_types.h"
@@ -38,6 +39,8 @@ class LeAudioGroupStateMachine {
         int group_id, bluetooth::le_audio::GroupStreamStatus status) = 0;
     virtual void OnStateTransitionTimeout(int group_id) = 0;
     virtual void OnUpdatedCisConfiguration(int group_id, uint8_t direction) = 0;
+    virtual void OnDeviceAutonomousStateTransitionTimeout(
+        LeAudioDevice* leAudioDevice) = 0;
   };
 
   virtual ~LeAudioGroupStateMachine() = default;

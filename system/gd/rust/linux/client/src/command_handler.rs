@@ -14,7 +14,7 @@ use bt_topshim::profiles::hid_host::BthhReportType;
 use bt_topshim::profiles::sdp::{BtSdpMpsRecord, BtSdpRecord};
 use bt_topshim::profiles::{gatt::LePhy, ProfileConnectionState};
 use btstack::bluetooth::{BluetoothDevice, IBluetooth};
-use btstack::bluetooth_gatt::{GattWriteType, IBluetoothGatt, ScanSettings, ScanType};
+use btstack::bluetooth_gatt::{GattWriteType, IBluetoothGatt};
 use btstack::bluetooth_media::{IBluetoothMedia, IBluetoothTelephony};
 use btstack::bluetooth_qa::IBluetoothQA;
 use btstack::socket_manager::{IBluetoothSocketManager, SocketResult};
@@ -1267,7 +1267,7 @@ impl CommandHandler {
                     scanner_id,
                     // TODO(b/254870159): Construct real settings and filters depending on
                     // command line options.
-                    ScanSettings { interval: 0, window: 0, scan_type: ScanType::Active },
+                    None,
                     Some(btstack::bluetooth_gatt::ScanFilter {
                         rssi_high_threshold: 0,
                         rssi_low_threshold: 0,
@@ -1848,7 +1848,7 @@ impl CommandHandler {
             }
             "enable" => {
                 let mut context = self.lock_context();
-                context.telephony_dbus.as_mut().unwrap().set_phone_ops_enabled(true);
+                context.telephony_dbus.as_mut().unwrap().set_mps_qualification_enabled(true);
                 if context.mps_sdp_handle.is_none() {
                     let success = context
                         .adapter_dbus
@@ -1862,7 +1862,7 @@ impl CommandHandler {
             }
             "disable" => {
                 let mut context = self.lock_context();
-                context.telephony_dbus.as_mut().unwrap().set_phone_ops_enabled(false);
+                context.telephony_dbus.as_mut().unwrap().set_mps_qualification_enabled(false);
                 if let Some(handle) = context.mps_sdp_handle.take() {
                     let success = context.adapter_dbus.as_mut().unwrap().remove_sdp_record(handle);
                     if !success {

@@ -18,17 +18,17 @@
 
 #include <cstdint>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
+#include "bt_target.h"
 #include "stack/acl/peer_packet_types.h"
-#include "stack/include/acl_api_types.h"
-#include "stack/include/bt_types.h"
 #include "stack/include/btm_api_types.h"
+#include "stack/include/btm_status.h"
 #include "stack/include/hcimsgs.h"
 #include "types/bt_transport.h"
 #include "types/hci_role.h"
 #include "types/raw_address.h"
+#include "types/remote_version_type.h"
 
 enum btm_acl_encrypt_state_t {
   BTM_ACL_ENCRYPT_STATE_IDLE = 0,
@@ -142,7 +142,7 @@ typedef struct {
 } tSSR_PARAMS;
 
 #define BTM_PM_REC_NOT_USED 0
-typedef struct {
+typedef struct tBTM_PM_RCB {
   tBTM_PM_STATUS_CBACK* cback =
       nullptr;      /* to notify the registered party of mode change event */
   uint8_t mask = 0; /* registered request mask. 0, if this entry is not used */
@@ -179,6 +179,9 @@ struct tACL_CONN {
   bool peer_le_features_valid;
   BD_FEATURES peer_lmp_feature_pages[HCI_EXT_FEATURES_PAGE_MAX + 1];
   bool peer_lmp_feature_valid[HCI_EXT_FEATURES_PAGE_MAX + 1];
+
+  /* Whether "Read Remote Version Information Complete" was received */
+  bool remote_version_received{false};
 
   RawAddress active_remote_addr;
   tBLE_ADDR_TYPE active_remote_addr_type;
@@ -312,8 +315,6 @@ struct tACL_CONN {
 
   void Reset();
 };
-
-struct controller_t;
 
 /****************************************************
  **      ACL Management API

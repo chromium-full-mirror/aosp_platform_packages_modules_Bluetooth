@@ -27,17 +27,16 @@
 #include <cstdint>
 
 #include "bt_trace.h"
+#include "bta/dm/bta_dm_disc.h"
 #include "bta/dm/bta_dm_int.h"
 #include "bta/include/bta_api.h"
 #include "bta/include/bta_gatt_api.h"
 #include "bta/include/bta_sdp_api.h"
 #include "btif/include/btif_config.h"
-#include "btif/include/btif_dm.h"
 #include "device/include/interop.h"
 #include "gd/common/circular_buffer.h"
 #include "gd/common/strings.h"
 #include "include/bind_helpers.h"
-#include "internal_include/bte_appl.h"
 #include "osi/include/osi.h"  // UNUSED_ATTR
 #include "stack/btm/btm_int_types.h"
 #include "stack/btm/neighbor_inquiry.h"
@@ -45,8 +44,9 @@
 #include "stack/include/bt_dev_class.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_name.h"
-#include "stack/include/bt_types.h"
+#include "stack/include/bt_uuid16.h"
 #include "stack/include/btm_client_interface.h"
+#include "stack/include/btm_log_history.h"
 #include "stack/include/gap_api.h"
 #include "stack/include/gatt_api.h"
 #include "stack/include/sdp_status.h"
@@ -69,6 +69,7 @@ constexpr char kBtmLogTag[] = "SDP";
 static void bta_dm_gatt_disc_complete(uint16_t conn_id, tGATT_STATUS status);
 static void bta_dm_inq_results_cb(tBTM_INQ_RESULTS* p_inq, const uint8_t* p_eir,
                                   uint16_t eir_len);
+static void bta_dm_inq_cmpl(uint8_t num);
 static void bta_dm_inq_cmpl_cb(void* p_result);
 static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
                                                 DEV_CLASS dc,
@@ -80,7 +81,6 @@ static void bta_dm_sdp_callback(const RawAddress& bd_addr,
                                 tSDP_STATUS sdp_status);
 
 static void bta_dm_search_timer_cback(void* data);
-static const char* bta_dm_get_remname(void);
 static bool bta_dm_read_remote_device_name(const RawAddress& bd_addr,
                                            tBT_TRANSPORT transport);
 static void bta_dm_discover_device(const RawAddress& remote_bd_addr);
@@ -90,6 +90,11 @@ static void bta_dm_disable_search_and_disc(void);
 static void bta_dm_gattc_register(void);
 static void btm_dm_start_gatt_discovery(const RawAddress& bd_addr);
 static void bta_dm_gattc_callback(tBTA_GATTC_EVT event, tBTA_GATTC* p_data);
+static void bta_dm_search_cmpl();
+static void bta_dm_free_sdp_db();
+static void bta_dm_execute_queued_request();
+static void bta_dm_search_cancel_notify();
+static void bta_dm_close_gatt_conn(UNUSED_ATTR tBTA_DM_MSG* p_data);
 
 TimestampedStringCircularBuffer disc_gatt_history_{50};
 
@@ -234,12 +239,14 @@ const uint16_t bta_service_id_to_uuid_lkup_tbl[BTA_MAX_SERVICE_ID] = {
 };
 
 #define MAX_DISC_RAW_DATA_BUF (4096)
-uint8_t g_disc_raw_data_buf[MAX_DISC_RAW_DATA_BUF];
+static uint8_t g_disc_raw_data_buf[MAX_DISC_RAW_DATA_BUF];
 
-void bta_dm_search_set_state(tBTA_DM_STATE state) {
+static void bta_dm_search_set_state(tBTA_DM_STATE state) {
   bta_dm_search_cb.state = state;
 }
-tBTA_DM_STATE bta_dm_search_get_state() { return bta_dm_search_cb.state; }
+static tBTA_DM_STATE bta_dm_search_get_state() {
+  return bta_dm_search_cb.state;
+}
 
 /*******************************************************************************
  *
@@ -251,13 +258,12 @@ tBTA_DM_STATE bta_dm_search_get_state() { return bta_dm_search_cb.state; }
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_search_start(tBTA_DM_MSG* p_data) {
+static void bta_dm_search_start(tBTA_DM_MSG* p_data) {
   bta_dm_gattc_register();
 
-  APPL_TRACE_DEBUG("%s avoid_scatter=%d", __func__,
-                   p_bta_dm_cfg->avoid_scatter);
+  LOG_VERBOSE("%s avoid_scatter=%d", __func__, p_bta_dm_cfg->avoid_scatter);
 
-  BTM_ClearInqDb(nullptr);
+  get_btm_client_interface().db.BTM_ClearInqDb(nullptr);
   /* save search params */
   bta_dm_search_cb.p_search_cback = p_data->search.p_cback;
   bta_dm_search_cb.services = p_data->search.services;
@@ -288,7 +294,7 @@ void bta_dm_search_start(tBTA_DM_MSG* p_data) {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_search_cancel() {
+static void bta_dm_search_cancel() {
   if (BTM_IsInquiryActive()) {
     BTM_CancelInquiry();
     bta_dm_search_cancel_notify();
@@ -297,7 +303,7 @@ void bta_dm_search_cancel() {
   /* If no Service Search going on then issue cancel remote name in case it is
      active */
   else if (!bta_dm_search_cb.name_discover_done) {
-    BTM_CancelRemoteDeviceName();
+    get_btm_client_interface().peer.BTM_CancelRemoteDeviceName();
     bta_dm_search_cmpl();
   } else {
     bta_dm_inq_cmpl(0);
@@ -314,7 +320,7 @@ void bta_dm_search_cancel() {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_discover(tBTA_DM_MSG* p_data) {
+static void bta_dm_discover(tBTA_DM_MSG* p_data) {
   /* save the search condition */
   bta_dm_search_cb.services = BTA_ALL_SERVICE_MASK;
 
@@ -325,7 +331,8 @@ void bta_dm_discover(tBTA_DM_MSG* p_data) {
   bta_dm_search_cb.service_index = 0;
   bta_dm_search_cb.services_found = 0;
   bta_dm_search_cb.peer_name[0] = 0;
-  bta_dm_search_cb.p_btm_inq_info = BTM_InqDbRead(p_data->discover.bd_addr);
+  bta_dm_search_cb.p_btm_inq_info =
+      get_btm_client_interface().db.BTM_InqDbRead(p_data->discover.bd_addr);
   bta_dm_search_cb.transport = p_data->discover.transport;
 
   bta_dm_search_cb.name_discover_done = false;
@@ -375,20 +382,20 @@ static bool bta_dm_read_remote_device_name(const RawAddress& bd_addr,
                                            tBT_TRANSPORT transport) {
   tBTM_STATUS btm_status;
 
-  APPL_TRACE_DEBUG("%s", __func__);
+  LOG_VERBOSE("%s", __func__);
 
   bta_dm_search_cb.peer_bdaddr = bd_addr;
   bta_dm_search_cb.peer_name[0] = 0;
 
-  btm_status = BTM_ReadRemoteDeviceName(bta_dm_search_cb.peer_bdaddr,
-                                        bta_dm_remname_cback, transport);
+  btm_status = get_btm_client_interface().peer.BTM_ReadRemoteDeviceName(
+      bta_dm_search_cb.peer_bdaddr, bta_dm_remname_cback, transport);
 
   if (btm_status == BTM_CMD_STARTED) {
-    APPL_TRACE_DEBUG("%s: BTM_ReadRemoteDeviceName is started", __func__);
+    LOG_VERBOSE("%s: BTM_ReadRemoteDeviceName is started", __func__);
 
     return (true);
   } else if (btm_status == BTM_BUSY) {
-    APPL_TRACE_DEBUG("%s: BTM_ReadRemoteDeviceName is busy", __func__);
+    LOG_VERBOSE("%s: BTM_ReadRemoteDeviceName is busy", __func__);
 
     /* Remote name discovery is on going now so BTM cannot notify through
      * "bta_dm_remname_cback" */
@@ -399,8 +406,8 @@ static bool bta_dm_read_remote_device_name(const RawAddress& bd_addr,
 
     return (true);
   } else {
-    APPL_TRACE_WARNING("%s: BTM_ReadRemoteDeviceName returns 0x%02X", __func__,
-                       btm_status);
+    LOG_WARN("%s: BTM_ReadRemoteDeviceName returns 0x%02X", __func__,
+             btm_status);
 
     return (false);
   }
@@ -415,7 +422,7 @@ static bool bta_dm_read_remote_device_name(const RawAddress& bd_addr,
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_inq_cmpl(uint8_t num) {
+static void bta_dm_inq_cmpl(uint8_t num) {
   if (bta_dm_search_get_state() == BTA_DM_SEARCH_CANCELLING) {
     bta_dm_search_set_state(BTA_DM_SEARCH_IDLE);
     bta_dm_execute_queued_request();
@@ -428,12 +435,13 @@ void bta_dm_inq_cmpl(uint8_t num) {
 
   tBTA_DM_SEARCH data;
 
-  APPL_TRACE_DEBUG("bta_dm_inq_cmpl");
+  LOG_VERBOSE("bta_dm_inq_cmpl");
 
   data.inq_cmpl.num_resps = num;
   bta_dm_search_cb.p_search_cback(BTA_DM_INQ_CMPL_EVT, &data);
 
-  bta_dm_search_cb.p_btm_inq_info = BTM_InqDbFirst();
+  bta_dm_search_cb.p_btm_inq_info =
+      get_btm_client_interface().db.BTM_InqDbFirst();
   if (bta_dm_search_cb.p_btm_inq_info != NULL) {
     /* start name and service discovery from the first device on inquiry result
      */
@@ -447,7 +455,7 @@ void bta_dm_inq_cmpl(uint8_t num) {
   }
 }
 
-void bta_dm_remote_name_cmpl(const tBTA_DM_MSG* p_data) {
+static void bta_dm_remote_name_cmpl(const tBTA_DM_MSG* p_data) {
   CHECK(p_data != nullptr);
 
   const tBTA_DM_REMOTE_NAME& remote_name_msg = p_data->remote_name_msg;
@@ -459,7 +467,8 @@ void bta_dm_remote_name_cmpl(const tBTA_DM_MSG* p_data) {
                      bta_dm_state_text(bta_dm_search_get_state()).c_str(),
                      PRIVATE_NAME(remote_name_msg.bd_name)));
 
-  tBTM_INQ_INFO* p_btm_inq_info = BTM_InqDbRead(remote_name_msg.bd_addr);
+  tBTM_INQ_INFO* p_btm_inq_info =
+      get_btm_client_interface().db.BTM_InqDbRead(remote_name_msg.bd_addr);
   if (!bd_name_is_empty(remote_name_msg.bd_name) && p_btm_inq_info) {
     p_btm_inq_info->appl_knows_rem_name = true;
   }
@@ -580,7 +589,7 @@ static void bta_dm_store_audio_profiles_version() {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_sdp_result(tBTA_DM_MSG* p_data) {
+static void bta_dm_sdp_result(tBTA_DM_MSG* p_data) {
   tSDP_DISC_REC* p_sdp_rec = NULL;
   tBTA_DM_MSG* p_msg;
   bool scn_found = false;
@@ -594,7 +603,7 @@ void bta_dm_sdp_result(tBTA_DM_MSG* p_data) {
   if ((p_data->sdp_event.sdp_result == SDP_SUCCESS) ||
       (p_data->sdp_event.sdp_result == SDP_NO_RECS_MATCH) ||
       (p_data->sdp_event.sdp_result == SDP_DB_FULL)) {
-    APPL_TRACE_DEBUG("sdp_result::0x%x", p_data->sdp_event.sdp_result);
+    LOG_VERBOSE("sdp_result::0x%x", p_data->sdp_event.sdp_result);
     do {
       p_sdp_rec = NULL;
       if (bta_dm_search_cb.service_index == (BTA_USER_SERVICE_ID + 1)) {
@@ -670,8 +679,8 @@ void bta_dm_sdp_result(tBTA_DM_MSG* p_data) {
 
     } while (bta_dm_search_cb.service_index <= BTA_MAX_SERVICE_ID);
 
-    APPL_TRACE_DEBUG("%s services_found = %04x", __func__,
-                     bta_dm_search_cb.services_found);
+    LOG_VERBOSE("%s services_found = %04x", __func__,
+                bta_dm_search_cb.services_found);
 
     /* Collect the 128-bit services here and put them into the list */
     if (bta_dm_search_cb.services == BTA_ALL_SERVICE_MASK) {
@@ -748,17 +757,16 @@ void bta_dm_sdp_result(tBTA_DM_MSG* p_data) {
       if (bta_dm_search_cb.p_sdp_db != NULL &&
           bta_dm_search_cb.p_sdp_db->raw_used != 0 &&
           bta_dm_search_cb.p_sdp_db->raw_data != NULL) {
-        APPL_TRACE_DEBUG("%s raw_data used = 0x%x raw_data_ptr = 0x%x",
-                         __func__, bta_dm_search_cb.p_sdp_db->raw_used,
-                         bta_dm_search_cb.p_sdp_db->raw_data);
+        LOG_VERBOSE("%s raw_data used = 0x%x raw_data_ptr = 0x%p", __func__,
+                    bta_dm_search_cb.p_sdp_db->raw_used,
+                    bta_dm_search_cb.p_sdp_db->raw_data);
 
         bta_dm_search_cb.p_sdp_db->raw_data =
             NULL;  // no need to free this - it is a global assigned.
         bta_dm_search_cb.p_sdp_db->raw_used = 0;
         bta_dm_search_cb.p_sdp_db->raw_size = 0;
       } else {
-        APPL_TRACE_DEBUG("%s raw data size is 0 or raw_data is null!!",
-                         __func__);
+        LOG_VERBOSE("%s raw data size is 0 or raw_data is null!!", __func__);
       }
       /* Done with p_sdp_db. Free it */
       bta_dm_free_sdp_db();
@@ -771,8 +779,8 @@ void bta_dm_sdp_result(tBTA_DM_MSG* p_data) {
             static_cast<tBTA_STATUS>((3 + bta_dm_search_cb.peer_scn));
         p_msg->disc_result.result.disc_res.services |= BTA_USER_SERVICE_MASK;
 
-        APPL_TRACE_EVENT(" Piggy back the SCN over result field  SCN=%d",
-                         bta_dm_search_cb.peer_scn);
+        LOG_VERBOSE(" Piggy back the SCN over result field  SCN=%d",
+                    bta_dm_search_cb.peer_scn);
       }
       p_msg->disc_result.result.disc_res.bd_addr = bta_dm_search_cb.peer_bdaddr;
       strlcpy((char*)p_msg->disc_result.result.disc_res.bd_name,
@@ -837,7 +845,7 @@ static void bta_dm_read_dis_cmpl(const RawAddress& addr,
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_search_cmpl() {
+static void bta_dm_search_cmpl() {
   bta_dm_search_set_state(BTA_DM_SEARCH_IDLE);
 
   uint16_t conn_id = bta_dm_search_cb.conn_id;
@@ -916,8 +924,8 @@ void bta_dm_search_cmpl() {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_disc_result(tBTA_DM_MSG* p_data) {
-  APPL_TRACE_EVENT("%s", __func__);
+static void bta_dm_disc_result(tBTA_DM_MSG* p_data) {
+  LOG_VERBOSE("%s", __func__);
 
   /* disc_res.device_type is set only when GATT discovery is finished in
    * bta_dm_gatt_disc_complete */
@@ -946,10 +954,10 @@ void bta_dm_disc_result(tBTA_DM_MSG* p_data) {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_search_result(tBTA_DM_MSG* p_data) {
-  APPL_TRACE_DEBUG("%s searching:0x%04x, result:0x%04x", __func__,
-                   bta_dm_search_cb.services,
-                   p_data->disc_result.result.disc_res.services);
+static void bta_dm_search_result(tBTA_DM_MSG* p_data) {
+  LOG_VERBOSE("%s searching:0x%04x, result:0x%04x", __func__,
+              bta_dm_search_cb.services,
+              p_data->disc_result.result.disc_res.services);
 
   /* call back if application wants name discovery or found services that
    * application is searching */
@@ -984,7 +992,7 @@ void bta_dm_search_result(tBTA_DM_MSG* p_data) {
  *
  ******************************************************************************/
 static void bta_dm_search_timer_cback(UNUSED_ATTR void* data) {
-  APPL_TRACE_EVENT("%s", __func__);
+  LOG_VERBOSE("%s", __func__);
   bta_dm_search_cb.wait_disc = false;
 
   /* proceed with next device */
@@ -1000,7 +1008,7 @@ static void bta_dm_search_timer_cback(UNUSED_ATTR void* data) {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_free_sdp_db() {
+static void bta_dm_free_sdp_db() {
   osi_free_and_reset((void**)&bta_dm_search_cb.p_sdp_db);
 }
 
@@ -1013,7 +1021,7 @@ void bta_dm_free_sdp_db() {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_queue_search(tBTA_DM_MSG* p_data) {
+static void bta_dm_queue_search(tBTA_DM_MSG* p_data) {
   if (bta_dm_search_cb.p_pending_search) {
     LOG_WARN("Overwrote previous device discovery inquiry scan request");
   }
@@ -1033,7 +1041,7 @@ void bta_dm_queue_search(tBTA_DM_MSG* p_data) {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_queue_disc(tBTA_DM_MSG* p_data) {
+static void bta_dm_queue_disc(tBTA_DM_MSG* p_data) {
   tBTA_DM_MSG* p_pending_discovery =
       (tBTA_DM_MSG*)osi_malloc(sizeof(tBTA_DM_API_DISCOVER));
   memcpy(p_pending_discovery, p_data, sizeof(tBTA_DM_API_DISCOVER));
@@ -1053,7 +1061,7 @@ void bta_dm_queue_disc(tBTA_DM_MSG* p_data) {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_execute_queued_request() {
+static void bta_dm_execute_queued_request() {
   tBTA_DM_MSG* p_pending_discovery = (tBTA_DM_MSG*)fixed_queue_try_dequeue(
       bta_dm_search_cb.pending_discovery_queue);
   if (p_pending_discovery) {
@@ -1088,7 +1096,7 @@ bool bta_dm_is_search_request_queued() {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_search_clear_queue() {
+static void bta_dm_search_clear_queue() {
   osi_free_and_reset((void**)&bta_dm_search_cb.p_pending_search);
   if (bluetooth::common::InitFlags::
           IsBtmDmFlushDiscoveryQueueOnSearchCancel()) {
@@ -1105,7 +1113,7 @@ void bta_dm_search_clear_queue() {
  * Returns          void
  *
  ******************************************************************************/
-void bta_dm_search_cancel_notify() {
+static void bta_dm_search_cancel_notify() {
   if (bta_dm_search_cb.p_search_cback) {
     bta_dm_search_cb.p_search_cback(BTA_DM_SEARCH_CANCEL_CMPL_EVT, NULL);
   }
@@ -1113,7 +1121,7 @@ void bta_dm_search_cancel_notify() {
     case BTA_DM_SEARCH_ACTIVE:
     case BTA_DM_SEARCH_CANCELLING:
       if (!bta_dm_search_cb.name_discover_done) {
-        BTM_CancelRemoteDeviceName();
+        get_btm_client_interface().peer.BTM_CancelRemoteDeviceName();
       }
       break;
     case BTA_DM_SEARCH_IDLE:
@@ -1140,8 +1148,8 @@ static void bta_dm_find_services(const RawAddress& bd_addr) {
             bta_dm_search_cb.service_index))) {
       bta_dm_search_cb.p_sdp_db =
           (tSDP_DISCOVERY_DB*)osi_malloc(BTA_DM_SDP_DB_SIZE);
-      APPL_TRACE_DEBUG("bta_dm_search_cb.services = %04x***********",
-                       bta_dm_search_cb.services);
+      LOG_VERBOSE("bta_dm_search_cb.services = %04x***********",
+                  bta_dm_search_cb.services);
       /* try to search all services by search based on L2CAP UUID */
       if (bta_dm_search_cb.services == BTA_ALL_SERVICE_MASK) {
         LOG_INFO("%s services_to_search=%08x", __func__,
@@ -1230,11 +1238,11 @@ static void bta_dm_find_services(const RawAddress& bd_addr) {
  *
  ******************************************************************************/
 static void bta_dm_discover_next_device(void) {
-  APPL_TRACE_DEBUG("bta_dm_discover_next_device");
+  LOG_VERBOSE("bta_dm_discover_next_device");
 
   /* searching next device on inquiry result */
-  bta_dm_search_cb.p_btm_inq_info =
-      BTM_InqDbNext(bta_dm_search_cb.p_btm_inq_info);
+  bta_dm_search_cb.p_btm_inq_info = get_btm_client_interface().db.BTM_InqDbNext(
+      bta_dm_search_cb.p_btm_inq_info);
   if (bta_dm_search_cb.p_btm_inq_info != NULL) {
     bta_dm_search_cb.name_discover_done = false;
     bta_dm_search_cb.peer_name[0] = 0;
@@ -1267,9 +1275,18 @@ static tBT_TRANSPORT bta_dm_determine_discovery_transport(
     tBT_DEVICE_TYPE dev_type;
     tBLE_ADDR_TYPE addr_type;
 
-    BTM_ReadDevInfo(remote_bd_addr, &dev_type, &addr_type);
+    get_btm_client_interface().peer.BTM_ReadDevInfo(remote_bd_addr, &dev_type,
+                                                    &addr_type);
     if (dev_type == BT_DEVICE_TYPE_BLE || addr_type == BLE_ADDR_RANDOM) {
       transport = BT_TRANSPORT_LE;
+    } else if (dev_type == BT_DEVICE_TYPE_DUMO) {
+      if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(
+              remote_bd_addr, BT_TRANSPORT_BR_EDR)) {
+        transport = BT_TRANSPORT_BR_EDR;
+      } else if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(
+                     remote_bd_addr, BT_TRANSPORT_LE)) {
+        transport = BT_TRANSPORT_LE;
+      }
     }
   } else {
     transport = bta_dm_search_cb.transport;
@@ -1285,14 +1302,14 @@ static void bta_dm_discover_device(const RawAddress& remote_bd_addr) {
 
   bta_dm_search_cb.peer_bdaddr = remote_bd_addr;
 
-  APPL_TRACE_DEBUG(
-      "%s name_discover_done = %d p_btm_inq_info 0x%x state = %d, transport=%d",
+  LOG_VERBOSE(
+      "%s name_discover_done = %d p_btm_inq_info 0x%p state = %d, transport=%d",
       __func__, bta_dm_search_cb.name_discover_done,
       bta_dm_search_cb.p_btm_inq_info, bta_dm_search_get_state(), transport);
 
   if (bta_dm_search_cb.p_btm_inq_info) {
-    APPL_TRACE_DEBUG("%s appl_knows_rem_name %d", __func__,
-                     bta_dm_search_cb.p_btm_inq_info->appl_knows_rem_name);
+    LOG_VERBOSE("%s appl_knows_rem_name %d", __func__,
+                bta_dm_search_cb.p_btm_inq_info->appl_knows_rem_name);
   }
   if (((bta_dm_search_cb.p_btm_inq_info) &&
        (bta_dm_search_cb.p_btm_inq_info->results.device_type ==
@@ -1363,8 +1380,8 @@ static void bta_dm_discover_device(const RawAddress& remote_bd_addr) {
           bta_dm_search_cb.wait_disc = true;
       }
       if (bta_dm_search_cb.p_btm_inq_info) {
-        APPL_TRACE_DEBUG(
-            "%s p_btm_inq_info 0x%x results.device_type 0x%x "
+        LOG_VERBOSE(
+            "%s p_btm_inq_info 0x%p results.device_type 0x%x "
             "services_to_search 0x%x",
             __func__, bta_dm_search_cb.p_btm_inq_info,
             bta_dm_search_cb.p_btm_inq_info->results.device_type,
@@ -1464,7 +1481,8 @@ static void bta_dm_inq_results_cb(tBTM_INQ_RESULTS* p_inq, const uint8_t* p_eir,
 
   result.inq_res.ble_evt_type = p_inq->ble_evt_type;
 
-  p_inq_info = BTM_InqDbRead(p_inq->remote_bd_addr);
+  p_inq_info =
+      get_btm_client_interface().db.BTM_InqDbRead(p_inq->remote_bd_addr);
   if (p_inq_info != NULL) {
     /* initialize remt_name_not_required to false so that we get the name by
      * default */
@@ -1492,7 +1510,7 @@ static void bta_dm_inq_results_cb(tBTM_INQ_RESULTS* p_inq, const uint8_t* p_eir,
  *
  ******************************************************************************/
 static void bta_dm_inq_cmpl_cb(void* p_result) {
-  APPL_TRACE_DEBUG("%s", __func__);
+  LOG_VERBOSE("%s", __func__);
 
   bta_dm_inq_cmpl(((tBTM_INQUIRY_CMPL*)p_result)->num_resp);
 }
@@ -1512,7 +1530,7 @@ static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
   tBTM_REMOTE_DEV_NAME rem_name = {};
   tBTM_STATUS btm_status;
 
-  APPL_TRACE_DEBUG("%s name=<%s>", __func__, bd_name);
+  LOG_VERBOSE("%s name=<%s>", __func__, bd_name);
 
   /* if this is what we are looking for */
   if (bta_dm_search_cb.peer_bdaddr == bd_addr) {
@@ -1527,16 +1545,16 @@ static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
     bta_dm_remname_cback(&rem_name);
   } else {
     /* get name of device */
-    btm_status =
-        BTM_ReadRemoteDeviceName(bta_dm_search_cb.peer_bdaddr,
-                                 bta_dm_remname_cback, BT_TRANSPORT_BR_EDR);
+    btm_status = get_btm_client_interface().peer.BTM_ReadRemoteDeviceName(
+        bta_dm_search_cb.peer_bdaddr, bta_dm_remname_cback,
+        BT_TRANSPORT_BR_EDR);
     if (btm_status == BTM_BUSY) {
       /* wait for next chance(notification of remote name discovery done) */
-      APPL_TRACE_DEBUG("%s: BTM_ReadRemoteDeviceName is busy", __func__);
+      LOG_VERBOSE("%s: BTM_ReadRemoteDeviceName is busy", __func__);
     } else if (btm_status != BTM_CMD_STARTED) {
       /* if failed to start getting remote name then continue */
-      APPL_TRACE_WARNING("%s: BTM_ReadRemoteDeviceName returns 0x%02X",
-                         __func__, btm_status);
+      LOG_WARN("%s: BTM_ReadRemoteDeviceName returns 0x%02X", __func__,
+               btm_status);
 
       // needed so our response is not ignored, since this corresponds to the
       // actual peer_bdaddr
@@ -1629,7 +1647,7 @@ static void bta_dm_remname_cback(const tBTM_REMOTE_DEV_NAME* p_remote_name) {
  *
  * Returns          char * - Pointer to the remote device name
  ******************************************************************************/
-static const char* bta_dm_get_remname(void) {
+const char* bta_dm_get_remname(void) {
   const char* p_name = (const char*)bta_dm_search_cb.peer_name;
 
   /* If the name isn't already stored, try retrieving from BTM */
@@ -1656,7 +1674,7 @@ static void bta_dm_observe_results_cb(tBTM_INQ_RESULTS* p_inq,
                                       const uint8_t* p_eir, uint16_t eir_len) {
   tBTA_DM_SEARCH result;
   tBTM_INQ_INFO* p_inq_info;
-  APPL_TRACE_DEBUG("bta_dm_observe_results_cb");
+  LOG_VERBOSE("bta_dm_observe_results_cb");
 
   result.inq_res.bd_addr = p_inq->remote_bd_addr;
   result.inq_res.original_bda = p_inq->original_bda;
@@ -1676,7 +1694,8 @@ static void bta_dm_observe_results_cb(tBTM_INQ_RESULTS* p_inq,
   result.inq_res.p_eir = const_cast<uint8_t*>(p_eir);
   result.inq_res.eir_len = eir_len;
 
-  p_inq_info = BTM_InqDbRead(p_inq->remote_bd_addr);
+  p_inq_info =
+      get_btm_client_interface().db.BTM_InqDbRead(p_inq->remote_bd_addr);
   if (p_inq_info != NULL) {
     /* initialize remt_name_not_required to false so that we get the name by
      * default */
@@ -1727,7 +1746,8 @@ static void bta_dm_opportunistic_observe_results_cb(tBTM_INQ_RESULTS* p_inq,
   result.inq_res.p_eir = const_cast<uint8_t*>(p_eir);
   result.inq_res.eir_len = eir_len;
 
-  p_inq_info = BTM_InqDbRead(p_inq->remote_bd_addr);
+  p_inq_info =
+      get_btm_client_interface().db.BTM_InqDbRead(p_inq->remote_bd_addr);
   if (p_inq_info != NULL) {
     /* initialize remt_name_not_required to false so that we get the name by
      * default */
@@ -1758,7 +1778,7 @@ static void bta_dm_opportunistic_observe_results_cb(tBTM_INQ_RESULTS* p_inq,
 static void bta_dm_observe_cmpl_cb(void* p_result) {
   tBTA_DM_SEARCH data;
 
-  APPL_TRACE_DEBUG("bta_dm_observe_cmpl_cb");
+  LOG_VERBOSE("bta_dm_observe_cmpl_cb");
 
   data.inq_cmpl.num_resps = ((tBTM_INQUIRY_CMPL*)p_result)->num_resp;
   if (bta_dm_search_cb.p_scan_cback) {
@@ -1771,9 +1791,9 @@ static void bta_dm_observe_cmpl_cb(void* p_result) {
 
 static void bta_dm_start_scan(uint8_t duration_sec,
                               bool low_latency_scan = false) {
-  tBTM_STATUS status =
-      BTM_BleObserve(true, duration_sec, bta_dm_observe_results_cb,
-                     bta_dm_observe_cmpl_cb, low_latency_scan);
+  tBTM_STATUS status = get_btm_client_interface().ble.BTM_BleObserve(
+      true, duration_sec, bta_dm_observe_results_cb, bta_dm_observe_cmpl_cb,
+      low_latency_scan);
 
   if (status != BTM_CMD_STARTED) {
     tBTA_DM_SEARCH data = {
@@ -1782,8 +1802,7 @@ static void bta_dm_start_scan(uint8_t duration_sec,
                 .num_resps = 0,
             },
     };
-    APPL_TRACE_WARNING(" %s BTM_BleObserve  failed. status %d", __func__,
-                       status);
+    LOG_WARN(" %s BTM_BleObserve  failed. status %d", __func__, status);
     if (bta_dm_search_cb.p_scan_cback) {
       bta_dm_search_cb.p_scan_cback(BTA_DM_INQ_CMPL_EVT, &data);
     }
@@ -1797,7 +1816,7 @@ void bta_dm_ble_observe(bool start, uint8_t duration,
                         tBTA_DM_SEARCH_CBACK* p_cback) {
   if (!start) {
     bta_dm_search_cb.p_scan_cback = NULL;
-    BTM_BleObserve(false, 0, NULL, NULL);
+    get_btm_client_interface().ble.BTM_BleObserve(false, 0, NULL, NULL, false);
     return;
   }
 
@@ -1812,7 +1831,7 @@ void bta_dm_ble_scan(bool start, uint8_t duration_sec,
   if (bta_dm_search_cb.p_scan_cback != NULL) return;
 
   if (!start) {
-    BTM_BleObserve(false, 0, NULL, NULL);
+    get_btm_client_interface().ble.BTM_BleObserve(false, 0, NULL, NULL, false);
     return;
   }
 
@@ -1882,7 +1901,7 @@ static void bta_dm_gattc_register(void) {
  *
  ******************************************************************************/
 static void bta_dm_gatt_disc_complete(uint16_t conn_id, tGATT_STATUS status) {
-  APPL_TRACE_DEBUG("%s conn_id = %d", __func__, conn_id);
+  LOG_VERBOSE("%s conn_id = %d", __func__, conn_id);
 
   tBTA_DM_MSG* p_msg = (tBTA_DM_MSG*)osi_malloc(sizeof(tBTA_DM_MSG));
 
@@ -1890,8 +1909,8 @@ static void bta_dm_gatt_disc_complete(uint16_t conn_id, tGATT_STATUS status) {
   p_msg->hdr.event = BTA_DM_DISCOVERY_RESULT_EVT;
   p_msg->disc_result.result.disc_res.result =
       (status == GATT_SUCCESS) ? BTA_SUCCESS : BTA_FAILURE;
-  APPL_TRACE_DEBUG("%s service found: 0x%08x", __func__,
-                   bta_dm_search_cb.services_found);
+  LOG_VERBOSE("%s service found: 0x%08x", __func__,
+              bta_dm_search_cb.services_found);
   p_msg->disc_result.result.disc_res.services = bta_dm_search_cb.services_found;
   p_msg->disc_result.result.disc_res.num_uuids = 0;
   p_msg->disc_result.result.disc_res.p_uuid_list = NULL;
@@ -1936,7 +1955,7 @@ static void bta_dm_gatt_disc_complete(uint16_t conn_id, tGATT_STATUS status) {
  * Parameters:
  *
  ******************************************************************************/
-void bta_dm_close_gatt_conn(UNUSED_ATTR tBTA_DM_MSG* p_data) {
+static void bta_dm_close_gatt_conn(UNUSED_ATTR tBTA_DM_MSG* p_data) {
   if (bta_dm_search_cb.conn_id != GATT_INVALID_CONN_ID)
     BTA_GATTC_Close(bta_dm_search_cb.conn_id);
 
@@ -1953,7 +1972,7 @@ void bta_dm_close_gatt_conn(UNUSED_ATTR tBTA_DM_MSG* p_data) {
  * Parameters:
  *
  ******************************************************************************/
-void btm_dm_start_gatt_discovery(const RawAddress& bd_addr) {
+static void btm_dm_start_gatt_discovery(const RawAddress& bd_addr) {
   constexpr bool kUseOpportunistic = true;
 
   bta_dm_search_cb.gatt_disc_active = true;
@@ -2000,7 +2019,7 @@ void btm_dm_start_gatt_discovery(const RawAddress& bd_addr) {
  * Parameters:
  *
  ******************************************************************************/
-void bta_dm_proc_open_evt(tBTA_GATTC_OPEN* p_data) {
+static void bta_dm_proc_open_evt(tBTA_GATTC_OPEN* p_data) {
   VLOG(1) << "DM Search state= " << bta_dm_search_get_state()
           << " search_cb.peer_dbaddr:" << bta_dm_search_cb.peer_bdaddr
           << " connected_bda=" << p_data->remote_bda.address;
@@ -2065,7 +2084,7 @@ void bta_dm_proc_close_evt(const tBTA_GATTC_CLOSE& close) {
  *
  ******************************************************************************/
 static void bta_dm_gattc_callback(tBTA_GATTC_EVT event, tBTA_GATTC* p_data) {
-  APPL_TRACE_DEBUG("bta_dm_gattc_callback event = %d", event);
+  LOG_VERBOSE("bta_dm_gattc_callback event = %d", event);
 
   switch (event) {
     case BTA_GATTC_OPEN_EVT:
@@ -2146,6 +2165,12 @@ void bta_dm_remname_cback(const tBTM_REMOTE_DEV_NAME* p) {
 tBT_TRANSPORT bta_dm_determine_discovery_transport(const RawAddress& bd_addr) {
   return ::bta_dm_determine_discovery_transport(bd_addr);
 }
+
+void bta_dm_remote_name_cmpl(const tBTA_DM_MSG* p_data) {
+  ::bta_dm_remote_name_cmpl(p_data);
+}
+
+void bta_dm_sdp_result(tBTA_DM_MSG* p_data) { ::bta_dm_sdp_result(p_data); }
 
 }  // namespace testing
 }  // namespace legacy
@@ -2344,6 +2369,24 @@ bool bta_dm_search_sm_execute(const BT_HDR_RIGID* p_msg) {
   }
   return true;
 }
+
+static void bta_dm_disc_reset() {
+  alarm_free(bta_dm_search_cb.search_timer);
+  alarm_free(bta_dm_search_cb.gatt_close_timer);
+  osi_free_and_reset((void**)&bta_dm_search_cb.p_pending_search);
+  fixed_queue_free(bta_dm_search_cb.pending_discovery_queue, osi_free);
+  bta_dm_search_cb = {};
+}
+
+void bta_dm_disc_start(bool delay_close_gatt) {
+  bta_dm_disc_reset();
+  bta_dm_search_cb.search_timer = alarm_new("bta_dm_search.search_timer");
+  bta_dm_search_cb.gatt_close_timer =
+      delay_close_gatt ? alarm_new("bta_dm_search.gatt_close_timer") : nullptr;
+  bta_dm_search_cb.pending_discovery_queue = fixed_queue_new(SIZE_MAX);
+}
+
+void bta_dm_disc_stop() { bta_dm_disc_reset(); }
 
 #define DUMPSYS_TAG "shim::legacy::bta::dm"
 void DumpsysBtaDmDisc(int fd) {

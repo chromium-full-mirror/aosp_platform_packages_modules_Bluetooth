@@ -9,13 +9,14 @@ use dbus::message::MatchRule;
 use dbus::nonblock::SyncConnection;
 use dbus_crossroads::Crossroads;
 use tokio::sync::mpsc;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 use crate::bt_adv::AdvSet;
 use crate::bt_gatt::GattClientContext;
 use crate::callbacks::{
     AdminCallback, AdvertisingSetCallback, BtCallback, BtConnectionCallback, BtManagerCallback,
     BtSocketManagerCallback, MediaCallback, QACallback, ScannerCallback, SuspendCallback,
+    TelephonyCallback,
 };
 use crate::command_handler::{CommandHandler, SocketSchedule};
 use crate::dbus_iface::{
@@ -246,6 +247,9 @@ impl ClientContext {
         let fg = self.fg.clone();
         tokio::spawn(async move {
             let adapter = String::from(format!("adapter{}", idx));
+            // Floss won't export the interface until it is ready to be used.
+            // Wait 1 second before registering the callbacks.
+            sleep(Duration::from_millis(1000)).await;
             let _ = fg.send(ForegroundActions::RegisterAdapterCallback(adapter)).await;
         });
     }
@@ -540,6 +544,10 @@ async fn handle_client_command(
                     format!("/org/chromium/bluetooth/client/{}/qa_manager_callback", adapter);
                 let media_cb_objpath: String =
                     format!("/org/chromium/bluetooth/client/{}/bluetooth_media_callback", adapter);
+                let telephony_cb_objpath: String = format!(
+                    "/org/chromium/bluetooth/client/{}/bluetooth_telephony_callback",
+                    adapter
+                );
 
                 let dbus_connection = context.lock().unwrap().dbus_connection.clone();
                 let dbus_crossroads = context.lock().unwrap().dbus_crossroads.clone();
@@ -686,6 +694,22 @@ async fn handle_client_command(
                     )))
                     .await
                     .expect("D-Bus error on IBluetoothMedia::RegisterCallback");
+
+                context
+                    .lock()
+                    .unwrap()
+                    .telephony_dbus
+                    .as_mut()
+                    .unwrap()
+                    .rpc
+                    .register_telephony_callback(Box::new(TelephonyCallback::new(
+                        telephony_cb_objpath,
+                        context.clone(),
+                        dbus_connection.clone(),
+                        dbus_crossroads.clone(),
+                    )))
+                    .await
+                    .expect("D-Bus error on IBluetoothMedia::RegisterTelephonyCallback");
 
                 context.lock().unwrap().adapter_ready = true;
                 let adapter_address = context.lock().unwrap().update_adapter_address();
