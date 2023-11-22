@@ -48,7 +48,6 @@ const char* PTS_L2CAP_ECOC_INITIAL_CHAN_CNT = "PTS_L2capEcocInitialChanCnt";
 const char* PTS_L2CAP_ECOC_CONNECT_REMAINING = "PTS_L2capEcocConnectRemaining";
 const char* PTS_L2CAP_ECOC_SEND_NUM_OF_SDU = "PTS_L2capEcocSendNumOfSdu";
 const char* PTS_L2CAP_ECOC_RECONFIGURE = "PTS_L2capEcocReconfigure";
-const char* PTS_EXCLUDE_HSP_IN_SDP_RECORD = "PTS_ExcludeHspInSdpRecord";
 const char* PTS_BROADCAST_AUDIO_CONFIG_OPTION =
     "PTS_BroadcastAudioConfigOption";
 const char* PTS_LE_AUDIO_SUSPEND_STREAMING = "PTS_LeAudioSuspendStreaming";
@@ -203,11 +202,6 @@ static bool get_pts_le_audio_disable_ases_before_stopping(void) {
                          PTS_LE_AUDIO_SUSPEND_STREAMING, false);
 }
 
-static bool get_pts_exclued_hsp_in_sdp_record(void) {
-  return config_get_bool(*config, CONFIG_DEFAULT_SECTION,
-                         PTS_EXCLUDE_HSP_IN_SDP_RECORD, false);
-}
-
 static config_t* get_all(void) { return config.get(); }
 
 const stack_config_t interface = {
@@ -232,7 +226,6 @@ const stack_config_t interface = {
     get_pts_l2cap_ecoc_reconfigure,
     get_pts_broadcast_audio_config_options,
     get_pts_le_audio_disable_ases_before_stopping,
-    get_pts_exclued_hsp_in_sdp_record,
     get_all};
 
 const stack_config_t* stack_config_get_interface(void) { return &interface; }
