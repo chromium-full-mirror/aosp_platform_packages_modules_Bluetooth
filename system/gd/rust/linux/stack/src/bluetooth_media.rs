@@ -1274,6 +1274,14 @@ impl BluetoothMedia {
         };
 
         debug!("[{}]: UHID: Telephony use: {}", DisplayAddress(&addr), state);
+        if state == false {
+            // As there's a HID call for each WebHID call, even if it has been answered in the app
+            // or pre-exists, and that an app which disconnects from WebHID may not have trigger
+            // the UHID_OUTPUT_NONE, we need to remove all pending HID calls on telephony use
+            // release to keep lower HF layer in sync and not prevent A2DP streaming
+            self.hangup_call_impl();
+            self.phone_state_change("".into());
+        }
         self.telephony_callbacks.lock().unwrap().for_all_callbacks(|callback| {
             callback.on_telephony_use(address.to_string(), state);
         });
@@ -2727,11 +2735,6 @@ impl IBluetoothMedia for BluetoothMedia {
     }
 
     fn stop_audio_request(&mut self) {
-        if !self.a2dp_audio_state.values().any(|state| *state == BtavAudioState::Started) {
-            info!("No active stream on A2DP device, ignoring request to stop audio.");
-            return;
-        }
-
         debug!("Stop audio request");
 
         match self.a2dp.as_mut() {

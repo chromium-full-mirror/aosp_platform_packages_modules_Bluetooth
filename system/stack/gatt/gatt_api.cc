@@ -52,7 +52,6 @@ using namespace bluetooth::legacy::stack::sdp;
 
 using bluetooth::Uuid;
 
-bool BTM_BackgroundConnectAddressKnown(const RawAddress& address);
 /**
  * Add an service handle range to the list in decending order of the start
  * handle. Return reference to the newly added element.
@@ -978,7 +977,8 @@ tGATT_STATUS GATTC_Read(uint16_t conn_id, tGATT_READ_TYPE type,
       p_clcb->e_handle = p_read->service.e_handle;
       p_clcb->uuid = p_read->service.uuid;
       break;
-    case GATT_READ_MULTIPLE: {
+    case GATT_READ_MULTIPLE:
+    case GATT_READ_MULTIPLE_VAR_LEN: {
       p_clcb->s_handle = 0;
       /* copy multiple handles in CB */
       tGATT_READ_MULTI* p_read_multi =
@@ -1440,7 +1440,7 @@ bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr,
   } else {
     LOG_DEBUG("Starting background connect gatt_if=%u address=%s", gatt_if,
               ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
-    if (!BTM_BackgroundConnectAddressKnown(bd_addr)) {
+    if (!BTM_Sec_AddressKnown(bd_addr)) {
       //  RPA can rotate, causing address to "expire" in the background
       //  connection list. RPA is allowed for direct connect, as such request
       //  times out after 30 seconds
@@ -1688,8 +1688,6 @@ void gatt_load_bonded(void) {
       gatt_bonded_check_add_address(p_dev_rec->bd_addr);
     }
     if (p_dev_rec->is_le_link_key_known()) {
-      VLOG(1) << " add bonded BLE "
-              << ADDRESS_TO_LOGGABLE_STR(p_dev_rec->ble.pseudo_addr);
       LOG_VERBOSE("Add bonded BLE %s",
                   ADDRESS_TO_LOGGABLE_CSTR(p_dev_rec->ble.pseudo_addr));
       gatt_bonded_check_add_address(p_dev_rec->ble.pseudo_addr);

@@ -23,14 +23,16 @@
  *
  ******************************************************************************/
 
+#define LOG_TAG "btm_sco"
+
+#include "stack/btm/btm_sco.h"
+
 #include <base/logging.h>
 #include <base/strings/stringprintf.h>
 
 #include <cstdint>
 #include <cstring>
 #include <string>
-
-#define LOG_TAG "btm_sco"
 
 #include "common/bidi_queue.h"
 #include "device/include/controller.h"
@@ -42,7 +44,6 @@
 #include "osi/include/properties.h"
 #include "osi/include/stack_power_telemetry.h"
 #include "stack/btm/btm_int_types.h"
-#include "stack/btm/btm_sco.h"
 #include "stack/btm/btm_sco_hfp_hal.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/include/acl_api.h"
@@ -50,6 +51,7 @@
 #include "stack/include/btm_api_types.h"
 #include "stack/include/btm_log_history.h"
 #include "stack/include/hci_error_code.h"
+#include "stack/include/hcimsgs.h"
 #include "stack/include/main_thread.h"
 #include "stack/include/sdpdefs.h"
 #include "stack/include/stack_metrics_logging.h"
@@ -78,14 +80,12 @@ typedef struct {
 
 constexpr char kBtmLogTag[] = "SCO";
 
-const bluetooth::legacy::hci::Interface& GetLegacyHciInterface() {
-  return bluetooth::legacy::hci::GetInterface();
-}
-
 };  // namespace
 
+using bluetooth::legacy::hci::GetInterface;
+
 // forward declaration for dequeueing packets
-void btm_route_sco_data(bluetooth::hci::ScoView valid_packet);
+static void btm_route_sco_data(bluetooth::hci::ScoView valid_packet);
 
 namespace cpp {
 bluetooth::common::BidiQueueEnd<bluetooth::hci::ScoBuilder,
@@ -282,7 +282,7 @@ static tSCO_CONN* btm_get_active_sco() {
  * Returns          void
  *
  ******************************************************************************/
-void btm_route_sco_data(bluetooth::hci::ScoView valid_packet) {
+static void btm_route_sco_data(bluetooth::hci::ScoView valid_packet) {
   uint16_t handle = valid_packet.GetHandle();
   if (handle > HCI_HANDLE_MAX) {
     LOG_ERROR("Dropping SCO data with invalid handle: 0x%X > 0x%X, ", handle,
@@ -305,7 +305,6 @@ void btm_route_sco_data(bluetooth::hci::ScoView valid_packet) {
   const std::string codec = sco_codec_type_text(codec_type);
 
   auto data = valid_packet.GetData();
-  auto data_len = data.size();
   auto rx_data = data.data();
   const uint8_t* decoded = nullptr;
   size_t written = 0, rc = 0;
@@ -321,7 +320,7 @@ void btm_route_sco_data(bluetooth::hci::ScoView valid_packet) {
                               : &bluetooth::audio::sco::wbs::enqueue_packet;
     rc = enqueue_packet(
         data, status != bluetooth::hci::PacketStatusFlag::CORRECTLY_RECEIVED);
-    if (rc != data_len) LOG_DEBUG("Failed to enqueue %s packet", codec.c_str());
+    if (!rc) LOG_DEBUG("Failed to enqueue %s packet", codec.c_str());
 
     while (rc) {
       auto decode = codec_type == BTM_SCO_CODEC_LC3
@@ -333,7 +332,7 @@ void btm_route_sco_data(bluetooth::hci::ScoView valid_packet) {
       written += bluetooth::audio::sco::write(decoded, rc);
     }
   } else {
-    written = bluetooth::audio::sco::write(rx_data, data_len);
+    written = bluetooth::audio::sco::write(rx_data, data.size());
   }
 
   /* For Chrome OS, we send the outgoing data after receiving an incoming one.
@@ -1131,7 +1130,7 @@ tBTM_STATUS BTM_RemoveSco(uint16_t sco_inx) {
   tSCO_STATE old_state = p->state;
   p->state = SCO_ST_DISCONNECTING;
 
-  GetLegacyHciInterface().Disconnect(p->Handle(), HCI_ERR_PEER_USER);
+  GetInterface().Disconnect(p->Handle(), HCI_ERR_PEER_USER);
 
   LOG_DEBUG("Disconnecting link sco_handle:0x%04x peer:%s", p->Handle(),
             ADDRESS_TO_LOGGABLE_CSTR(p->esco.data.bd_addr));
@@ -1449,8 +1448,8 @@ static tBTM_STATUS BTM_ChangeEScoLinkParms(uint16_t sco_inx,
     LOG_VERBOSE("%s: SCO Link for handle 0x%04x, pkt 0x%04x", __func__,
                 p_sco->hci_handle, p_setup->packet_types);
 
-    btsnd_hcic_change_conn_type(p_sco->hci_handle,
-                                BTM_ESCO_2_SCO(p_setup->packet_types));
+    GetInterface().ChangeConnectionPacketType(
+        p_sco->hci_handle, BTM_ESCO_2_SCO(p_setup->packet_types));
   } else /* eSCO is supported and the link type is eSCO */
   {
     uint16_t temp_packet_types =

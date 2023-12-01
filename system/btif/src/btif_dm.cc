@@ -78,8 +78,10 @@
 #include "stack/include/acl_api_types.h"
 #include "stack/include/bt_octets.h"
 #include "stack/include/bt_uuid16.h"
+#include "stack/include/btm_ble_api.h"
 #include "stack/include/btm_ble_sec_api.h"
 #include "stack/include/btm_ble_sec_api_types.h"
+#include "stack/include/btm_client_interface.h"
 #include "stack/include/btm_log_history.h"
 #include "stack/include/btm_sec_api.h"
 #include "stack/include/btm_sec_api_types.h"
@@ -146,7 +148,7 @@ struct btif_dm_pairing_cb_t {
   bt_bond_state_t state;
   RawAddress static_bdaddr;
   RawAddress bd_addr;
-  tBTM_SEC_DEV_REC::tBTM_BOND_TYPE bond_type;
+  tBTM_BOND_TYPE bond_type;
   uint8_t pin_code_len;
   uint8_t is_ssp;
   uint8_t auth_req;
@@ -565,7 +567,7 @@ static void bond_state_changed(bt_status_t status, const RawAddress& bd_addr,
     return;
   }
 
-  if (pairing_cb.bond_type == tBTM_SEC_DEV_REC::BOND_TYPE_TEMPORARY) {
+  if (pairing_cb.bond_type == BOND_TYPE_TEMPORARY) {
     state = BT_BOND_STATE_NONE;
   }
 
@@ -1047,9 +1049,9 @@ static void btif_dm_ssp_cfm_req_evt(tBTA_DM_SP_CFM_REQ* p_ssp_cfm_req) {
       !(p_ssp_cfm_req->loc_auth_req & BTM_AUTH_BONDS) &&
       !(p_ssp_cfm_req->rmt_auth_req & BTM_AUTH_BONDS) &&
       !(check_cod_hid_major(p_ssp_cfm_req->bd_addr, COD_HID_POINTING)))
-    pairing_cb.bond_type = tBTM_SEC_DEV_REC::BOND_TYPE_TEMPORARY;
+    pairing_cb.bond_type = BOND_TYPE_TEMPORARY;
   else
-    pairing_cb.bond_type = tBTM_SEC_DEV_REC::BOND_TYPE_PERSISTENT;
+    pairing_cb.bond_type = BOND_TYPE_PERSISTENT;
 
   btm_set_bond_type_dev(p_ssp_cfm_req->bd_addr, pairing_cb.bond_type);
 
@@ -1060,8 +1062,7 @@ static void btif_dm_ssp_cfm_req_evt(tBTA_DM_SP_CFM_REQ* p_ssp_cfm_req) {
     /* Pairing consent for JustWorks NOT needed if:
      * 1. Incoming temporary pairing is detected
      */
-    if (is_incoming &&
-        pairing_cb.bond_type == tBTM_SEC_DEV_REC::BOND_TYPE_TEMPORARY) {
+    if (is_incoming && pairing_cb.bond_type == BOND_TYPE_TEMPORARY) {
       LOG_VERBOSE("%s: Auto-accept JustWorks pairing for temporary incoming",
                   __func__);
       btif_dm_ssp_reply(bd_addr, BT_SSP_VARIANT_CONSENT, true);
@@ -1156,7 +1157,7 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
         (p_auth_cmpl->key_type == HCI_LKEY_TYPE_AUTH_COMB) ||
         (p_auth_cmpl->key_type == HCI_LKEY_TYPE_CHANGED_COMB) ||
         (p_auth_cmpl->key_type == HCI_LKEY_TYPE_AUTH_COMB_P_256) ||
-        pairing_cb.bond_type == tBTM_SEC_DEV_REC::BOND_TYPE_PERSISTENT) {
+        pairing_cb.bond_type == BOND_TYPE_PERSISTENT) {
       bt_status_t ret;
       LOG_VERBOSE("%s: Storing link key. key_type=0x%x, bond_type=%d", __func__,
                   p_auth_cmpl->key_type, pairing_cb.bond_type);
@@ -1172,7 +1173,7 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
     } else {
       LOG_VERBOSE("%s: Temporary key. Not storing. key_type=0x%x, bond_type=%d",
                   __func__, p_auth_cmpl->key_type, pairing_cb.bond_type);
-      if (pairing_cb.bond_type == tBTM_SEC_DEV_REC::BOND_TYPE_TEMPORARY) {
+      if (pairing_cb.bond_type == BOND_TYPE_TEMPORARY) {
         LOG_VERBOSE("%s: sending BT_BOND_STATE_NONE for Temp pairing",
                     __func__);
         btif_storage_remove_bonded_device(&bd_addr);
@@ -1373,7 +1374,7 @@ static void btif_dm_search_devices_evt(tBTA_DM_SEARCH_EVT event,
   LOG_VERBOSE("%s event=%s", __func__, dump_dm_search_event(event));
 
   switch (event) {
-    case BTA_DM_DISC_RES_EVT: {
+    case BTA_DM_NAME_READ_EVT: {
       /* Remote name update */
       if (strlen((const char*)p_search_data->disc_res.bd_name)) {
         /** Fix inquiry time too long @{ */
@@ -1398,10 +1399,10 @@ static void btif_dm_search_devices_evt(tBTA_DM_SEARCH_EVT event,
         BTIF_STORAGE_FILL_PROPERTY(&properties[2], BT_PROPERTY_CLASS_OF_DEVICE, sizeof(uint32_t), &cod);
         if (btif_storage_get_remote_device_property(
                         &bdaddr, &properties[2]) == BT_STATUS_SUCCESS) {
-          LOG_VERBOSE("%s, BTA_DM_DISC_RES_EVT, cod in storage = 0x%08x",
+          LOG_VERBOSE("%s, BTA_DM_NAME_READ_EVT, cod in storage = 0x%08x",
                       __func__, cod);
         } else {
-          LOG_VERBOSE("%s, BTA_DM_DISC_RES_EVT, no cod in storage", __func__);
+          LOG_VERBOSE("%s, BTA_DM_NAME_READ_EVT, no cod in storage", __func__);
           cod = 0;
         }
         if (cod != 0) {
@@ -2024,6 +2025,10 @@ static void btif_dm_search_services_evt(tBTA_DM_SEARCH_EVT event,
           BT_STATUS_SUCCESS, bd_addr, 1, &prop_did);
     } break;
 
+    case BTA_DM_NAME_READ_EVT: {
+      LOG_INFO("Skipping name read event - called on bad callback.");
+    } break;
+
     default: {
       ASSERTC(0, "unhandled search services event", event);
     } break;
@@ -2126,7 +2131,7 @@ void BTIF_dm_enable() {
   }
   /* clear control blocks */
   pairing_cb = {};
-  pairing_cb.bond_type = tBTM_SEC_DEV_REC::BOND_TYPE_PERSISTENT;
+  pairing_cb.bond_type = BOND_TYPE_PERSISTENT;
 
   // Enable address consolidation.
   btif_storage_load_le_devices();
@@ -2180,8 +2185,7 @@ void btif_dm_sec_evt(tBTA_DM_SEC_EVT event, tBTA_DM_SEC* p_data) {
     case BTA_DM_BOND_CANCEL_CMPL_EVT:
       if (is_bonding_or_sdp()) {
         bd_addr = pairing_cb.bd_addr;
-        btm_set_bond_type_dev(pairing_cb.bd_addr,
-                              tBTM_SEC_DEV_REC::BOND_TYPE_UNKNOWN);
+        btm_set_bond_type_dev(pairing_cb.bd_addr, BOND_TYPE_UNKNOWN);
         bond_state_changed((bt_status_t)p_data->bond_cancel_cmpl.result,
                            bd_addr, BT_BOND_STATE_NONE);
       }
@@ -2196,8 +2200,7 @@ void btif_dm_sec_evt(tBTA_DM_SEC_EVT event, tBTA_DM_SEC* p_data) {
 
     case BTA_DM_DEV_UNPAIRED_EVT:
       bd_addr = p_data->dev_unpair.bd_addr;
-      btm_set_bond_type_dev(p_data->dev_unpair.bd_addr,
-                            tBTM_SEC_DEV_REC::BOND_TYPE_UNKNOWN);
+      btm_set_bond_type_dev(p_data->dev_unpair.bd_addr, BOND_TYPE_UNKNOWN);
 
       GetInterfaceToProfiles()->removeDeviceFromProfiles(bd_addr);
       btif_storage_remove_bonded_device(&bd_addr);
@@ -2383,8 +2386,7 @@ void btif_dm_acl_evt(tBTA_DM_ACL_EVT event, tBTA_DM_ACL* p_data) {
 
     case BTA_DM_LINK_DOWN_EVT: {
       bd_addr = p_data->link_down.bd_addr;
-      btm_set_bond_type_dev(p_data->link_down.bd_addr,
-                            tBTM_SEC_DEV_REC::BOND_TYPE_UNKNOWN);
+      btm_set_bond_type_dev(p_data->link_down.bd_addr, BOND_TYPE_UNKNOWN);
       GetInterfaceToProfiles()->onLinkDown(bd_addr);
 
       bt_conn_direction_t direction;
@@ -2446,16 +2448,20 @@ static void bta_energy_info_cb(tBTM_BLE_TX_TIME_MS tx_time,
       "idle_time=%u,used=%u",
       status, ctrl_state, tx_time, rx_time, idle_time, energy_used);
 
-  bt_activity_energy_info energy_info;
-  energy_info.status = status;
-  energy_info.ctrl_state = ctrl_state;
-  energy_info.rx_time = rx_time;
-  energy_info.tx_time = tx_time;
-  energy_info.idle_time = idle_time;
-  energy_info.energy_used = energy_used;
+  if (uid_set != nullptr) {
+    bt_activity_energy_info energy_info;
+    energy_info.status = status;
+    energy_info.ctrl_state = ctrl_state;
+    energy_info.rx_time = rx_time;
+    energy_info.tx_time = tx_time;
+    energy_info.idle_time = idle_time;
+    energy_info.energy_used = energy_used;
 
-  bt_uid_traffic_t* data = uid_set_read_and_clear(uid_set);
-  GetInterfaceToProfiles()->events->invoke_energy_info_cb(energy_info, data);
+    bt_uid_traffic_t* data = uid_set_read_and_clear(uid_set);
+    GetInterfaceToProfiles()->events->invoke_energy_info_cb(energy_info, data);
+  } else {
+    LOG_WARN("Energy info event dropped as module is inactive");
+  }
 }
 
 /*****************************************************************************
@@ -2658,7 +2664,8 @@ void btif_dm_create_bond_out_of_band(const RawAddress bd_addr,
           break;
       }
       pairing_cb.is_local_initiated = true;
-      BTM_SecAddBleDevice(bd_addr, BT_DEVICE_TYPE_BLE, address_type);
+      get_btm_client_interface().security.BTM_SecAddBleDevice(
+          bd_addr, BT_DEVICE_TYPE_BLE, address_type);
       BTA_DmBond(bd_addr, address_type, transport, BT_DEVICE_TYPE_BLE);
       break;
     }
@@ -3015,7 +3022,8 @@ bt_status_t btif_dm_get_adapter_property(bt_property_t* prop) {
  *
  ******************************************************************************/
 void btif_dm_get_remote_services(RawAddress remote_addr, const int transport) {
-  LOG_VERBOSE("%s: transport=%d, remote_addr=%s", __func__, transport,
+  LOG_VERBOSE("%s: transport=%s, remote_addr=%s", __func__,
+              bt_transport_text(transport).c_str(),
               ADDRESS_TO_LOGGABLE_CSTR(remote_addr));
 
   BTM_LogHistory(
@@ -3490,8 +3498,7 @@ static void btif_dm_ble_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
       btif_storage_set_remote_addr_type(&bd_addr, p_auth_cmpl->addr_type);
 
     /* Test for temporary bonding */
-    if (btm_get_bond_type_dev(bd_addr) ==
-        tBTM_SEC_DEV_REC::BOND_TYPE_TEMPORARY) {
+    if (btm_get_bond_type_dev(bd_addr) == BOND_TYPE_TEMPORARY) {
       LOG_VERBOSE("%s: sending BT_BOND_STATE_NONE for Temp pairing", __func__);
       btif_storage_remove_bonded_device(&bd_addr);
       state = BT_BOND_STATE_NONE;
@@ -3690,7 +3697,7 @@ static void btif_dm_ble_sec_req_evt(tBTA_DM_BLE_SEC_REQ* p_ble_req,
 
   bond_state_changed(BT_STATUS_SUCCESS, bd_addr, BT_BOND_STATE_BONDING);
 
-  pairing_cb.bond_type = tBTM_SEC_DEV_REC::BOND_TYPE_PERSISTENT;
+  pairing_cb.bond_type = BOND_TYPE_PERSISTENT;
   pairing_cb.is_le_only = true;
   pairing_cb.is_le_nc = false;
   pairing_cb.is_ssp = true;
@@ -4132,3 +4139,20 @@ void btif_dm_metadata_changed(const RawAddress& remote_bd_addr, int key,
     metadata_cb.le_audio_cache.insert_or_assign(remote_bd_addr, value);
   }
 }
+
+namespace bluetooth {
+namespace legacy {
+namespace testing {
+
+void bta_energy_info_cb(tBTM_BLE_TX_TIME_MS tx_time,
+                        tBTM_BLE_RX_TIME_MS rx_time,
+                        tBTM_BLE_IDLE_TIME_MS idle_time,
+                        tBTM_BLE_ENERGY_USED energy_used,
+                        tBTM_CONTRL_STATE ctrl_state, tBTA_STATUS status) {
+  ::bta_energy_info_cb(tx_time, rx_time, idle_time, energy_used, ctrl_state,
+                       status);
+}
+
+}  // namespace testing
+}  // namespace legacy
+}  // namespace bluetooth

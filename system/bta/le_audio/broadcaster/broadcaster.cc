@@ -48,6 +48,7 @@ using bluetooth::le_audio::BroadcastId;
 using bluetooth::le_audio::PublicBroadcastAnnouncementData;
 using le_audio::CodecManager;
 using le_audio::ContentControlIdKeeper;
+using le_audio::DsaMode;
 using le_audio::LeAudioCodecConfiguration;
 using le_audio::LeAudioSourceAudioHalClient;
 using le_audio::broadcaster::BigConfig;
@@ -482,7 +483,7 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
            .sample_rate = offload_config->sampling_rate,
            .bits_per_sample = offload_config->bits_per_sample,
            .data_interval_us = offload_config->frame_duration},
-          offload_config->codec_bitrate, offload_config->octets_per_frame);
+          offload_config->octets_per_frame);
       BroadcastQosConfig qos_config(offload_config->retransmission_number,
                                     offload_config->max_transport_latency);
 
@@ -1031,7 +1032,8 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
       for (uint8_t chan = 0; chan < num_channels; ++chan) {
         auto initial_channel_offset = chan * bytes_per_sample;
         sw_enc_[chan]->Encode(data.data() + initial_channel_offset,
-                              num_channels, codec_wrapper_.GetFrameLen());
+                              num_channels,
+                              codec_wrapper_.GetOctetsPerCodecFrame());
       }
 
       /* Currently there is no way to broadcast multiple distinct streams.
@@ -1070,8 +1072,8 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
       instance->le_audio_source_hal_client_->ConfirmStreamingRequest();
     }
 
-    virtual void OnAudioMetadataUpdate(
-        source_metadata_v7 source_metadata) override {
+    virtual void OnAudioMetadataUpdate(source_metadata_v7 source_metadata,
+                                       DsaMode dsa_mode) override {
       LOG_INFO();
       if (!instance) return;
 

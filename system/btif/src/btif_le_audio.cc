@@ -34,6 +34,7 @@ using bluetooth::le_audio::GroupNodeStatus;
 using bluetooth::le_audio::GroupStatus;
 using bluetooth::le_audio::LeAudioClientCallbacks;
 using bluetooth::le_audio::LeAudioClientInterface;
+using bluetooth::le_audio::UnicastMonitorModeStatus;
 
 namespace {
 class LeAudioClientInterfaceImpl;
@@ -93,17 +94,25 @@ class LeAudioClientInterfaceImpl : public LeAudioClientInterface,
                         local_output_capa_codec_conf));
   }
 
-  void OnAudioGroupCodecConf(
+  void OnAudioGroupCurrentCodecConf(
       int group_id, btle_audio_codec_config_t input_codec_conf,
-      btle_audio_codec_config_t output_codec_conf,
+      btle_audio_codec_config_t output_codec_conf) override {
+    do_in_jni_thread(FROM_HERE,
+                     Bind(&LeAudioClientCallbacks::OnAudioGroupCurrentCodecConf,
+                          Unretained(callbacks), group_id, input_codec_conf,
+                          output_codec_conf));
+  }
+
+  void OnAudioGroupSelectableCodecConf(
+      int group_id,
       std::vector<btle_audio_codec_config_t> input_selectable_codec_conf,
       std::vector<btle_audio_codec_config_t> output_selectable_codec_conf)
       override {
-    do_in_jni_thread(FROM_HERE,
-                     Bind(&LeAudioClientCallbacks::OnAudioGroupCodecConf,
-                          Unretained(callbacks), group_id, input_codec_conf,
-                          output_codec_conf, input_selectable_codec_conf,
-                          output_selectable_codec_conf));
+    do_in_jni_thread(
+        FROM_HERE,
+        Bind(&LeAudioClientCallbacks::OnAudioGroupSelectableCodecConf,
+             Unretained(callbacks), group_id, input_selectable_codec_conf,
+             output_selectable_codec_conf));
   }
 
   void OnHealthBasedRecommendationAction(
@@ -122,6 +131,13 @@ class LeAudioClientInterfaceImpl : public LeAudioClientInterface,
         FROM_HERE,
         Bind(&LeAudioClientCallbacks::OnHealthBasedGroupRecommendationAction,
              Unretained(callbacks), group_id, action));
+  }
+
+  void OnUnicastMonitorModeStatus(uint8_t direction,
+                                  UnicastMonitorModeStatus status) override {
+    do_in_jni_thread(FROM_HERE,
+                     Bind(&LeAudioClientCallbacks::OnUnicastMonitorModeStatus,
+                          Unretained(callbacks), direction, status));
   }
 
   void Initialize(LeAudioClientCallbacks* callbacks,
@@ -295,6 +311,20 @@ class LeAudioClientInterfaceImpl : public LeAudioClientInterface,
     do_in_main_thread(FROM_HERE,
                       Bind(&LeAudioClient::SetInCall,
                            Unretained(LeAudioClient::Get()), in_call));
+  }
+
+  void SetUnicastMonitorMode(uint8_t direction, bool enable) {
+    DVLOG(2) << __func__ << " enable: " << enable;
+    if (!initialized || !LeAudioClient::IsLeAudioClientRunning()) {
+      DVLOG(2) << __func__
+               << " Unicast monitoring mode set ignored, due to already"
+                  " started cleanup procedure or service being not read";
+      return;
+    }
+
+    do_in_main_thread(
+        FROM_HERE, Bind(&LeAudioClient::SetUnicastMonitorMode,
+                        Unretained(LeAudioClient::Get()), direction, enable));
   }
 
   void SendAudioProfilePreferences(int group_id,

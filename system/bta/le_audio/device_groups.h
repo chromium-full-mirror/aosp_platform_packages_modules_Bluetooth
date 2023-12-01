@@ -44,8 +44,34 @@ class LeAudioDeviceGroup {
  public:
   const int group_id_;
 
-  types::CigState cig_state_;
+  class CigConfiguration {
+   public:
+    CigConfiguration() = delete;
+    CigConfiguration(LeAudioDeviceGroup* group)
+        : group_(group), state_(types::CigState::NONE) {}
 
+    types::CigState GetState(void) const { return state_; }
+    void SetState(le_audio::types::CigState state) {
+      LOG_VERBOSE("%s -> %s", bluetooth::common::ToString(state_).c_str(),
+                  bluetooth::common::ToString(state).c_str());
+      state_ = state;
+    }
+
+    void GenerateCisIds(types::LeAudioContextType context_type);
+    bool AssignCisIds(LeAudioDevice* leAudioDevice);
+    void AssignCisConnHandles(const std::vector<uint16_t>& conn_handles);
+    void UnassignCis(LeAudioDevice* leAudioDevice);
+
+    std::vector<struct types::cis> cises;
+
+   private:
+    uint8_t GetFirstFreeCisId(types::CisType cis_type) const;
+
+    LeAudioDeviceGroup* group_;
+    types::CigState state_;
+  } cig;
+
+  /* Current audio stream configuration */
   struct stream_configuration stream_conf;
 
   uint8_t audio_directions_;
@@ -55,13 +81,14 @@ class LeAudioDeviceGroup {
   /* Whether LE Audio is preferred for OUTPUT_ONLY and DUPLEX cases */
   bool is_output_preference_le_audio;
   bool is_duplex_preference_le_audio;
+  DsaMode dsa_mode_;
 
-  std::vector<struct types::cis> cises_;
   explicit LeAudioDeviceGroup(const int group_id)
       : group_id_(group_id),
-        cig_state_(types::CigState::NONE),
+        cig(this),
         stream_conf({}),
         audio_directions_(0),
+        dsa_mode_(DsaMode::DISABLED),
         is_enabled_(true),
         transport_latency_mtos_us_(0),
         transport_latency_stom_us_(0),
@@ -106,9 +133,6 @@ class LeAudioDeviceGroup {
                     metadata_context_types,
                 types::BidirectionalPair<std::vector<uint8_t>> ccid_lists);
   void Deactivate(void);
-  types::CigState GetCigState(void) const;
-  void SetCigState(le_audio::types::CigState state);
-  void CigClearCis(void);
   void ClearSinksFromConfiguration(void);
   void ClearSourcesFromConfiguration(void);
   void Cleanup(void);
@@ -136,14 +160,10 @@ class LeAudioDeviceGroup {
   bool IsGroupReadyToCreateStream(void) const;
   bool IsGroupReadyToSuspendStream(void) const;
   bool HaveAllCisesDisconnected(void) const;
-  uint8_t GetFirstFreeCisId(void) const;
-  uint8_t GetFirstFreeCisId(types::CisType cis_type) const;
-  void CigGenerateCisIds(types::LeAudioContextType context_type);
-  bool CigAssignCisIds(LeAudioDevice* leAudioDevice);
-  void CigAssignCisConnHandles(const std::vector<uint16_t>& conn_handles);
-  void CigAssignCisConnHandlesToAses(LeAudioDevice* leAudioDevice);
-  void CigAssignCisConnHandlesToAses(void);
-  void CigUnassignCis(LeAudioDevice* leAudioDevice);
+  void ClearAllCises(void);
+  void UpdateCisConfiguration(uint8_t direction);
+  void AssignCisConnHandlesToAses(LeAudioDevice* leAudioDevice);
+  void AssignCisConnHandlesToAses(void);
   bool Configure(types::LeAudioContextType context_type,
                  const types::BidirectionalPair<types::AudioContexts>&
                      metadata_context_types,
@@ -280,6 +300,31 @@ class LeAudioDeviceGroup {
 
   types::AudioContexts GetSupportedContexts(
       int direction = types::kLeAudioDirectionBoth) const;
+
+  DsaModes GetAllowedDsaModes() {
+    DsaModes dsa_modes = {};
+    for (auto leAudioDevice : leAudioDevices_) {
+      if (leAudioDevice.expired()) continue;
+
+      dsa_modes.insert(dsa_modes.end(),
+                       leAudioDevice.lock()->GetDsaModes().begin(),
+                       leAudioDevice.lock()->GetDsaModes().end());
+    }
+    return dsa_modes;
+  }
+
+  std::vector<DsaModes> GetAllowedDsaModesList() {
+    std::vector<DsaModes> dsa_modes_list = {};
+    for (auto leAudioDevice : leAudioDevices_) {
+      DsaModes dsa_modes = {};
+
+      if (!leAudioDevice.expired()) {
+        dsa_modes = leAudioDevice.lock()->GetDsaModes();
+      }
+      dsa_modes_list.push_back(dsa_modes);
+    }
+    return dsa_modes_list;
+  }
 
   types::BidirectionalPair<types::AudioContexts> GetLatestAvailableContexts(
       void) const;

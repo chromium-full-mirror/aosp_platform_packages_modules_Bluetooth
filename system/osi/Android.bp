@@ -103,7 +103,6 @@ cc_test {
     name: "net_test_osi",
     test_suites: ["general-tests"],
     defaults: [
-        "bluetooth_gtest_x86_asan_workaround",
         "fluoride_osi_defaults",
         "mts_defaults",
     ],
@@ -131,6 +130,7 @@ cc_test {
         "libcrypto",
         "libcutils",
         "liblog",
+        "server_configurable_flags",
     ],
     local_include_dirs: [
         "include_internal",
@@ -138,6 +138,7 @@ cc_test {
     ],
     static_libs: [
         "libbluetooth-types",
+        "libbluetooth_crypto_toolbox",
         "libbluetooth_gd",
         "libbt-common",
         "libbt_shim_bridge",

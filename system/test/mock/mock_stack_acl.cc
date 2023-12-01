@@ -105,15 +105,12 @@ struct BTM_default_block_role_switch BTM_default_block_role_switch;
 struct BTM_default_unblock_role_switch BTM_default_unblock_role_switch;
 struct BTM_unblock_role_switch_for BTM_unblock_role_switch_for;
 struct BTM_unblock_sniff_mode_for BTM_unblock_sniff_mode_for;
-struct HACK_acl_check_sm4 HACK_acl_check_sm4;
-struct acl_accept_connection_request acl_accept_connection_request;
 struct acl_disconnect_after_role_switch acl_disconnect_after_role_switch;
 struct acl_disconnect_from_handle acl_disconnect_from_handle;
 struct acl_packets_completed acl_packets_completed;
 struct acl_process_extended_features acl_process_extended_features;
 struct acl_process_supported_features acl_process_supported_features;
 struct acl_rcv_acl_data acl_rcv_acl_data;
-struct acl_reject_connection_request acl_reject_connection_request;
 struct acl_send_data_packet_ble acl_send_data_packet_ble;
 struct acl_set_disconnect_reason acl_set_disconnect_reason;
 struct acl_write_automatic_flush_timeout acl_write_automatic_flush_timeout;
@@ -128,7 +125,6 @@ struct btm_acl_process_sca_cmpl_pkt btm_acl_process_sca_cmpl_pkt;
 struct btm_acl_removed btm_acl_removed;
 struct btm_acl_role_changed btm_acl_role_changed;
 struct btm_acl_update_conn_addr btm_acl_update_conn_addr;
-struct btm_configure_data_path btm_configure_data_path;
 struct btm_acl_update_inquiry_status btm_acl_update_inquiry_status;
 struct btm_ble_refresh_local_resolvable_private_addr
     btm_ble_refresh_local_resolvable_private_addr;
@@ -280,7 +276,7 @@ bool acl_peer_supports_ble_connection_subrating_host(
 bool acl_refresh_remote_address(const RawAddress& identity_address,
                                 tBLE_ADDR_TYPE identity_address_type,
                                 const RawAddress& bda,
-                                tBTM_SEC_BLE::tADDRESS_TYPE rra_type,
+                                tBLE_RAND_ADDR_TYPE rra_type,
                                 const RawAddress& rpa) {
   inc_func_call_count(__func__);
   return test::mock::stack_acl::acl_refresh_remote_address(
@@ -441,14 +437,6 @@ void BTM_unblock_sniff_mode_for(const RawAddress& peer_addr) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::BTM_unblock_sniff_mode_for(peer_addr);
 }
-void HACK_acl_check_sm4(tBTM_SEC_DEV_REC& record) {
-  inc_func_call_count(__func__);
-  test::mock::stack_acl::HACK_acl_check_sm4(record);
-}
-void acl_accept_connection_request(const RawAddress& bd_addr, uint8_t role) {
-  inc_func_call_count(__func__);
-  test::mock::stack_acl::acl_accept_connection_request(bd_addr, role);
-}
 void acl_disconnect_after_role_switch(uint16_t conn_handle, tHCI_STATUS reason,
                                       std::string comment) {
   inc_func_call_count(__func__);
@@ -477,10 +465,6 @@ void acl_process_supported_features(uint16_t handle, uint64_t features) {
 void acl_rcv_acl_data(BT_HDR* p_msg) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::acl_rcv_acl_data(p_msg);
-}
-void acl_reject_connection_request(const RawAddress& bd_addr, uint8_t reason) {
-  inc_func_call_count(__func__);
-  test::mock::stack_acl::acl_reject_connection_request(bd_addr, reason);
 }
 void acl_send_data_packet_ble(const RawAddress& bd_addr, BT_HDR* p_buf) {
   inc_func_call_count(__func__);
@@ -544,12 +528,6 @@ void btm_acl_role_changed(tHCI_STATUS hci_status, const RawAddress& bd_addr,
 void btm_acl_update_conn_addr(uint16_t handle, const RawAddress& address) {
   inc_func_call_count(__func__);
   test::mock::stack_acl::btm_acl_update_conn_addr(handle, address);
-}
-void btm_configure_data_path(uint8_t direction, uint8_t path_id,
-                             std::vector<uint8_t> vendor_config) {
-  inc_func_call_count(__func__);
-  test::mock::stack_acl::btm_configure_data_path(direction, path_id,
-                                                 vendor_config);
 }
 void btm_acl_update_inquiry_status(uint8_t status) {
   inc_func_call_count(__func__);
@@ -687,3 +665,6 @@ void BTM_unblock_role_switch_and_sniff_mode_for(const RawAddress& peer_addr) {
 }
 
 // END mockcify generation
+
+void BTM_block_role_switch_and_sniff_mode_for(
+    const RawAddress& /* peer_addr */) {}

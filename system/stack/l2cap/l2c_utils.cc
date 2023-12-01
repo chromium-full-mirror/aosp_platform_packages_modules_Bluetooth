@@ -29,8 +29,8 @@
 
 #include "device/include/controller.h"
 #include "gd/hal/snoop_logger.h"
+#include "main/shim/entry.h"
 #include "main/shim/l2c_api.h"
-#include "main/shim/shim.h"
 #include "osi/include/allocator.h"
 #include "osi/include/log.h"
 #include "stack/btm/btm_sec.h"
@@ -214,7 +214,7 @@ void l2cu_release_lcb(tL2C_LCB* p_lcb) {
       tL2CAP_SEC_DATA* p_buf =
           (tL2CAP_SEC_DATA*)fixed_queue_try_dequeue(p_lcb->le_sec_pending_q);
       if (p_buf->p_callback)
-        p_buf->p_callback(p_lcb->remote_bd_addr, p_lcb->transport,
+        p_buf->p_callback(&p_lcb->remote_bd_addr, p_lcb->transport,
                           p_buf->p_ref_data, BTM_DEV_RESET);
       osi_free(p_buf);
     }
