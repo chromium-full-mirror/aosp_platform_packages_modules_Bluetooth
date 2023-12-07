@@ -626,7 +626,6 @@ impl BluetoothMedia {
                     BtStatus::Success,
                     BtavConnectionState::Disconnected as u32,
                 );
-
                 // Reset direction to unknown.
                 self.avrcp_direction = BtConnectionDirection::Unknown;
 

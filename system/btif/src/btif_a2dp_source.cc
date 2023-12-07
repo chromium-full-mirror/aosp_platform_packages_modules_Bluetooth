@@ -1227,13 +1227,14 @@ void btif_a2dp_source_debug_dump(int fd) {
           "  Bytes (underflow)                                       : %zu\n",
           accumulated_stats->media_read_total_underflow_bytes);
 
-  dprintf(
-      fd, "  Last update time ago in ms (underflow)                  : %llu\n",
-      (accumulated_stats->media_read_last_underflow_us > 0)
-          ? (unsigned long long)(now_us - accumulated_stats
-                                              ->media_read_last_underflow_us) /
-                1000
-          : 0);
+  dprintf(fd,
+          "  Last update time ago in ms (underflow)                  : %llu\n",
+          (accumulated_stats->media_read_last_underflow_us > 0)
+              ? (unsigned long long)(now_us -
+                                     accumulated_stats
+                                         ->media_read_last_underflow_us) /
+                    1000
+              : 0);
 
   //
   // TxQueue enqueue stats
