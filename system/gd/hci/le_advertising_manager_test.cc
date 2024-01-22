@@ -187,7 +187,7 @@ class TestAclManager : public AclManager {
 class LeAdvertisingManagerTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    test_hci_layer_ = new TestHciLayer;  // Ownership is transferred to registry
+    test_hci_layer_ = new HciLayerFake;  // Ownership is transferred to registry
     test_controller_ = new TestController;
     test_acl_manager_ = new TestAclManager;
     test_controller_->AddSupported(param_opcode_);
@@ -210,7 +210,7 @@ class LeAdvertisingManagerTest : public ::testing::Test {
   }
 
   TestModuleRegistry fake_registry_;
-  TestHciLayer* test_hci_layer_ = nullptr;
+  HciLayerFake* test_hci_layer_ = nullptr;
   TestController* test_controller_ = nullptr;
   TestAclManager* test_acl_manager_ = nullptr;
   os::Thread& thread_ = fake_registry_.GetTestThread();
@@ -1713,6 +1713,47 @@ TEST_F(LeExtendedAdvertisingAPITest, trigger_advertiser_callbacks_if_started_whi
 
   // assert
   EXPECT_EQ(status_future.get(), ErrorCode::SUCCESS);
+
+  sync_client_handler();
+}
+
+TEST_F(LeExtendedAdvertisingAPITest, duration_maxevents_restored_on_resume) {
+  // arrange
+  auto test_le_address_manager = (TestLeAddressManager*)test_acl_manager_->GetLeAddressManager();
+  uint16_t duration = 1000;
+  uint8_t max_extended_advertising_events = 100;
+
+  // enable advertiser
+  le_advertising_manager_->EnableAdvertiser(
+      advertiser_id_, true, duration, max_extended_advertising_events);
+  ASSERT_EQ(OpCode::LE_SET_EXTENDED_ADVERTISING_ENABLE, test_hci_layer_->GetCommand().GetOpCode());
+  EXPECT_CALL(
+      mock_advertising_callback_,
+      OnAdvertisingEnabled(advertiser_id_, true, AdvertisingCallback::AdvertisingStatus::SUCCESS));
+  test_hci_layer_->IncomingEvent(
+      LeSetExtendedAdvertisingEnableCompleteBuilder::Create(uint8_t{1}, ErrorCode::SUCCESS));
+
+  test_le_address_manager->client_->OnPause();
+  // verify advertising is disabled onPause
+  ASSERT_EQ(OpCode::LE_SET_EXTENDED_ADVERTISING_ENABLE, test_hci_layer_->GetCommand().GetOpCode());
+  test_hci_layer_->IncomingEvent(
+      LeSetExtendedAdvertisingEnableCompleteBuilder::Create(1, ErrorCode::SUCCESS));
+  sync_client_handler();
+
+  test_le_address_manager->client_->OnResume();
+  // verify advertising is reenabled onResume with correct parameters
+  auto command = test_hci_layer_->GetCommand();
+  ASSERT_EQ(OpCode::LE_SET_EXTENDED_ADVERTISING_ENABLE, command.GetOpCode());
+  auto enable_command_view =
+      LeSetExtendedAdvertisingEnableView::Create(LeAdvertisingCommandView::Create(command));
+  ASSERT_TRUE(enable_command_view.IsValid());
+  ASSERT_EQ(bluetooth::hci::Enable::ENABLED, enable_command_view.GetEnable());
+  auto enabled_sets = enable_command_view.GetEnabledSets();
+  ASSERT_EQ(static_cast<uint8_t>(1), enabled_sets.size());
+  ASSERT_EQ(duration, enabled_sets[0].duration_);
+  ASSERT_EQ(max_extended_advertising_events, enabled_sets[0].max_extended_advertising_events_);
+  test_hci_layer_->IncomingEvent(
+      LeSetExtendedAdvertisingEnableCompleteBuilder::Create(1, ErrorCode::SUCCESS));
 
   sync_client_handler();
 }

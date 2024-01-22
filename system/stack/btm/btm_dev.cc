@@ -28,12 +28,14 @@
 
 #include <string>
 
+#include "android_bluetooth_flags.h"
 #include "btm_api.h"
 #include "btm_int_types.h"
 #include "btm_sec_api.h"
 #include "btm_sec_cb.h"
+#include "common/init_flags.h"
 #include "device/include/controller.h"
-#include "gd/common/init_flags.h"
+#include "internal_include/bt_target.h"
 #include "l2c_api.h"
 #include "os/log.h"
 #include "osi/include/allocator.h"
@@ -56,8 +58,8 @@ constexpr char kBtmLogTag[] = "BOND";
 }
 
 static void wipe_secrets_and_remove(tBTM_SEC_DEV_REC* p_dev_rec) {
-  p_dev_rec->link_key.fill(0);
-  memset(&p_dev_rec->ble_keys, 0, sizeof(tBTM_SEC_BLE_KEYS));
+  p_dev_rec->sec_rec.link_key.fill(0);
+  memset(&p_dev_rec->sec_rec.ble_keys, 0, sizeof(tBTM_SEC_BLE_KEYS));
   list_remove(btm_sec_cb.sec_dev_rec, p_dev_rec);
 }
 
@@ -111,38 +113,42 @@ bool BTM_SecAddDevice(const RawAddress& bd_addr, DEV_CLASS dev_class,
      * bond state for an existing device here? This logic should be verified
      * as part of a larger refactor.
      */
-    p_dev_rec->bond_type = BOND_TYPE_UNKNOWN;
+    p_dev_rec->sec_rec.bond_type = BOND_TYPE_UNKNOWN;
   }
 
-  if (dev_class) memcpy(p_dev_rec->dev_class, dev_class, DEV_CLASS_LEN);
+  if (dev_class != kDevClassEmpty) p_dev_rec->dev_class = dev_class;
 
   memset(p_dev_rec->sec_bd_name, 0, sizeof(tBTM_BD_NAME));
 
   if (bd_name && bd_name[0]) {
     LOG_DEBUG("  Remote name known for device:%s name:%s",
               ADDRESS_TO_LOGGABLE_CSTR(bd_addr), bd_name);
-    p_dev_rec->sec_flags |= BTM_SEC_NAME_KNOWN;
+    p_dev_rec->sec_rec.sec_flags |= BTM_SEC_NAME_KNOWN;
     strlcpy((char*)p_dev_rec->sec_bd_name, (char*)bd_name,
             BTM_MAX_REM_BD_NAME_LEN + 1);
   }
 
   if (p_link_key) {
     LOG_DEBUG("  Link key known for device:%s", ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
-    p_dev_rec->sec_flags |= BTM_SEC_LINK_KEY_KNOWN;
-    p_dev_rec->link_key = *p_link_key;
-    p_dev_rec->link_key_type = key_type;
-    p_dev_rec->pin_code_length = pin_length;
+    p_dev_rec->sec_rec.sec_flags |= BTM_SEC_LINK_KEY_KNOWN;
+    p_dev_rec->sec_rec.link_key = *p_link_key;
+    p_dev_rec->sec_rec.link_key_type = key_type;
+    p_dev_rec->sec_rec.pin_code_length = pin_length;
+
+    if (IS_FLAG_ENABLED(correct_bond_type_of_loaded_devices)) {
+      p_dev_rec->sec_rec.bond_type = BOND_TYPE_PERSISTENT;
+    }
 
     if (pin_length >= 16 || key_type == BTM_LKEY_TYPE_AUTH_COMB ||
         key_type == BTM_LKEY_TYPE_AUTH_COMB_P_256) {
       // Set the flag if the link key was made by using either a 16 digit
       // pin or MITM.
-      p_dev_rec->sec_flags |=
+      p_dev_rec->sec_rec.sec_flags |=
           BTM_SEC_16_DIGIT_PIN_AUTHED | BTM_SEC_LINK_KEY_AUTHED;
     }
   }
 
-  p_dev_rec->rmt_io_caps = BTM_IO_CAP_OUT;
+  p_dev_rec->sec_rec.rmt_io_caps = BTM_IO_CAP_OUT;
   p_dev_rec->device_type |= BT_DEVICE_TYPE_BREDR;
 
   return true;
@@ -170,8 +176,8 @@ bool BTM_SecDeleteDevice(const RawAddress& bd_addr) {
   }
 
   /* Invalidate bonded status */
-  p_dev_rec->sec_flags &= ~BTM_SEC_LINK_KEY_KNOWN;
-  p_dev_rec->sec_flags &= ~BTM_SEC_LE_LINK_KEY_KNOWN;
+  p_dev_rec->sec_rec.sec_flags &= ~BTM_SEC_LINK_KEY_KNOWN;
+  p_dev_rec->sec_rec.sec_flags &= ~BTM_SEC_LE_LINK_KEY_KNOWN;
 
   if (BTM_IsAclConnectionUp(bd_addr, BT_TRANSPORT_LE) ||
       BTM_IsAclConnectionUp(bd_addr, BT_TRANSPORT_BR_EDR)) {
@@ -194,7 +200,7 @@ bool BTM_SecDeleteDevice(const RawAddress& bd_addr) {
   }
 
   const auto device_type = p_dev_rec->device_type;
-  const auto bond_type = p_dev_rec->bond_type;
+  const auto bond_type = p_dev_rec->sec_rec.bond_type;
 
   /* Clear out any saved BLE keys */
   btm_sec_clear_ble_keys(p_dev_rec);
@@ -222,8 +228,8 @@ void BTM_SecClearSecurityFlags(const RawAddress& bd_addr) {
   tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(bd_addr);
   if (p_dev_rec == NULL) return;
 
-  p_dev_rec->sec_flags = 0;
-  p_dev_rec->sec_state = BTM_SEC_STATE_IDLE;
+  p_dev_rec->sec_rec.sec_flags = 0;
+  p_dev_rec->sec_rec.sec_state = BTM_SEC_STATE_IDLE;
   p_dev_rec->sm4 = BTM_SM4_UNKNOWN;
 }
 
@@ -269,7 +275,7 @@ tBTM_SEC_DEV_REC* btm_sec_alloc_dev(const RawAddress& bd_addr) {
   /* outgoing connection */
   p_inq_info = BTM_InqDbRead(bd_addr);
   if (p_inq_info != NULL) {
-    memcpy(p_dev_rec->dev_class, p_inq_info->results.dev_class, DEV_CLASS_LEN);
+    p_dev_rec->dev_class = p_inq_info->results.dev_class;
 
     p_dev_rec->device_type = p_inq_info->results.device_type;
     if (is_ble_addr_type_known(p_inq_info->results.ble_addr_type))
@@ -279,7 +285,7 @@ tBTM_SEC_DEV_REC* btm_sec_alloc_dev(const RawAddress& bd_addr) {
           "Please do not update device record from anonymous le advertisement");
 
   } else if (bd_addr == btm_sec_cb.connecting_bda)
-    memcpy(p_dev_rec->dev_class, btm_sec_cb.connecting_dc, DEV_CLASS_LEN);
+    p_dev_rec->dev_class = btm_sec_cb.connecting_dc;
 
   /* update conn params, use default value for background connection params */
   memset(&p_dev_rec->conn_params, 0xff, sizeof(tBTM_LE_CONN_PRAMS));
@@ -317,7 +323,7 @@ bool btm_dev_support_role_switch(const RawAddress& bd_addr) {
     return false;
   }
 
-  if (!controller_get_interface()->supports_central_peripheral_role_switch()) {
+  if (!controller_get_interface()->SupportsRoleSwitch()) {
     LOG_VERBOSE("%s Local controller does not support role switch", __func__);
     return false;
   }
@@ -338,7 +344,7 @@ bool btm_dev_support_role_switch(const RawAddress& bd_addr) {
   return false;
 }
 
-bool is_handle_equal(void* data, void* context) {
+static bool is_handle_equal(void* data, void* context) {
   tBTM_SEC_DEV_REC* p_dev_rec = static_cast<tBTM_SEC_DEV_REC*>(data);
   uint16_t* handle = static_cast<uint16_t*>(context);
 
@@ -400,7 +406,7 @@ tBTM_SEC_DEV_REC* btm_find_dev(const RawAddress& bd_addr) {
 
 static bool has_lenc_and_address_is_equal(void* data, void* context) {
   tBTM_SEC_DEV_REC* p_dev_rec = static_cast<tBTM_SEC_DEV_REC*>(data);
-  if (!(p_dev_rec->ble_keys.key_type & BTM_LE_KEY_LENC)) return true;
+  if (!(p_dev_rec->sec_rec.ble_keys.key_type & BTM_LE_KEY_LENC)) return true;
 
   return is_address_equal(data, context);
 }
@@ -452,15 +458,16 @@ void btm_consolidate_dev(tBTM_SEC_DEV_REC* p_target_rec) {
     if (p_dev_rec->bd_addr == p_target_rec->bd_addr) {
       memcpy(p_target_rec, p_dev_rec, sizeof(tBTM_SEC_DEV_REC));
       p_target_rec->ble = temp_rec.ble;
+      p_target_rec->sec_rec.ble_keys = temp_rec.sec_rec.ble_keys;
       p_target_rec->ble_hci_handle = temp_rec.ble_hci_handle;
-      p_target_rec->enc_key_size = temp_rec.enc_key_size;
+      p_target_rec->sec_rec.enc_key_size = temp_rec.sec_rec.enc_key_size;
       p_target_rec->conn_params = temp_rec.conn_params;
       p_target_rec->device_type |= temp_rec.device_type;
-      p_target_rec->sec_flags |= temp_rec.sec_flags;
+      p_target_rec->sec_rec.sec_flags |= temp_rec.sec_rec.sec_flags;
 
-      p_target_rec->new_encryption_key_is_p256 =
-          temp_rec.new_encryption_key_is_p256;
-      p_target_rec->bond_type = temp_rec.bond_type;
+      p_target_rec->sec_rec.new_encryption_key_is_p256 =
+          temp_rec.sec_rec.new_encryption_key_is_p256;
+      p_target_rec->sec_rec.bond_type = temp_rec.sec_rec.bond_type;
 
       /* remove the combined record */
       wipe_secrets_and_remove(p_dev_rec);
@@ -481,7 +488,7 @@ void btm_consolidate_dev(tBTM_SEC_DEV_REC* p_target_rec) {
   }
 }
 
-BTM_CONSOLIDATION_CB* btm_consolidate_cb = nullptr;
+static BTM_CONSOLIDATION_CB* btm_consolidate_cb = nullptr;
 
 void BTM_SetConsolidationCallback(BTM_CONSOLIDATION_CB* cb) {
   btm_consolidate_cb = cb;
@@ -594,7 +601,7 @@ static tBTM_SEC_DEV_REC* btm_find_oldest_dev_rec(void) {
     tBTM_SEC_DEV_REC* p_dev_rec =
         static_cast<tBTM_SEC_DEV_REC*>(list_node(node));
 
-    if ((p_dev_rec->sec_flags &
+    if ((p_dev_rec->sec_rec.sec_flags &
          (BTM_SEC_LINK_KEY_KNOWN | BTM_SEC_LE_LINK_KEY_KNOWN)) == 0) {
       // Device is not paired
       if (p_dev_rec->timestamp < ts_oldest) {
@@ -631,6 +638,12 @@ static tBTM_SEC_DEV_REC* btm_find_oldest_dev_rec(void) {
 tBTM_SEC_DEV_REC* btm_sec_allocate_dev_rec(void) {
   tBTM_SEC_DEV_REC* p_dev_rec = NULL;
 
+  if (btm_sec_cb.sec_dev_rec == nullptr) {
+    LOG_WARN(
+        "Unable to allocate device record with destructed device record list");
+    return nullptr;
+  }
+
   if (list_length(btm_sec_cb.sec_dev_rec) > BTM_SEC_MAX_DEVICE_RECORDS) {
     p_dev_rec = btm_find_oldest_dev_rec();
     wipe_secrets_and_remove(p_dev_rec);
@@ -641,10 +654,10 @@ tBTM_SEC_DEV_REC* btm_sec_allocate_dev_rec(void) {
   list_append(btm_sec_cb.sec_dev_rec, p_dev_rec);
 
   // Initialize defaults
-  p_dev_rec->sec_flags = BTM_SEC_IN_USE;
-  p_dev_rec->bond_type = BOND_TYPE_UNKNOWN;
+  p_dev_rec->sec_rec.sec_flags = BTM_SEC_IN_USE;
+  p_dev_rec->sec_rec.bond_type = BOND_TYPE_UNKNOWN;
   p_dev_rec->timestamp = btm_sec_cb.dev_rec_count++;
-  p_dev_rec->rmt_io_caps = BTM_IO_CAP_UNKNOWN;
+  p_dev_rec->sec_rec.rmt_io_caps = BTM_IO_CAP_UNKNOWN;
   p_dev_rec->suggested_tx_octets = 0;
 
   return p_dev_rec;
@@ -665,7 +678,7 @@ tBTM_BOND_TYPE btm_get_bond_type_dev(const RawAddress& bd_addr) {
 
   if (p_dev_rec == NULL) return BOND_TYPE_UNKNOWN;
 
-  return p_dev_rec->bond_type;
+  return p_dev_rec->sec_rec.bond_type;
 }
 
 /*******************************************************************************
@@ -684,7 +697,7 @@ bool btm_set_bond_type_dev(const RawAddress& bd_addr,
 
   if (p_dev_rec == NULL) return false;
 
-  p_dev_rec->bond_type = bond_type;
+  p_dev_rec->sec_rec.bond_type = bond_type;
   return true;
 }
 
@@ -789,7 +802,7 @@ const tBLE_BD_ADDR BTM_Sec_GetAddressWithType(const RawAddress& bd_addr) {
 
 bool BTM_IsRemoteNameKnown(const RawAddress& bd_addr, tBT_TRANSPORT transport) {
   tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(bd_addr);
-  return (p_dev_rec == nullptr) ? false : p_dev_rec->is_name_known();
+  return (p_dev_rec == nullptr) ? false : p_dev_rec->sec_rec.is_name_known();
 }
 
 namespace bluetooth {

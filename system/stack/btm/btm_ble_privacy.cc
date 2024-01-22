@@ -34,6 +34,7 @@
 #include "osi/include/allocator.h"
 #include "stack/btm/btm_int_types.h"
 #include "stack/include/bt_octets.h"
+#include "stack/include/bt_types.h"
 #include "stack/include/btm_api.h"
 #include "types/raw_address.h"
 
@@ -200,11 +201,11 @@ static void btm_ble_update_resolving_list(const RawAddress& pseudo_bda,
 
   if (add) {
     p_dev_rec->ble.in_controller_list |= BTM_RESOLVING_LIST_BIT;
-    if (!controller_get_interface()->supports_ble_privacy())
+    if (!controller_get_interface()->SupportsBlePrivacy())
       p_dev_rec->ble.resolving_list_index = btm_ble_find_irk_index();
   } else {
     p_dev_rec->ble.in_controller_list &= ~BTM_RESOLVING_LIST_BIT;
-    if (!controller_get_interface()->supports_ble_privacy()) {
+    if (!controller_get_interface()->SupportsBlePrivacy()) {
       /* clear IRK list index mask */
       btm_ble_clear_irk_index(p_dev_rec->ble.resolving_list_index);
       p_dev_rec->ble.resolving_list_index = 0;
@@ -439,7 +440,7 @@ static tBTM_STATUS btm_ble_remove_resolving_list_entry(
   if (controller_get_interface()->get_ble_resolving_list_max_size() == 0)
     return BTM_WRONG_MODE;
 
-  if (controller_get_interface()->supports_ble_privacy()) {
+  if (controller_get_interface()->SupportsBlePrivacy()) {
     bluetooth::shim::ACL_RemoveFromAddressResolution(
         p_dev_rec->ble.identity_address_with_type);
   } else {
@@ -469,7 +470,7 @@ static tBTM_STATUS btm_ble_remove_resolving_list_entry(
  *
  ******************************************************************************/
 static void btm_ble_clear_resolving_list(void) {
-  if (controller_get_interface()->supports_ble_privacy()) {
+  if (controller_get_interface()->SupportsBlePrivacy()) {
     bluetooth::shim::ACL_ClearAddressResolution();
   } else {
     uint8_t param[20] = {0};
@@ -504,7 +505,7 @@ bool btm_ble_read_resolving_list_entry(tBTM_SEC_DEV_REC* p_dev_rec) {
     return false;
   }
 
-  if (controller_get_interface()->supports_ble_privacy()) {
+  if (controller_get_interface()->SupportsBlePrivacy()) {
     btsnd_hcic_ble_read_resolvable_addr_peer(
         p_dev_rec->ble.identity_address_with_type.type,
         p_dev_rec->ble.identity_address_with_type.bda);
@@ -531,7 +532,7 @@ static void btm_ble_ble_unsupported_resolving_list_load_dev(
   uint8_t* p = param;
 
   UINT8_TO_STREAM(p, BTM_BLE_META_ADD_IRK_ENTRY);
-  ARRAY_TO_STREAM(p, p_dev_rec->ble_keys.irk, OCTET16_LEN);
+  ARRAY_TO_STREAM(p, p_dev_rec->sec_rec.ble_keys.irk, OCTET16_LEN);
   UINT8_TO_STREAM(p, p_dev_rec->ble.identity_address_with_type.type);
   BDADDR_TO_STREAM(p, p_dev_rec->ble.identity_address_with_type.bda);
 
@@ -544,7 +545,7 @@ static void btm_ble_ble_unsupported_resolving_list_load_dev(
 }
 
 static bool is_peer_identity_key_valid(const tBTM_SEC_DEV_REC& dev_rec) {
-  return dev_rec.ble_keys.key_type & BTM_LE_KEY_PID;
+  return dev_rec.sec_rec.ble_keys.key_type & BTM_LE_KEY_PID;
 }
 
 static Octet16 get_local_irk() { return btm_sec_cb.devcb.id_keys.irk; }
@@ -559,7 +560,7 @@ void btm_ble_resolving_list_load_dev(tBTM_SEC_DEV_REC& dev_rec) {
     return;
   }
 
-  if (!controller_get_interface()->supports_ble_privacy()) {
+  if (!controller_get_interface()->SupportsBlePrivacy()) {
     return btm_ble_ble_unsupported_resolving_list_load_dev(&dev_rec);
   }
 
@@ -576,7 +577,7 @@ void btm_ble_resolving_list_load_dev(tBTM_SEC_DEV_REC& dev_rec) {
     return;
   }
 
-  const Octet16& peer_irk = dev_rec.ble_keys.irk;
+  const Octet16& peer_irk = dev_rec.sec_rec.ble_keys.irk;
   const Octet16& local_irk = get_local_irk();
 
   if (dev_rec.ble.identity_address_with_type.bda.IsEmpty()) {

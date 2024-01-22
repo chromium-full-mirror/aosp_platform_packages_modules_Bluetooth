@@ -17,7 +17,7 @@
 package com.android.bluetooth.hearingaid;
 
 import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.reset;
@@ -40,19 +40,20 @@ import android.os.ParcelUuid;
 
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
-import androidx.test.rule.ServiceTestRule;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.bluetooth.TestUtils;
 import com.android.bluetooth.btservice.ActiveDeviceManager;
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.btservice.AudioRoutingManager;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
+import com.android.bluetooth.flags.FakeFeatureFlagsImpl;
+import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.x.com.android.modules.utils.SynchronousResultReceiver;
 
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -79,14 +80,14 @@ public class HearingAidServiceTest {
     private static final int TIMEOUT_MS = 1000;
 
     private HearingAidIntentReceiver mHearingAidIntentReceiver;
+    private FakeFeatureFlagsImpl mFakeFlagsImpl;
 
     @Mock private AdapterService mAdapterService;
     @Mock private ActiveDeviceManager mActiveDeviceManager;
+    @Mock private AudioRoutingManager mAudioRoutingManager;
     @Mock private DatabaseManager mDatabaseManager;
     @Mock private HearingAidNativeInterface mNativeInterface;
     @Mock private AudioManager mAudioManager;
-
-    @Rule public final ServiceTestRule mServiceRule = new ServiceTestRule();
 
     @Before
     public void setUp() throws Exception {
@@ -97,11 +98,21 @@ public class HearingAidServiceTest {
         if (Looper.myLooper() == null) {
             Looper.prepare();
         }
+        mFakeFlagsImpl = new FakeFeatureFlagsImpl();
+        mFakeFlagsImpl.setFlag(Flags.FLAG_AUDIO_ROUTING_CENTRALIZATION, false);
 
         TestUtils.setAdapterService(mAdapterService);
-        doReturn(mActiveDeviceManager).when(mAdapterService).getActiveDeviceManager();
+        doAnswer(
+                        invocation -> {
+                            if (mFakeFlagsImpl.audioRoutingCentralization()) {
+                                return mAudioRoutingManager;
+                            } else {
+                                return mActiveDeviceManager;
+                            }
+                        })
+                .when(mAdapterService)
+                .getActiveDeviceManager();
         doReturn(mDatabaseManager).when(mAdapterService).getDatabase();
-        doReturn(true, false).when(mAdapterService).isStartedProfile(anyString());
 
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         HearingAidNativeInterface.setInstance(mNativeInterface);
@@ -146,13 +157,12 @@ public class HearingAidServiceTest {
     }
 
     private void startService() throws TimeoutException {
-        TestUtils.startService(mServiceRule, HearingAidService.class);
-        mService = HearingAidService.getHearingAidService();
-        Assert.assertNotNull(mService);
+        mService = new HearingAidService(mTargetContext);
+        mService.doStart();
     }
 
     private void stopService() throws TimeoutException {
-        TestUtils.stopService(mServiceRule, HearingAidService.class);
+        mService.doStop();
         mService = HearingAidService.getHearingAidService();
         Assert.assertNull(mService);
     }
@@ -234,22 +244,12 @@ public class HearingAidServiceTest {
         // Prepare: connect
         connectDevice(mLeftDevice);
         // HearingAid Service is already running: test stop(). Note: must be done on the main thread
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
-            public void run() {
-                Assert.assertTrue(mService.stop());
-            }
-        });
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(mService::stop);
         // Try to restart the service. Note: must be done on the main thread
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
-            public void run() {
-                Assert.assertTrue(mService.start());
-            }
-        });
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(mService::start);
     }
 
-    /**
-     * Test get/set priority for BluetoothDevice
-     */
+    /** Test get/set priority for BluetoothDevice */
     @Test
     public void testGetSetPriority() throws Exception {
         when(mDatabaseManager.getProfileConnectionPolicy(mLeftDevice, BluetoothProfile.HEARING_AID))
@@ -959,12 +959,19 @@ public class HearingAidServiceTest {
         Assert.assertFalse(mService.getActiveDevices().contains(mLeftDevice));
         Assert.assertTrue(mService.getActiveDevices().contains(mSingleDevice));
 
-        final SynchronousResultReceiver<Boolean> recv = SynchronousResultReceiver.get();
+        mService.setFeatureFlags(mFakeFlagsImpl);
+        SynchronousResultReceiver<Boolean> recv = SynchronousResultReceiver.get();
         boolean defaultRecvValue = false;
         mServiceBinder.setActiveDevice(null, null, recv);
         Assert.assertTrue(recv.awaitResultNoInterrupt(Duration.ofMillis(TIMEOUT_MS))
                 .getValue(defaultRecvValue));
         Assert.assertFalse(mService.getActiveDevices().contains(mSingleDevice));
+
+        mFakeFlagsImpl.setFlag(Flags.FLAG_AUDIO_ROUTING_CENTRALIZATION, true);
+        recv = SynchronousResultReceiver.get();
+        mServiceBinder.setActiveDevice(null, null, recv);
+        verify(mAudioRoutingManager)
+                .activateDeviceProfile(null, BluetoothProfile.HEARING_AID, recv);
     }
 
     /**

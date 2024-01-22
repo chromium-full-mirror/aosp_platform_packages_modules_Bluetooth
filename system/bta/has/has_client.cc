@@ -31,17 +31,17 @@
 #include "bta_csis_api.h"
 #include "bta_gatt_api.h"
 #include "bta_gatt_queue.h"
-#include "bta_groups.h"
 #include "bta_has_api.h"
 #include "bta_le_audio_uuids.h"
 #include "btm_sec.h"
-#include "device/include/controller.h"
 #include "gap_api.h"
 #include "gatt_api.h"
 #include "has_types.h"
-#include "osi/include/log.h"
-#include "osi/include/osi.h"
+#include "include/check.h"
+#include "internal_include/bt_trace.h"
+#include "os/log.h"
 #include "osi/include/properties.h"
+#include "stack/include/bt_types.h"
 
 using base::Closure;
 using bluetooth::Uuid;

@@ -33,16 +33,20 @@
 #include <cstdint>
 #include <string>
 
+#include "common/init_flags.h"
 #include "device/include/controller.h"  // TODO Remove
-#include "gd/common/init_flags.h"
-#include "gd/hal/snoop_logger.h"
-#include "gd/os/system_properties.h"
+#include "hal/snoop_logger.h"
+#include "include/check.h"
+#include "internal_include/bt_target.h"
+#include "internal_include/bt_trace.h"
 #include "main/shim/entry.h"
 #include "os/log.h"
+#include "os/system_properties.h"
 #include "osi/include/allocator.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_psm_types.h"
+#include "stack/include/btm_api.h"
 #include "stack/include/l2c_api.h"
 #include "stack/include/main_thread.h"
 #include "stack/l2cap/l2c_int.h"
@@ -1572,8 +1576,7 @@ uint16_t L2CA_FlushChannel(uint16_t lcid, uint16_t num_to_flush) {
         num_to_flush != L2CAP_FLUSH_CHANS_GET) {
       /* If the controller supports enhanced flush, flush the data queued at the
        * controller */
-      if (controller->supports_non_flushable_pb() &&
-          (BTM_GetNumScoLinks() == 0)) {
+      if (controller->SupportsNonFlushablePb() && (BTM_GetNumScoLinks() == 0)) {
         /* The only packet type defined - 0 - Automatically-Flushable Only */
         btsnd_hcic_enhanced_flush(p_lcb->Handle(), 0);
       }

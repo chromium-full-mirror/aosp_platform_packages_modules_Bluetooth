@@ -18,6 +18,7 @@ package com.android.bluetooth.hfp;
 
 import static android.Manifest.permission.BLUETOOTH_CONNECT;
 import static android.Manifest.permission.MODIFY_PHONE_STATE;
+
 import static com.android.bluetooth.Utils.enforceBluetoothPrivilegedPermission;
 import static com.android.modules.utils.build.SdkLevel.isAtLeastU;
 
@@ -54,10 +55,13 @@ import com.android.bluetooth.BluetoothStatsLog;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.a2dp.A2dpService;
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.btservice.AudioRoutingManager;
 import com.android.bluetooth.btservice.MetricsLogger;
 import com.android.bluetooth.btservice.ProfileService;
 import com.android.bluetooth.btservice.ServiceFactory;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
+import com.android.bluetooth.flags.FeatureFlags;
+import com.android.bluetooth.flags.FeatureFlagsImpl;
 import com.android.bluetooth.hfpclient.HeadsetClientService;
 import com.android.bluetooth.hfpclient.HeadsetClientStateMachine;
 import com.android.bluetooth.le_audio.LeAudioService;
@@ -122,6 +126,7 @@ public class HeadsetService extends ProfileService {
     // Timeout for state machine thread join, to prevent potential ANR.
     private static final int SM_THREAD_JOIN_TIMEOUT_MS = 1000;
 
+    private FeatureFlags mFeatureFlags = new FeatureFlagsImpl();
     private int mMaxHeadsetConnections = 1;
     private BluetoothDevice mActiveDevice;
     private AdapterService mAdapterService;
@@ -151,6 +156,10 @@ public class HeadsetService extends ProfileService {
 
     private final ServiceFactory mFactory = new ServiceFactory();
 
+    public HeadsetService(Context ctx) {
+        super(ctx);
+    }
+
     public static boolean isEnabled() {
         return BluetoothProperties.isProfileHfpAgEnabled().orElse(false);
     }
@@ -161,7 +170,7 @@ public class HeadsetService extends ProfileService {
     }
 
     @Override
-    protected boolean start() {
+    protected void start() {
         Log.i(TAG, "start()");
         if (mStarted) {
             throw new IllegalStateException("start() called twice");
@@ -201,17 +210,16 @@ public class HeadsetService extends ProfileService {
         registerReceiver(mHeadsetReceiver, filter);
         // Step 7: Mark service as started
         mStarted = true;
-        return true;
     }
 
     @Override
-    protected boolean stop() {
+    protected void stop() {
         Log.i(TAG, "stop()");
         if (!mStarted) {
             Log.w(TAG, "stop() called before start()");
             // Still return true because it is considered "stopped" and doesn't have any functional
             // impact on the user
-            return true;
+            return;
         }
         // Step 7: Mark service as stopped
         mStarted = false;
@@ -272,7 +280,6 @@ public class HeadsetService extends ProfileService {
             mAdapterService = null;
         }
         setComponentAvailable(HFP_AG_IN_CALL_SERVICE, false);
-        return true;
     }
 
     @Override
@@ -843,11 +850,16 @@ public class HeadsetService extends ProfileService {
                 SynchronousResultReceiver receiver) {
             try {
                 HeadsetService service = getService(source);
-                boolean defaultValue = false;
                 if (service != null) {
-                    defaultValue = service.setActiveDevice(device);
+                    if (service.mFeatureFlags.audioRoutingCentralization()) {
+                        ((AudioRoutingManager) service.mAdapterService.getActiveDeviceManager())
+                                .activateDeviceProfile(device, BluetoothProfile.HEADSET, receiver);
+                    } else {
+                        receiver.send(service.setActiveDevice(device));
+                    }
+                } else {
+                    receiver.send(false);
                 }
-                receiver.send(defaultValue);
             } catch (RuntimeException e) {
                 receiver.propagateException(e);
             }

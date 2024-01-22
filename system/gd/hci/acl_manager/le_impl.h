@@ -22,17 +22,21 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "common/bind.h"
 #include "common/init_flags.h"
 #include "hci/acl_manager/assembler.h"
 #include "hci/acl_manager/le_acceptlist_callbacks.h"
+#include "hci/acl_manager/le_acl_connection.h"
+#include "hci/acl_manager/le_connection_callbacks.h"
 #include "hci/acl_manager/le_connection_management_callbacks.h"
 #include "hci/acl_manager/round_robin_scheduler.h"
 #include "hci/controller.h"
 #include "hci/hci_layer.h"
 #include "hci/hci_packets.h"
 #include "hci/le_address_manager.h"
+#include "macros.h"
 #include "os/alarm.h"
 #include "os/handler.h"
 #include "os/system_properties.h"
@@ -84,10 +88,6 @@ enum class ConnectabilityState {
   DISARMING = 3,
 };
 
-#define CASE_RETURN_TEXT(code) \
-  case code:                   \
-    return #code
-
 inline std::string connectability_state_machine_text(const ConnectabilityState& state) {
   switch (state) {
     CASE_RETURN_TEXT(ConnectabilityState::DISARMED);
@@ -98,7 +98,6 @@ inline std::string connectability_state_machine_text(const ConnectabilityState& 
       return base::StringPrintf("UNKNOWN[%d]", state);
   }
 }
-#undef CASE_RETURN_TEXT
 
 struct le_acl_connection {
   le_acl_connection(

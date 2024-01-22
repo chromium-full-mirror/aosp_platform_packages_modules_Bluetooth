@@ -27,7 +27,6 @@ import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.PendingIntent;
-import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
@@ -93,6 +92,8 @@ import com.android.bluetooth.btservice.BluetoothAdapterProxy;
 import com.android.bluetooth.btservice.CompanionManager;
 import com.android.bluetooth.btservice.MetricsLogger;
 import com.android.bluetooth.btservice.ProfileService;
+import com.android.bluetooth.flags.FeatureFlags;
+import com.android.bluetooth.flags.FeatureFlagsImpl;
 import com.android.bluetooth.util.NumberUtils;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.modules.utils.SynchronousResultReceiver;
@@ -285,6 +286,7 @@ public class GattService extends ProfileService {
      */
     private final HashMap<String, Integer> mPermits = new HashMap<>();
 
+    private FeatureFlags mFeatureFlags;
     private AdapterService mAdapterService;
     private BluetoothAdapterProxy mBluetoothAdapterProxy;
     AdvertiseManager mAdvertiseManager;
@@ -300,8 +302,7 @@ public class GattService extends ProfileService {
     private final Object mTestModeLock = new Object();
 
     public GattService(Context ctx) {
-        attachBaseContext(ctx);
-        onCreate();
+        super(ctx);
     }
 
     public static boolean isEnabled() {
@@ -339,7 +340,7 @@ public class GattService extends ProfileService {
     }
 
     @Override
-    protected boolean start() {
+    protected void start() {
         if (DBG) {
             Log.d(TAG, "start()");
         }
@@ -350,6 +351,7 @@ public class GattService extends ProfileService {
         mNativeInterface = GattObjectsFactory.getInstance().getNativeInterface();
         mNativeInterface.init(this);
         mAdapterService = AdapterService.getAdapterService();
+        mFeatureFlags = new FeatureFlagsImpl();
         mBluetoothAdapterProxy = BluetoothAdapterProxy.getInstance();
         mCompanionManager = getSystemService(CompanionDeviceManager.class);
         mAppOps = getSystemService(AppOpsManager.class);
@@ -365,7 +367,11 @@ public class GattService extends ProfileService {
         mScanManager =
                 GattObjectsFactory.getInstance()
                         .createScanManager(
-                                this, mAdapterService, mBluetoothAdapterProxy, thread.getLooper());
+                                this,
+                                mAdapterService,
+                                mBluetoothAdapterProxy,
+                                thread.getLooper(),
+                                mFeatureFlags);
 
         mPeriodicScanManager = GattObjectsFactory.getInstance()
                 .createPeriodicScanManager(mAdapterService);
@@ -375,12 +381,10 @@ public class GattService extends ProfileService {
 
         mActivityManager = getSystemService(ActivityManager.class);
         mPackageManager = mAdapterService.getPackageManager();
-
-        return true;
     }
 
     @Override
-    protected boolean stop() {
+    protected void stop() {
         if (DBG) {
             Log.d(TAG, "stop()");
         }
@@ -391,8 +395,6 @@ public class GattService extends ProfileService {
         mHandleMap.clear();
         mReliableQueue.clear();
         cleanup();
-
-        return true;
     }
 
     @Override
@@ -492,14 +494,6 @@ public class GattService extends ProfileService {
     private boolean isHandleRestricted(int connId, int handle) {
         Set<Integer> restrictedHandles = mRestrictedHandles.get(connId);
         return restrictedHandles != null && restrictedHandles.contains(handle);
-    }
-
-    @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        if (GattDebugUtils.handleDebugAction(this, intent)) {
-            return Service.START_NOT_STICKY;
-        }
-        return super.onStartCommand(intent, flags, startId);
     }
 
     /** Notify Scan manager of bluetooth profile connection state changes */

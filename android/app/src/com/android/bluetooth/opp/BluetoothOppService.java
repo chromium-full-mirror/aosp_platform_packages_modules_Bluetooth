@@ -201,31 +201,9 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
      */
     private BluetoothOppObexServerSession mServerSession;
 
-    public static boolean isEnabled() {
-        return BluetoothProperties.isProfileOppEnabled().orElse(false);
-    }
+    public BluetoothOppService(Context ctx) {
+        super(ctx);
 
-    @Override
-    protected IProfileServiceBinder initBinder() {
-        return new OppBinder(this);
-    }
-
-    private static class OppBinder extends Binder implements IProfileServiceBinder {
-
-        OppBinder(BluetoothOppService service) {
-        }
-
-        @Override
-        public void cleanup() {
-        }
-    }
-
-    @Override
-    public void onCreate() {
-        super.onCreate();
-        if (V) {
-            Log.v(TAG, "onCreate");
-        }
         mShares = new ArrayList();
         mBatches = new ArrayList();
         mBatchId = 1;
@@ -244,8 +222,25 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
         }
     }
 
+    public static boolean isEnabled() {
+        return BluetoothProperties.isProfileOppEnabled().orElse(false);
+    }
+
     @Override
-    public boolean start() {
+    protected IProfileServiceBinder initBinder() {
+        return new OppBinder(this);
+    }
+
+    private static class OppBinder extends Binder implements IProfileServiceBinder {
+
+        OppBinder(BluetoothOppService service) {}
+
+        @Override
+        public void cleanup() {}
+    }
+
+    @Override
+    public void start() {
         if (V) {
             Log.v(TAG, "start()");
         }
@@ -272,14 +267,13 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
         mNotifier.mNotificationMgr.cancelAll();
         updateFromProvider();
         setBluetoothOppService(this);
-        return true;
     }
 
     @Override
-    public boolean stop() {
+    public void stop() {
         if (sBluetoothOppService == null) {
             Log.w(TAG, "stop() called before start()");
-            return true;
+            return;
         }
         setBluetoothOppService(null);
         mHandler.sendMessage(mHandler.obtainMessage(STOP_LISTENER));
@@ -290,8 +284,6 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
         setComponentAvailable(TRANSFER_HISTORY_ACTIVITY, false);
         setComponentAvailable(OPP_RECEIVER, false);
         setComponentAvailable(OPP_HANDOFF_RECEIVER, false);
-
-        return true;
     }
 
     private void startListener() {

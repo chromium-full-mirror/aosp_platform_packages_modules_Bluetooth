@@ -19,10 +19,9 @@ package com.android.bluetooth.bass_client;
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.atLeast;
-import static org.mockito.Mockito.anyString;
-import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doCallRealMethod;
@@ -62,7 +61,6 @@ import android.os.RemoteException;
 
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
-import androidx.test.rule.ServiceTestRule;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.bluetooth.TestUtils;
@@ -70,11 +68,11 @@ import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.ServiceFactory;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.csip.CsipSetCoordinatorService;
+import com.android.bluetooth.flags.FeatureFlagsImpl;
 
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -82,14 +80,14 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.Spy;
 
-import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.stream.Collectors;
 
 /**
  * Tests for {@link BassClientService}
@@ -138,8 +136,6 @@ public class BassClientServiceTest {
     private BluetoothDevice mCurrentDevice;
     private BluetoothDevice mCurrentDevice1;
     private BassIntentReceiver mBassIntentReceiver;
-
-    @Rule public final ServiceTestRule mServiceRule = new ServiceTestRule();
 
     @Spy private BassObjectsFactory mObjectsFactory = BassObjectsFactory.getInstance();
     @Mock private AdapterService mAdapterService;
@@ -216,7 +212,6 @@ public class BassClientServiceTest {
         doReturn(BluetoothDevice.BOND_BONDED).when(mAdapterService)
                 .getBondState(any(BluetoothDevice.class));
         doReturn(mDatabaseManager).when(mAdapterService).getDatabase();
-        doReturn(true, false).when(mAdapterService).isStartedProfile(anyString());
         doAnswer(invocation -> {
             Set<BluetoothDevice> keys = mStateMachines.keySet();
             return keys.toArray(new BluetoothDevice[keys.size()]);
@@ -244,9 +239,8 @@ public class BassClientServiceTest {
         doReturn(mBluetoothLeScannerWrapper).when(mObjectsFactory)
                 .getBluetoothLeScannerWrapper(any());
 
-        TestUtils.startService(mServiceRule, BassClientService.class);
-        mBassClientService = BassClientService.getBassClientService();
-        assertThat(mBassClientService).isNotNull();
+        mBassClientService = new BassClientService(mTargetContext, new FeatureFlagsImpl());
+        mBassClientService.doStart();
 
         mBassClientService.mServiceFactory = mServiceFactory;
         doReturn(mCsipService).when(mServiceFactory).getCsipSetCoordinatorService();
@@ -274,7 +268,7 @@ public class BassClientServiceTest {
         }
         mBassClientService.unregisterCallback(mCallback);
 
-        TestUtils.stopService(mServiceRule, BassClientService.class);
+        mBassClientService.doStop();
         mBassClientService = BassClientService.getBassClientService();
         assertThat(mBassClientService).isNull();
         mStateMachines.clear();
@@ -797,6 +791,57 @@ public class BassClientServiceTest {
         assertThat(msg.isPresent()).isFalse();
     }
 
+    /** Test switch source will be triggered if adding new source when sink has source */
+    @Test
+    public void testSwitchSourceAfterSourceAdded() {
+        prepareConnectedDeviceGroup();
+        BluetoothLeBroadcastMetadata meta = createBroadcastMetadata(TEST_BROADCAST_ID);
+        BluetoothLeBroadcastMetadata newMeta = createBroadcastMetadata(TEST_BROADCAST_ID + 1);
+        verifyAddSourceForGroup(meta);
+        for (BassClientStateMachine sm : mStateMachines.values()) {
+            injectRemoteSourceState(
+                    sm,
+                    meta,
+                    TEST_SOURCE_ID,
+                    BluetoothLeBroadcastReceiveState.PA_SYNC_STATE_IDLE,
+                    meta.isEncrypted()
+                            ? BluetoothLeBroadcastReceiveState.BIG_ENCRYPTION_STATE_DECRYPTING
+                            : BluetoothLeBroadcastReceiveState.BIG_ENCRYPTION_STATE_NOT_ENCRYPTED,
+                    null);
+            injectRemoteSourceState(
+                    sm,
+                    meta,
+                    TEST_SOURCE_ID + 1,
+                    BluetoothLeBroadcastReceiveState.PA_SYNC_STATE_IDLE,
+                    meta.isEncrypted()
+                            ? BluetoothLeBroadcastReceiveState.BIG_ENCRYPTION_STATE_DECRYPTING
+                            : BluetoothLeBroadcastReceiveState.BIG_ENCRYPTION_STATE_NOT_ENCRYPTED,
+                    null);
+        }
+
+        // Add another new broadcast source
+        mBassClientService.addSource(mCurrentDevice, newMeta, true);
+
+        // Verify all group members getting SWITH_BCAST_SOURCE message and first source got selected
+        // to remove
+        assertThat(mStateMachines.size()).isEqualTo(2);
+        for (BassClientStateMachine sm : mStateMachines.values()) {
+            ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
+            verify(sm, atLeast(1)).sendMessage(messageCaptor.capture());
+
+            Optional<Message> msg =
+                    messageCaptor.getAllValues().stream()
+                            .filter(
+                                    m ->
+                                            (m.what == BassClientStateMachine.SWITH_BCAST_SOURCE)
+                                                    && (m.obj == newMeta)
+                                                    && (m.arg1 == TEST_SOURCE_ID))
+                            .findFirst();
+            assertThat(msg.isPresent()).isTrue();
+            assertThat(msg.orElse(null)).isNotNull();
+        }
+    }
+
     /**
      * Test that after multiple calls to service.addSource() with a group operation flag set,
      * there are two call to service.removeSource() needed to clear the flag
@@ -966,6 +1011,15 @@ public class BassClientServiceTest {
     public void testInvalidRequestForGroup() {
         // Prepare the initial state
         prepareConnectedDeviceGroup();
+
+        // Verify errors are reported for the entire group
+        mBassClientService.addSource(mCurrentDevice1, null, true);
+        assertThat(mStateMachines.size()).isEqualTo(2);
+        for (BassClientStateMachine sm : mStateMachines.values()) {
+            verify(sm, times(0)).sendMessage(any());
+        }
+
+        // Prepare valid source for group
         BluetoothLeBroadcastMetadata meta = createBroadcastMetadata(TEST_BROADCAST_ID);
         verifyAddSourceForGroup(meta);
         for (BassClientStateMachine sm: mStateMachines.values()) {
@@ -983,19 +1037,6 @@ public class BassClientServiceTest {
                                 BluetoothLeBroadcastReceiveState.BIG_ENCRYPTION_STATE_DECRYPTING :
                                 BluetoothLeBroadcastReceiveState.BIG_ENCRYPTION_STATE_NOT_ENCRYPTED,
                         null);
-            }
-        }
-
-        // Verify errors are reported for the entire group
-        mBassClientService.addSource(mCurrentDevice1, null, true);
-        assertThat(mStateMachines.size()).isEqualTo(2);
-        for (BassClientStateMachine sm: mStateMachines.values()) {
-            BluetoothDevice dev = sm.getDevice();
-            try {
-                verify(mCallback, after(TIMEOUT_MS).times(1)).onSourceAddFailed(eq(dev),
-                        eq(null), eq(BluetoothStatusCodes.ERROR_BAD_PARAMETERS));
-            } catch (RemoteException e) {
-                throw e.rethrowFromSystemServer();
             }
         }
 

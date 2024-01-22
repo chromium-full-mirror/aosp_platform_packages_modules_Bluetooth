@@ -29,17 +29,17 @@
 
 #include <string>
 
-#include "bt_target.h"
-#include "common/time_util.h"
-#include "gd/hal/snoop_logger.h"
+#include "hal/snoop_logger.h"
+#include "internal_include/bt_target.h"
 #include "main/shim/entry.h"
 #include "main/shim/metrics_api.h"
+#include "os/log.h"
 #include "osi/include/allocator.h"
-#include "osi/include/log.h"
 #include "osi/include/stack_power_telemetry.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/include/acl_api.h"
 #include "stack/include/bt_hdr.h"
+#include "stack/include/bt_types.h"
 #include "stack/include/l2cdefs.h"
 #include "stack/l2cap/l2c_int.h"
 

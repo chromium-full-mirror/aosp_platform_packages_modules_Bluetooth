@@ -22,20 +22,21 @@
  *
  ******************************************************************************/
 
+#include <base/logging.h>
+
 #include <string>
 #include <vector>
 
 #include "bta/ag/bta_ag_int.h"
-#include "main/shim/dumpsys.h"
+#include "bta/include/bta_hfp_api.h"
+#include "internal_include/bt_target.h"
+#include "os/log.h"
 #include "osi/include/alarm.h"
 #include "osi/include/compat.h"
-#include "osi/include/log.h"
 #include "osi/include/osi.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/btm_api.h"
 #include "types/raw_address.h"
-
-#include <base/logging.h>
 
 /*****************************************************************************
  * Constants and types
@@ -147,6 +148,7 @@ static tBTA_AG_SCB* bta_ag_scb_alloc(void) {
       p_scb->received_at_bac = false;
       p_scb->codec_updated = false;
       p_scb->codec_fallback = false;
+      p_scb->retransmission_effort_retries = 0;
       p_scb->peer_codecs = BTM_SCO_CODEC_CVSD;
       p_scb->sco_codec = BTM_SCO_CODEC_CVSD;
       p_scb->peer_version = HFP_HSP_VERSION_UNKNOWN;

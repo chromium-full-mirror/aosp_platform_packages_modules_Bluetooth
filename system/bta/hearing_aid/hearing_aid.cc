@@ -20,6 +20,7 @@
 
 #define LOG_TAG "bluetooth"
 
+#include <android_bluetooth_flags.h>
 #include <base/functional/bind.h>
 #include <base/functional/callback.h>
 #include <base/logging.h>
@@ -37,6 +38,8 @@
 #include "device/include/controller.h"
 #include "embdrv/g722/g722_enc_dec.h"
 #include "hardware/bt_gatt_types.h"
+#include "include/check.h"
+#include "internal_include/bt_trace.h"
 #include "os/log.h"
 #include "osi/include/allocator.h"
 #include "osi/include/properties.h"
@@ -44,6 +47,7 @@
 #include "stack/include/acl_api.h"        // BTM_ReadRSSI
 #include "stack/include/acl_api_types.h"  // tBTM_RSSI_RESULT
 #include "stack/include/bt_hdr.h"
+#include "stack/include/bt_types.h"
 #include "stack/include/bt_uuid16.h"
 #include "stack/include/l2c_api.h"  // L2CAP_MIN_OFFSET
 #include "types/bluetooth/uuid.h"
@@ -509,7 +513,7 @@ class HearingAidImpl : public HearingAid {
     hearingDevice->connection_update_status = STARTED;
     hearingDevice->requested_connection_interval = UpdateBleConnParams(address);
 
-    if (controller_get_interface()->supports_ble_2m_phy()) {
+    if (controller_get_interface()->SupportsBle2mPhy()) {
       LOG_INFO("%s set preferred 2M PHY", ADDRESS_TO_LOGGABLE_CSTR(address));
       BTM_BleSetPhy(address, PHY_LE_2M, PHY_LE_2M, 0);
     }
@@ -991,7 +995,7 @@ class HearingAidImpl : public HearingAid {
     }
 
     if ((codecs & (1 << CODEC_G722_24KHZ)) &&
-        controller_get_interface()->supports_ble_2m_phy() &&
+        controller_get_interface()->SupportsBle2mPhy() &&
         default_data_interval_ms == HA_INTERVAL_10_MS) {
       codec_in_use = CODEC_G722_24KHZ;
     } else if (codecs & (1 << CODEC_G722_16KHZ)) {
@@ -1410,6 +1414,11 @@ class HearingAidImpl : public HearingAid {
       }
     }
 
+    uint16_t l2cap_flush_threshold = 0;
+    if (IS_FLAG_ENABLED(higher_l2cap_flush_threshold)) {
+      l2cap_flush_threshold = 1;
+    }
+
     // TODO: monural, binarual check
 
     // divide encoded data into packets, add header, send.
@@ -1430,7 +1439,7 @@ class HearingAidImpl : public HearingAid {
 
       uint16_t cid = GAP_ConnGetL2CAPCid(left->gap_handle);
       uint16_t packets_in_chans = L2CA_FlushChannel(cid, L2CAP_FLUSH_CHANS_GET);
-      if (packets_in_chans) {
+      if (packets_in_chans > l2cap_flush_threshold) {
         // Compare the two sides LE CoC credit value to confirm need to drop or
         // skip audio packet.
         if (NeedToDropPacket(left, right) && IsBelowDropFrequency(time_point)) {
@@ -1464,7 +1473,7 @@ class HearingAidImpl : public HearingAid {
 
       uint16_t cid = GAP_ConnGetL2CAPCid(right->gap_handle);
       uint16_t packets_in_chans = L2CA_FlushChannel(cid, L2CAP_FLUSH_CHANS_GET);
-      if (packets_in_chans) {
+      if (packets_in_chans > l2cap_flush_threshold) {
         // Compare the two sides LE CoC credit value to confirm need to drop or
         // skip audio packet.
         if (NeedToDropPacket(right, left) && IsBelowDropFrequency(time_point)) {

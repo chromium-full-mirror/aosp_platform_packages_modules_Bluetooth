@@ -76,6 +76,7 @@ import android.bluetooth.IBluetoothSocketManager;
 import android.bluetooth.IncomingRfcommSocketInfo;
 import android.bluetooth.OobData;
 import android.bluetooth.UidTraffic;
+import android.bluetooth.rfcomm.BluetoothRfcommProtoEnums;
 import android.companion.CompanionDeviceManager;
 import android.content.AttributionSource;
 import android.content.Context;
@@ -113,6 +114,8 @@ import com.android.bluetooth.R;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.a2dp.A2dpService;
 import com.android.bluetooth.a2dpsink.A2dpSinkService;
+import com.android.bluetooth.avrcp.AvrcpTargetService;
+import com.android.bluetooth.avrcpcontroller.AvrcpControllerService;
 import com.android.bluetooth.bas.BatteryService;
 import com.android.bluetooth.bass_client.BassClientService;
 import com.android.bluetooth.btservice.InteropUtil.InteropFeature;
@@ -134,11 +137,14 @@ import com.android.bluetooth.hid.HidHostService;
 import com.android.bluetooth.le_audio.LeAudioService;
 import com.android.bluetooth.map.BluetoothMapService;
 import com.android.bluetooth.mapclient.MapClientService;
+import com.android.bluetooth.mcp.McpService;
+import com.android.bluetooth.opp.BluetoothOppService;
 import com.android.bluetooth.pan.PanService;
 import com.android.bluetooth.pbap.BluetoothPbapService;
 import com.android.bluetooth.pbapclient.PbapClientService;
 import com.android.bluetooth.sap.SapService;
 import com.android.bluetooth.sdp.SdpManager;
+import com.android.bluetooth.tbs.TbsService;
 import com.android.bluetooth.telephony.BluetoothInCallService;
 import com.android.bluetooth.vc.VolumeControlService;
 import com.android.internal.annotations.GuardedBy;
@@ -169,8 +175,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 public class AdapterService extends Service {
     private static final String TAG = "BluetoothAdapterService";
@@ -203,7 +211,7 @@ public class AdapterService extends Service {
     private long mEnergyUsedTotalVoltAmpSecMicro;
     private final SparseArray<UidTraffic> mUidTraffic = new SparseArray<>();
 
-    private final ArrayList<String> mStartedProfiles = new ArrayList<>();
+    private final Map<Integer, ProfileService> mStartedProfiles = new HashMap<>();
     private final ArrayList<ProfileService> mRegisteredProfiles = new ArrayList<>();
     private final ArrayList<ProfileService> mRunningProfiles = new ArrayList<>();
     private HashSet<String> mLeAudioAllowDevices = new HashSet<>();
@@ -276,6 +284,11 @@ public class AdapterService extends Service {
     @VisibleForTesting
     AdapterService(Looper looper) {
         mLooper = looper;
+    }
+
+    @VisibleForTesting
+    AdapterService(Context ctx) {
+        attachBaseContext(ctx);
     }
 
     public static synchronized AdapterService getAdapterService() {
@@ -429,8 +442,8 @@ public class AdapterService extends Service {
      * @param serviceSampleName the service simple name.
      * @return true if the service is started expectedly, false otherwise.
      */
-    public boolean isStartedProfile(String serviceSampleName) {
-        return mStartedProfiles.contains(serviceSampleName);
+    public boolean isStartedProfile(int profileId) {
+        return mStartedProfiles.containsKey(profileId);
     }
 
     private static final int MESSAGE_PROFILE_SERVICE_STATE_CHANGED = 1;
@@ -857,22 +870,23 @@ public class AdapterService extends Service {
      * @param port port of socket
      * @param isSecured if secured API is called
      * @param result transaction result of the connection
-     * @param socketCreationLatencyMillis latency of the connection
+     * @param socketCreationLatencyNanos latency of the connection
      */
     public void logL2capcocClientConnection(
             BluetoothDevice device,
             int port,
             boolean isSecured,
             int result,
-            long socketCreationTimeMillis,
-            long socketCreationLatencyMillis,
-            long socketConnectionTimeMillis,
+            long socketCreationTimeNanos,
+            long socketCreationLatencyNanos,
+            long socketConnectionTimeNanos,
             int appUid) {
 
         int metricId = getMetricId(device);
-        long currentTime = System.currentTimeMillis();
-        long endToEndLatencyMillis = currentTime - socketCreationTimeMillis;
-        long socketConnectionLatencyMillis = currentTime - socketConnectionTimeMillis;
+        long currentTime = System.nanoTime();
+        long endToEndLatencyMillis = (currentTime - socketCreationTimeNanos) / 1000000;
+        long socketCreationLatencyMillis = socketCreationLatencyNanos / 1000000;
+        long socketConnectionLatencyMillis = (currentTime - socketConnectionTimeNanos) / 1000000;
         Log.i(
                 TAG,
                 "Statslog L2capcoc client connection."
@@ -894,6 +908,37 @@ public class AdapterService extends Service {
                 appUid,
                 socketCreationLatencyMillis,
                 socketConnectionLatencyMillis);
+    }
+
+    /**
+     * Log RFCOMM Connection Metrics
+     *
+     * @param device Bluetooth device
+     * @param isSecured if secured API is called
+     * @param resultCode transaction result of the connection
+     * @param isSerialPort true if service class UUID is 0x1101
+     */
+    public void logRfcommConnectionAttempt(
+            BluetoothDevice device,
+            boolean isSecured,
+            int resultCode,
+            long socketCreationTimeNanos,
+            boolean isSerialPort,
+            int appUid) {
+
+        int metricId = getMetricId(device);
+        long currentTime = System.nanoTime();
+        long endToEndLatencyNanos = currentTime - socketCreationTimeNanos;
+        BluetoothStatsLog.write(
+                BluetoothStatsLog.BLUETOOTH_RFCOMM_CONNECTION_ATTEMPTED,
+                metricId,
+                endToEndLatencyNanos,
+                isSecured
+                        ? BluetoothRfcommProtoEnums.SOCKET_SECURITY_SECURE
+                        : BluetoothRfcommProtoEnums.SOCKET_SECURITY_INSECURE,
+                resultCode,
+                isSerialPort,
+                appUid);
     }
 
     @RequiresPermission(
@@ -964,14 +1009,12 @@ public class AdapterService extends Service {
 
     void startProfileServices() {
         debugLog("startCoreServices()");
-        Class[] supportedProfileServices = Config.getSupportedProfiles();
+        int[] supportedProfileServices = Config.getSupportedProfiles();
         // TODO(b/228875190): GATT is assumed supported. If we support no other profiles then just
         // move on to BREDR_STARTED. Note that configuring GATT to NOT supported will cause adapter
         // initialization failures
         if (supportedProfileServices.length == 1
-                && GattService.class
-                        .getSimpleName()
-                        .equals(supportedProfileServices[0].getSimpleName())) {
+                && supportedProfileServices[0] == BluetoothProfile.GATT) {
             mAdapterProperties.onBluetoothReady();
             updateUuids();
             mAdapterStateMachine.sendMessage(AdapterState.BREDR_STARTED);
@@ -985,7 +1028,7 @@ public class AdapterService extends Service {
         mNativeInterface.cancelDiscovery();
         mAdapterProperties.setScanMode(BluetoothAdapter.SCAN_MODE_NONE);
 
-        Class[] supportedProfileServices = Config.getSupportedProfiles();
+        int[] supportedProfileServices = Config.getSupportedProfiles();
         // TODO(b/228875190): GATT is assumed supported. If we support no profiles then just move on
         // to BREDR_STOPPED
         if (supportedProfileServices.length == 1
@@ -1001,9 +1044,10 @@ public class AdapterService extends Service {
     }
 
     private void startGattProfileService() {
-        mStartedProfiles.add(GattService.class.getSimpleName());
-
         mGattService = new GattService(this);
+
+        mStartedProfiles.put(BluetoothProfile.GATT, mGattService);
+
         ((ProfileService) mGattService).doStart();
     }
 
@@ -1014,7 +1058,7 @@ public class AdapterService extends Service {
             mAdapterStateMachine.sendMessage(AdapterState.BLE_STOPPED);
         }
 
-        mStartedProfiles.remove(GattService.class.getSimpleName());
+        mStartedProfiles.remove(BluetoothProfile.GATT);
         if (mGattService != null) {
             ((ProfileService) mGattService).doStop();
             mGattService = null;
@@ -1026,26 +1070,27 @@ public class AdapterService extends Service {
     }
 
     void updateLeAudioProfileServiceState() {
-        HashSet<Class> nonSupportedProfiles = new HashSet<>();
+        Set<Integer> nonSupportedProfiles = new HashSet<>();
 
         if (!isLeConnectedIsochronousStreamCentralSupported()) {
-            nonSupportedProfiles.addAll(Config.getLeAudioUnicastProfiles());
+            for (int profileId : Config.getLeAudioUnicastProfiles()) {
+                nonSupportedProfiles.add(profileId);
+            }
         }
 
         if (!isLeAudioBroadcastAssistantSupported()) {
-            nonSupportedProfiles.add(BassClientService.class);
+            nonSupportedProfiles.add(BluetoothProfile.LE_AUDIO_BROADCAST_ASSISTANT);
         }
 
         if (!isLeAudioBroadcastSourceSupported()) {
-            Config.updateSupportedProfileMask(
-                    false, LeAudioService.class, BluetoothProfile.LE_AUDIO_BROADCAST);
+            Config.setProfileEnabled(BluetoothProfile.LE_AUDIO_BROADCAST, false);
         }
 
         // Disable the non-supported profiles service
-        for (Class profileService : nonSupportedProfiles) {
-            Config.setProfileEnabled(profileService, false);
-            if (isStartedProfile(profileService.getSimpleName())) {
-                setProfileServiceState(profileService, BluetoothAdapter.STATE_OFF);
+        for (int profileId : nonSupportedProfiles) {
+            Config.setProfileEnabled(profileId, false);
+            if (isStartedProfile(profileId)) {
+                setProfileServiceState(profileId, BluetoothAdapter.STATE_OFF);
             }
         }
     }
@@ -1379,26 +1424,72 @@ public class AdapterService extends Service {
         BluetoothSap.invalidateBluetoothGetConnectionStateCache();
     }
 
-    private void setProfileServiceState(Class service, int state) {
+    private static final Map<Integer, Function<Context, ProfileService>> PROFILE_CONSTRUCTORS =
+            Map.ofEntries(
+                    Map.entry(BluetoothProfile.A2DP, A2dpService::new),
+                    Map.entry(BluetoothProfile.A2DP_SINK, A2dpSinkService::new),
+                    Map.entry(BluetoothProfile.AVRCP, AvrcpTargetService::new),
+                    Map.entry(BluetoothProfile.AVRCP_CONTROLLER, AvrcpControllerService::new),
+                    Map.entry(
+                            BluetoothProfile.LE_AUDIO_BROADCAST_ASSISTANT, BassClientService::new),
+                    Map.entry(BluetoothProfile.BATTERY, BatteryService::new),
+                    Map.entry(
+                            BluetoothProfile.CSIP_SET_COORDINATOR, CsipSetCoordinatorService::new),
+                    Map.entry(BluetoothProfile.HAP_CLIENT, HapClientService::new),
+                    Map.entry(BluetoothProfile.HEADSET, HeadsetService::new),
+                    Map.entry(BluetoothProfile.HEADSET_CLIENT, HeadsetClientService::new),
+                    Map.entry(BluetoothProfile.HEARING_AID, HearingAidService::new),
+                    Map.entry(BluetoothProfile.HID_DEVICE, HidDeviceService::new),
+                    Map.entry(BluetoothProfile.HID_HOST, HidHostService::new),
+                    Map.entry(BluetoothProfile.GATT, GattService::new),
+                    Map.entry(BluetoothProfile.LE_AUDIO, LeAudioService::new),
+                    Map.entry(BluetoothProfile.LE_CALL_CONTROL, TbsService::new),
+                    Map.entry(BluetoothProfile.MAP, BluetoothMapService::new),
+                    Map.entry(BluetoothProfile.MAP_CLIENT, MapClientService::new),
+                    Map.entry(BluetoothProfile.MCP_SERVER, McpService::new),
+                    Map.entry(BluetoothProfile.OPP, BluetoothOppService::new),
+                    Map.entry(BluetoothProfile.PAN, PanService::new),
+                    Map.entry(BluetoothProfile.PBAP, BluetoothPbapService::new),
+                    Map.entry(BluetoothProfile.PBAP_CLIENT, PbapClientService::new),
+                    Map.entry(BluetoothProfile.SAP, SapService::new),
+                    Map.entry(BluetoothProfile.VOLUME_CONTROL, VolumeControlService::new));
+
+    @VisibleForTesting
+    void setProfileServiceState(int profileId, int state) {
         if (state == BluetoothAdapter.STATE_ON) {
-            mStartedProfiles.add(service.getSimpleName());
+            if (!mStartedProfiles.containsKey(profileId)) {
+                ProfileService profileService = PROFILE_CONSTRUCTORS.get(profileId).apply(this);
+                mStartedProfiles.put(profileId, profileService);
+                profileService.doStart();
+            } else {
+                Log.e(
+                        TAG,
+                        "setProfileServiceState("
+                                + BluetoothProfile.getProfileName(profileId)
+                                + ", STATE_ON): profile is already started");
+            }
         } else if (state == BluetoothAdapter.STATE_OFF) {
-            mStartedProfiles.remove(service.getSimpleName());
+            ProfileService profileService = mStartedProfiles.remove(profileId);
+            if (profileService != null) {
+                profileService.doStop();
+            } else {
+                Log.e(
+                        TAG,
+                        "setProfileServiceState("
+                                + BluetoothProfile.getProfileName(profileId)
+                                + ", STATE_OFF): profile is already stopped");
+            }
         }
-        Intent intent = new Intent(this, service);
-        intent.putExtra(EXTRA_ACTION, ACTION_SERVICE_STATE_CHANGED);
-        intent.putExtra(BluetoothAdapter.EXTRA_STATE, state);
-        startService(intent);
     }
 
-    private void setAllProfileServiceStates(Class[] services, int state) {
-        for (Class service : services) {
+    private void setAllProfileServiceStates(int[] profileIds, int state) {
+        for (int profileId : profileIds) {
             // TODO(b/228875190): GATT is assumed supported and treated differently as part of the
             // "BLE ON" state, despite GATT not being BLE specific.
-            if (GattService.class.getSimpleName().equals(service.getSimpleName())) {
+            if (profileId == BluetoothProfile.GATT) {
                 continue;
             }
-            setProfileServiceState(service, state);
+            setProfileServiceState(profileId, state);
         }
     }
 
@@ -2321,6 +2412,7 @@ public class AdapterService extends Service {
                 return false;
             }
 
+            Log.d(TAG, "AdapterServiceBinder.setName(" + name + ")");
             return service.mAdapterProperties.setName(name);
         }
 
@@ -3874,9 +3966,9 @@ public class AdapterService extends Service {
                 int port,
                 boolean isSecured,
                 int result,
-                long socketCreationTimeMillis,
-                long socketCreationLatencyMillis,
-                long socketConnectionTimeMillis,
+                long socketCreationTimeNanos,
+                long socketCreationLatencyNanos,
+                long socketConnectionTimeNanos,
                 SynchronousResultReceiver receiver) {
             AdapterService service = getService();
             if (service == null) {
@@ -3888,9 +3980,35 @@ public class AdapterService extends Service {
                         port,
                         isSecured,
                         result,
-                        socketCreationTimeMillis,
-                        socketCreationLatencyMillis,
-                        socketConnectionTimeMillis,
+                        socketCreationTimeNanos,
+                        socketCreationLatencyNanos,
+                        socketConnectionTimeNanos,
+                        Binder.getCallingUid());
+                receiver.send(null);
+            } catch (RuntimeException e) {
+                receiver.propagateException(e);
+            }
+        }
+
+        @Override
+        public void logRfcommConnectionAttempt(
+                BluetoothDevice device,
+                boolean isSecured,
+                int resultCode,
+                long socketCreationTimeNanos,
+                boolean isSerialPort,
+                SynchronousResultReceiver receiver) {
+            AdapterService service = getService();
+            if (service == null) {
+                return;
+            }
+            try {
+                service.logRfcommConnectionAttempt(
+                        device,
+                        isSecured,
+                        resultCode,
+                        socketCreationTimeNanos,
+                        isSerialPort,
                         Binder.getCallingUid());
                 receiver.send(null);
             } catch (RuntimeException e) {
@@ -4281,11 +4399,14 @@ public class AdapterService extends Service {
                 return BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ENABLED;
             }
 
-            HashSet<Class> supportedProfileServices =
-                    new HashSet<Class>(Arrays.asList(Config.getSupportedProfiles()));
-            HashSet<Class> leAudioUnicastProfiles = Config.getLeAudioUnicastProfiles();
+            Set<Integer> supportedProfileServices =
+                    Arrays.stream(Config.getSupportedProfiles())
+                            .boxed()
+                            .collect(Collectors.toSet());
+            int[] leAudioUnicastProfiles = Config.getLeAudioUnicastProfiles();
 
-            if (supportedProfileServices.containsAll(leAudioUnicastProfiles)) {
+            if (Arrays.stream(leAudioUnicastProfiles)
+                    .allMatch(supportedProfileServices::contains)) {
                 return BluetoothStatusCodes.FEATURE_SUPPORTED;
             }
 
@@ -4330,10 +4451,12 @@ public class AdapterService extends Service {
                 return BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ENABLED;
             }
 
-            HashSet<Class> supportedProfileServices =
-                    new HashSet<Class>(Arrays.asList(Config.getSupportedProfiles()));
+            int[] supportedProfileServices = Config.getSupportedProfiles();
 
-            if (supportedProfileServices.contains(BassClientService.class)) {
+            if (Arrays.stream(supportedProfileServices)
+                    .anyMatch(
+                            profileId ->
+                                    profileId == BluetoothProfile.LE_AUDIO_BROADCAST_ASSISTANT)) {
                 return BluetoothStatusCodes.FEATURE_SUPPORTED;
             }
 
@@ -5245,6 +5368,24 @@ public class AdapterService extends Service {
             } catch (RuntimeException e) {
                 receiver.propagateException(e);
             }
+        }
+
+        @Override
+        public void getProfile(int profileId, SynchronousResultReceiver receiver) {
+            try {
+                receiver.send(getProfile(profileId));
+            } catch (RuntimeException e) {
+                receiver.propagateException(e);
+            }
+        }
+
+        private IBinder getProfile(int profileId) {
+            AdapterService service = getService();
+            if (service == null) {
+                return null;
+            }
+
+            return service.getProfile(profileId);
         }
     }
 
@@ -6908,6 +7049,24 @@ public class AdapterService extends Service {
         }
     }
 
+    IBinder getProfile(int profileId) {
+        if (getState() == BluetoothAdapter.STATE_TURNING_ON) {
+            return null;
+        }
+
+        // LE_AUDIO_BROADCAST is not associated with a service and use LE_AUDIO's Binder
+        if (profileId == BluetoothProfile.LE_AUDIO_BROADCAST) {
+            profileId = BluetoothProfile.LE_AUDIO;
+        }
+
+        ProfileService profile = mStartedProfiles.get(profileId);
+        if (profile != null) {
+            return profile.getBinder();
+        } else {
+            return null;
+        }
+    }
+
     boolean isMediaProfileConnected() {
         if (mA2dpService != null && mA2dpService.getConnectedDevices().size() > 0) {
             debugLog("isMediaProfileConnected. A2dp is connected");
@@ -7252,8 +7411,8 @@ public class AdapterService extends Service {
 
         writer.println();
         writer.println("Enabled Profile Services:");
-        for (Class profile : Config.getSupportedProfiles()) {
-            writer.println("  " + profile.getSimpleName());
+        for (int profileId : Config.getSupportedProfiles()) {
+            writer.println("  " + BluetoothProfile.getProfileName(profileId));
         }
         writer.println();
 

@@ -5816,7 +5816,6 @@ packet ConnectionComplete : Event (event_code = CONNECTION_COMPLETE) {
 }
 
 enum ConnectionRequestLinkType : 8 {
-  UNKNOWN = 0xFF,
   SCO = 0x00,
   ACL = 0x01,
   ESCO = 0x02,
@@ -6777,6 +6776,32 @@ packet LeCsProcedureEnableComplete : LeMetaEvent (subevent_code = LE_CS_PROCEDUR
   event_interval : 16,
   procedure_interval : 16,
   procedure_count : 16,
+}
+
+struct LeCsMode0InitatorData {
+  packet_quality : 8,
+  packet_rssi : 8,
+  packet_antenna : 8,
+  measured_freq_offset : 15,
+  _reserved_ : 1,
+}
+
+struct LeCsMode0ReflectorData {
+  packet_quality : 8,
+  packet_rssi : 8,
+  packet_antenna : 8,
+}
+
+struct LeCsToneDataWithQuality {
+  i_sample : 12,
+  q_sample : 12,
+  tone_quality_indicator : 8,
+}
+
+struct LeCsMode2Data {
+  _count_(tone_data) : 8,
+  antenna_permutation_index : 8,
+  tone_data : LeCsToneDataWithQuality[],
 }
 
 enum CsProcedureDoneStatus : 4 {

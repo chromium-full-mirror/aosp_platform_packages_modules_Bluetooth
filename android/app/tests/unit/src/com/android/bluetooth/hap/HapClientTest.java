@@ -20,7 +20,6 @@ package com.android.bluetooth.hap;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
-import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
@@ -48,7 +47,6 @@ import android.os.RemoteException;
 
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
-import androidx.test.rule.ServiceTestRule;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.bluetooth.TestUtils;
@@ -62,7 +60,6 @@ import com.android.bluetooth.x.com.android.modules.utils.SynchronousResultReceiv
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -86,7 +83,6 @@ public class HapClientTest {
     private final String mFlagDexmarker = System.getProperty("dexmaker.share_classloader", "false");
 
     private static final int TIMEOUT_MS = 1000;
-    @Rule public final ServiceTestRule mServiceRule = new ServiceTestRule();
     private BluetoothAdapter mAdapter;
     private BluetoothDevice mDevice;
     private BluetoothDevice mDevice2;
@@ -124,7 +120,6 @@ public class HapClientTest {
 
         TestUtils.setAdapterService(mAdapterService);
         doReturn(mDatabaseManager).when(mAdapterService).getDatabase();
-        doReturn(true, false).when(mAdapterService).isStartedProfile(anyString());
 
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         mAttributionSource = mAdapter.getAttributionSource();
@@ -234,13 +229,12 @@ public class HapClientTest {
     }
 
     private void startService() throws TimeoutException {
-        TestUtils.startService(mServiceRule, HapClientService.class);
-        mService = HapClientService.getHapClientService();
-        Assert.assertNotNull(mService);
+        mService = new HapClientService(mTargetContext);
+        mService.doStart();
     }
 
     private void stopService() throws TimeoutException {
-        TestUtils.stopService(mServiceRule, HapClientService.class);
+        mService.doStop();
         mService = HapClientService.getHapClientService();
         Assert.assertNull(mService);
     }
@@ -260,21 +254,11 @@ public class HapClientTest {
     public void testStopHapService() {
         Assert.assertEquals(mService, HapClientService.getHapClientService());
 
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
-            public void run() {
-                Assert.assertTrue(mService.stop());
-            }
-        });
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
-            public void run() {
-                Assert.assertTrue(mService.start());
-            }
-        });
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(mService::stop);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(mService::start);
     }
 
-    /**
-     * Test get/set policy for BluetoothDevice
-     */
+    /** Test get/set policy for BluetoothDevice */
     @Test
     public void testGetSetPolicy() throws Exception {
         when(mDatabaseManager
@@ -396,6 +380,8 @@ public class HapClientTest {
 
         // Send a connect request
         Assert.assertTrue("Connect expected to succeed", mService.connect(mDevice));
+
+        TestUtils.waitForIntent(TIMEOUT_MS, mIntentQueue.get(mDevice));
     }
 
     /**
@@ -1060,6 +1046,8 @@ public class HapClientTest {
 
         // Add state machine for testing dump()
         mService.connect(mDevice);
+
+        TestUtils.waitForIntent(TIMEOUT_MS, mIntentQueue.get(mDevice));
 
         mService.dump(new StringBuilder());
     }

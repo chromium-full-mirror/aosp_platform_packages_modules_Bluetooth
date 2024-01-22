@@ -18,13 +18,12 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <iomanip>
 #include <iostream>
 #include <sstream>
 
-#include "gd/common/init_flags.h"
+#include "common/init_flags.h"
 #include "hci/hci_layer_mock.h"
-#include "hci/include/hci_layer.h"
+#include "internal_include/bt_target.h"
 #include "stack/btm/btm_dev.h"
 #include "stack/btm/btm_int_types.h"
 #include "stack/btm/btm_sco.h"
@@ -45,8 +44,6 @@ using testing::Eq;
 extern tBTM_CB btm_cb;
 
 tL2C_CB l2cb;
-
-const hci_t* hci_layer_get_interface() { return nullptr; }
 
 const std::string kSmpOptions("mock smp options");
 const std::string kBroadcastAudioConfigOptions(
@@ -79,6 +76,7 @@ class StackBtmWithQueuesTest : public StackBtmTest {
     down_handler_ = new bluetooth::os::Handler(down_thread_);
     bluetooth::hci::testing::mock_hci_layer_ = &mock_hci_;
     bluetooth::hci::testing::mock_gd_shim_handler_ = up_handler_;
+    bluetooth::legacy::hci::testing::SetMock(legacy_hci_mock_);
   }
   void TearDown() override {
     up_handler_->Clear();
@@ -93,6 +91,7 @@ class StackBtmWithQueuesTest : public StackBtmTest {
                                bluetooth::hci::ScoBuilder>
       sco_queue_{10};
   bluetooth::hci::testing::MockHciLayer mock_hci_;
+  bluetooth::legacy::hci::testing::MockInterface legacy_hci_mock_;
   bluetooth::os::Thread* up_thread_;
   bluetooth::os::Handler* up_handler_;
   bluetooth::os::Thread* down_thread_;
@@ -199,20 +198,15 @@ TEST_F(StackBtmWithQueuesTest, change_packet_type) {
   uint64_t features = 0xffffffffffffffff;
   acl_process_supported_features(0x123, features);
 
-  EXPECT_CALL(
-      bluetooth::legacy::hci::testing::GetMock(),
-      ChangeConnectionPacketType(handle, 0x4400 | HCI_PKT_TYPES_MASK_DM1));
-  EXPECT_CALL(
-      bluetooth::legacy::hci::testing::GetMock(),
-      ChangeConnectionPacketType(
-          handle, (0xcc00 | HCI_PKT_TYPES_MASK_DM1 | HCI_PKT_TYPES_MASK_DH1)));
-  EXPECT_CALL(
-      bluetooth::legacy::hci::testing::GetMock(),
-      ChangeConnectionPacketType(
-          handle, (0xcc00 | HCI_PKT_TYPES_MASK_DM1 | HCI_PKT_TYPES_MASK_DH1)));
+  EXPECT_CALL(legacy_hci_mock_, ChangeConnectionPacketType(
+                                    handle, 0x4400 | HCI_PKT_TYPES_MASK_DM1));
+  EXPECT_CALL(legacy_hci_mock_, ChangeConnectionPacketType(
+                                    handle, (0xcc00 | HCI_PKT_TYPES_MASK_DM1 |
+                                             HCI_PKT_TYPES_MASK_DH1)));
 
   btm_set_packet_types_from_address(bda, 0x55aa);
   btm_set_packet_types_from_address(bda, 0xffff);
+  // Illegal mask, won't be sent.
   btm_set_packet_types_from_address(bda, 0x0);
 
   get_btm_client_interface().lifecycle.btm_free();
@@ -238,7 +232,7 @@ TEST_F(StackBtmWithInitFreeTest, btm_sec_rmt_name_request_complete) {
   ASSERT_TRUE(BTM_SecAddRmtNameNotifyCallback(
       [](const RawAddress& bd_addr, DEV_CLASS dc, tBTM_BD_NAME bd_name) {
         btm_test.bd_addr = bd_addr;
-        memcpy(btm_test.dc, dc, DEV_CLASS_LEN);
+        btm_test.dc = dc;
         memcpy(btm_test.bd_name, bd_name, BTM_MAX_REM_BD_NAME_LEN);
       }));
 
@@ -302,4 +296,8 @@ TEST_F(StackBtmWithInitFreeTest, is_disconnect_reason_valid) {
     else
       ASSERT_FALSE(is_disconnect_reason_valid(reason));
   }
+}
+
+TEST_F(StackBtmWithInitFreeTest, Init) {
+  ASSERT_FALSE(btm_cb.btm_inq_vars.remname_active);
 }
