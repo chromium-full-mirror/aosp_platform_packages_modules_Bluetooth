@@ -16,14 +16,18 @@
 
 package android.bluetooth.le;
 
+import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.SystemApi;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.le.DistanceMeasurementMethod.DistanceMeasurementMethodId;
 import android.os.Parcel;
 import android.os.Parcelable;
+
+import com.android.bluetooth.flags.Flags;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -74,14 +78,20 @@ public final class DistanceMeasurementParams implements Parcelable {
     private int mDuration;
     private int mFrequency;
     private int mMethodId;
+    private ChannelSoundingParams mChannelSoundingParams = null;
 
     /** @hide */
     public DistanceMeasurementParams(
-            BluetoothDevice device, int duration, int frequency, int methodId) {
+            BluetoothDevice device,
+            int duration,
+            int frequency,
+            int methodId,
+            ChannelSoundingParams channelSoundingParams) {
         mDevice = Objects.requireNonNull(device);
         mDuration = duration;
         mFrequency = frequency;
         mMethodId = methodId;
+        mChannelSoundingParams = channelSoundingParams;
     }
 
     /**
@@ -129,6 +139,17 @@ public final class DistanceMeasurementParams implements Parcelable {
     }
 
     /**
+     * Returns {@link ChannelSoundingParams} of this DistanceMeasurementParams.
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_CHANNEL_SOUNDING)
+    @SystemApi
+    public @Nullable ChannelSoundingParams getChannelSoundingParams() {
+        return mChannelSoundingParams;
+    }
+
+    /**
      * Get the default duration in seconds of the parameter.
      *
      * @hide
@@ -169,6 +190,7 @@ public final class DistanceMeasurementParams implements Parcelable {
         out.writeInt(mDuration);
         out.writeInt(mFrequency);
         out.writeInt(mMethodId);
+        out.writeParcelable(mChannelSoundingParams, 0);
     }
 
     /** A {@link Parcelable.Creator} to create {@link DistanceMeasurementParams} from parcel. */
@@ -180,6 +202,8 @@ public final class DistanceMeasurementParams implements Parcelable {
                     builder.setDurationSeconds(in.readInt());
                     builder.setFrequency(in.readInt());
                     builder.setMethodId(in.readInt());
+                    builder.setChannelSoundingParams(
+                            (ChannelSoundingParams) in.readParcelable(null));
                     return builder.build();
                 }
 
@@ -200,6 +224,7 @@ public final class DistanceMeasurementParams implements Parcelable {
         private int mDuration = REPORT_DURATION_DEFAULT;
         private int mFrequency = REPORT_FREQUENCY_LOW;
         private int mMethodId = DistanceMeasurementMethod.DISTANCE_MEASUREMENT_METHOD_RSSI;
+        private ChannelSoundingParams mChannelSoundingParams = null;
 
         /**
          * Constructor of the Builder.
@@ -275,13 +300,29 @@ public final class DistanceMeasurementParams implements Parcelable {
         }
 
         /**
+         * Set {@link ChannelSoundingParams} for the DistanceMeasurementParams.
+         *
+         * @param channelSoundingParams parameters for Channel Sounding
+         * @return the same Builder instance
+         * @hide
+         */
+        @FlaggedApi(Flags.FLAG_CHANNEL_SOUNDING)
+        @SystemApi
+        public @NonNull Builder setChannelSoundingParams(
+                @NonNull ChannelSoundingParams channelSoundingParams) {
+            mChannelSoundingParams = channelSoundingParams;
+            return this;
+        }
+
+        /**
          * Build the {@link DistanceMeasurementParams} object.
          *
          * @hide
          */
         @SystemApi
         public @NonNull DistanceMeasurementParams build() {
-            return new DistanceMeasurementParams(mDevice, mDuration, mFrequency, mMethodId);
+            return new DistanceMeasurementParams(
+                    mDevice, mDuration, mFrequency, mMethodId, mChannelSoundingParams);
         }
     }
 }
