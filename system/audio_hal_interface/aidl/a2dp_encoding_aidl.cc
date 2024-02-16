@@ -384,10 +384,11 @@ bool is_hal_force_disabled() {
 }  // namespace
 
 bool update_codec_offloading_capabilities(
-    const std::vector<btav_a2dp_codec_config_t>& framework_preference) {
+    const std::vector<btav_a2dp_codec_config_t>& framework_preference,
+    bool supports_a2dp_hw_offload_v2) {
   /* Load the provider information if supported by the HAL. */
-  provider_info =
-      ::bluetooth::audio::aidl::a2dp::ProviderInfo::GetProviderInfo();
+  provider_info = ::bluetooth::audio::aidl::a2dp::ProviderInfo::GetProviderInfo(
+      supports_a2dp_hw_offload_v2);
   return ::bluetooth::audio::aidl::codec::UpdateOffloadingCapabilities(
       framework_preference);
 }
@@ -761,7 +762,7 @@ static btav_a2dp_codec_channel_mode_t convert_channel_mode(
     case ChannelMode::MONO:
       return BTAV_A2DP_CODEC_CHANNEL_MODE_MONO;
     case ChannelMode::STEREO:
-      return BTAV_A2DP_CODEC_CHANNEL_MODE_MONO;
+      return BTAV_A2DP_CODEC_CHANNEL_MODE_STEREO;
     default:
       LOG(ERROR) << "unknown channel mode";
       break;

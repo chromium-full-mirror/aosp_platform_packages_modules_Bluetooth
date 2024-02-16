@@ -380,6 +380,10 @@ public final class DistanceMeasurementResult implements Parcelable {
                             .setErrorAzimuthAngle(in.readDouble())
                             .setAltitudeAngle(in.readDouble())
                             .setErrorAltitudeAngle(in.readDouble())
+                            .setDelaySpreadMeters(in.readDouble())
+                            .setConfidenceLevel(in.readDouble())
+                            .setDetectedAttackLevel(in.readInt())
+                            .setVelocityMetersPerSecond(in.readDouble())
                             .build();
                 }
 
@@ -520,7 +524,7 @@ public final class DistanceMeasurementResult implements Parcelable {
         /**
          * Set the confidence of estimated distance.
          *
-         * @param confidenceLevel a normalized value from 0.0 (low confidence) to 100.0 (high
+         * @param confidenceLevel a normalized value from 0.0 (low confidence) to 1.0 (high
          *     confidence) representing the confidence of estimated distance
          * @throws IllegalArgumentException if value is invalid
          * @hide
@@ -529,8 +533,8 @@ public final class DistanceMeasurementResult implements Parcelable {
         @SystemApi
         @NonNull
         public Builder setConfidenceLevel(
-                @FloatRange(from = 0.0, to = 100.0) double confidenceLevel) {
-            if (confidenceLevel > 100.0 || confidenceLevel < 0.0) {
+                @FloatRange(from = 0.0, to = 1.0) double confidenceLevel) {
+            if (confidenceLevel > 1.0 || confidenceLevel < 0.0) {
                 throw new IllegalArgumentException(
                         "error confidenceLevel must be in the range from 0.0 to 100.0 : "
                                 + confidenceLevel);

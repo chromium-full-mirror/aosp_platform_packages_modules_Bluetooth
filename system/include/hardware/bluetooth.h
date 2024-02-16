@@ -131,11 +131,11 @@ inline std::string bt_status_text(const bt_status_t& status) {
     case BT_STATUS_UNHANDLED:
       return std::string("unhandled");
     case BT_STATUS_AUTH_FAILURE:
-      return std::string("failure");
+      return std::string("auth_failure");
     case BT_STATUS_RMT_DEV_DOWN:
       return std::string("remote_device_down");
     case BT_STATUS_AUTH_REJECTED:
-      return std::string("rejected");
+      return std::string("auth_rejected");
     case BT_STATUS_JNI_ENVIRONMENT_ERROR:
       return std::string("jni_env_error");
     case BT_STATUS_JNI_THREAD_ATTACH_ERROR:
@@ -158,7 +158,7 @@ typedef struct { uint8_t pin[16]; } __attribute__((packed)) bt_pin_code_t;
 
 typedef struct {
   uint8_t status;
-  uint8_t ctrl_state;   /* stack reported state */
+  uint32_t ctrl_state;  /* stack reported state */
   uint64_t tx_time;     /* in ms */
   uint64_t rx_time;     /* in ms */
   uint64_t idle_time;   /* in ms */
@@ -595,7 +595,7 @@ typedef void (*energy_info_callback)(bt_activity_energy_info* energy_info,
 typedef void (*generate_local_oob_data_callback)(tBT_TRANSPORT transport,
                                                  bt_oob_data_t oob_data);
 
-typedef void (*key_missing_callback)(RawAddress bd_addr);
+typedef void (*key_missing_callback)(const RawAddress bd_addr);
 
 /** TODO: Add callbacks for Link Up/Down and other generic
  *  notifications/callbacks */
