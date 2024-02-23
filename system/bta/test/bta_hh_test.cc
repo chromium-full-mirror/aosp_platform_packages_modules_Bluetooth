@@ -26,7 +26,6 @@
 #include "test/common/mock_functions.h"
 #include "test/mock/mock_osi_allocator.h"
 
-bool LeAudioClient::IsLeAudioClientInStreaming() { return false; }
 namespace {
 std::array<uint8_t, 32> data32 = {
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
@@ -79,7 +78,9 @@ TEST_F(BtaHhTest, bta_hh_ctrl_dat_act__BTA_HH_GET_RPT_EVT) {
                       .offset = 0,
                       .layer_specific = 0,
                   },
-              .addr = RawAddress::kEmpty,
+              .link_spec.addrt.bda = RawAddress::kEmpty,
+              .link_spec.addrt.type = BLE_ADDR_PUBLIC,
+              .link_spec.transport = BT_TRANSPORT_AUTO,
               .data = 32,
               .p_data = static_cast<BT_HDR*>(osi_calloc(32 + sizeof(BT_HDR))),
           },

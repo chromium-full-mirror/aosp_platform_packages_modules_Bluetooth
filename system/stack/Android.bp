@@ -718,6 +718,7 @@ cc_test {
         "libFraunhoferAAC",
         "libaudio-a2dp-hw-utils",
         "libbluetooth-dumpsys",
+        "libbluetooth-gdx",
         "libbluetooth-types",
         "libbluetooth_core_rs",
         "libbluetooth_crypto_toolbox",
@@ -845,6 +846,7 @@ cc_test {
 cc_test {
     name: "net_test_stack_smp",
     defaults: [
+        "bluetooth_flatbuffer_bundler_defaults",
         "fluoride_defaults",
         "mts_defaults",
     ],
@@ -894,6 +896,7 @@ cc_test {
         "server_configurable_flags",
     ],
     static_libs: [
+        "libbase",
         "libbluetooth-types",
         "libbluetooth_crypto_toolbox",
         "libbluetooth_gd",
@@ -1501,6 +1504,7 @@ cc_test {
         unit_test: true,
     },
     defaults: [
+        "bluetooth_flatbuffer_bundler_defaults",
         "fluoride_defaults",
         "mts_defaults",
     ],
@@ -2017,6 +2021,7 @@ cc_test {
     test_suites: ["general-tests"],
     host_supported: true,
     defaults: [
+        "bluetooth_flatbuffer_bundler_defaults",
         "fluoride_defaults",
         "mts_defaults",
     ],
