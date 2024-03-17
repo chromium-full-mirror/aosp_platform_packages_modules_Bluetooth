@@ -29,6 +29,7 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
@@ -85,8 +86,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
 import org.mockito.Spy;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -125,8 +127,11 @@ public class ScanManagerTest {
     @Rule public final ServiceTestRule mServiceRule = new ServiceTestRule();
     @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
+    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+
     @Mock private AdapterService mAdapterService;
     @Mock private GattService mMockGattService;
+    @Mock private TransitionalScanHelper mMockScanHelper;
     @Mock private BluetoothAdapterProxy mBluetoothAdapterProxy;
     @Mock private LocationManager mLocationManager;
     @Spy private GattObjectsFactory mFactory = GattObjectsFactory.getInstance();
@@ -141,7 +146,6 @@ public class ScanManagerTest {
     @Before
     public void setUp() throws Exception {
         mTargetContext = InstrumentationRegistry.getTargetContext();
-        MockitoAnnotations.initMocks(this);
 
         TestUtils.setAdapterService(mAdapterService);
         when(mAdapterService.getScanTimeoutMillis())
@@ -197,6 +201,7 @@ public class ScanManagerTest {
         mScanManager =
                 new ScanManager(
                         mMockGattService,
+                        mMockScanHelper,
                         mAdapterService,
                         mBluetoothAdapterProxy,
                         mTestLooper.getLooper());
@@ -208,7 +213,8 @@ public class ScanManagerTest {
         assertThat(mLatch).isNotNull();
 
         mScanReportDelay = DEFAULT_SCAN_REPORT_DELAY_MS;
-        mMockAppScanStats = spy(new AppScanStats("Test", null, null, mMockGattService));
+        mMockAppScanStats =
+                spy(new AppScanStats("Test", null, null, mMockGattService, mMockScanHelper));
     }
 
     @After
@@ -298,6 +304,22 @@ public class ScanManagerTest {
             scanSettings = new ScanSettings.Builder().setScanMode(scanMode).build();
         }
         return scanSettings;
+    }
+
+    private ScanSettings createScanSettingsWithPhy(int scanMode, int phy) {
+        ScanSettings scanSettings;
+        scanSettings = new ScanSettings.Builder().setScanMode(scanMode).setPhy(phy).build();
+
+        return scanSettings;
+    }
+
+    private ScanClient createScanClientWithPhy(
+            int id, boolean isFiltered, boolean isEmptyFilter, int scanMode, int phy) {
+        List<ScanFilter> scanFilterList = createScanFilterList(isFiltered, isEmptyFilter);
+        ScanSettings scanSettings = createScanSettingsWithPhy(scanMode, phy);
+
+        ScanClient client = new ScanClient(id, scanSettings, scanFilterList);
+        return client;
     }
 
     private Message createStartStopScanMessage(boolean isStartScan, Object obj) {
@@ -1513,5 +1535,41 @@ public class ScanManagerTest {
         t2.join();
         TestUtils.waitForLooperToFinishScheduledTask(mHandler.getLooper());
         assertThat(mScanManager.mProfilesConnecting).isEqualTo(3);
+    }
+
+    @Test
+    public void testSetScanPhy() {
+        final boolean isFiltered = false;
+        final boolean isEmptyFilter = false;
+        // Set scan mode map {original scan mode (ScanMode) : expected scan mode (expectedScanMode)}
+        SparseIntArray scanModeMap = new SparseIntArray();
+        scanModeMap.put(SCAN_MODE_LOW_POWER, SCAN_MODE_LOW_POWER);
+        scanModeMap.put(SCAN_MODE_BALANCED, SCAN_MODE_BALANCED);
+        scanModeMap.put(SCAN_MODE_LOW_LATENCY, SCAN_MODE_LOW_LATENCY);
+        scanModeMap.put(SCAN_MODE_AMBIENT_DISCOVERY, SCAN_MODE_AMBIENT_DISCOVERY);
+
+        for (int i = 0; i < scanModeMap.size(); i++) {
+            int phy = 2;
+            int ScanMode = scanModeMap.keyAt(i);
+            int expectedScanMode = scanModeMap.get(ScanMode);
+            Log.d(
+                    TAG,
+                    "ScanMode: "
+                            + String.valueOf(ScanMode)
+                            + " expectedScanMode: "
+                            + String.valueOf(expectedScanMode));
+
+            // Turn on screen
+            sendMessageWaitForProcessed(createScreenOnOffMessage(true));
+            // Create scan client
+            ScanClient client =
+                    createScanClientWithPhy(i, isFiltered, isEmptyFilter, ScanMode, phy);
+            // Start scan
+            sendMessageWaitForProcessed(createStartStopScanMessage(true, client));
+
+            assertThat(client.settings.getPhy()).isEqualTo(phy);
+            verify(mScanNativeInterface, atLeastOnce())
+                    .gattSetScanParameters(anyInt(), anyInt(), anyInt(), eq(phy));
+        }
     }
 }

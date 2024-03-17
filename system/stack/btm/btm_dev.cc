@@ -36,12 +36,12 @@
 #include "btm_sec_api.h"
 #include "btm_sec_cb.h"
 #include "common/init_flags.h"
-#include "device/include/controller.h"
+#include "hci/controller_interface.h"
 #include "internal_include/bt_target.h"
 #include "l2c_api.h"
+#include "main/shim/entry.h"
 #include "os/log.h"
 #include "osi/include/allocator.h"
-#include "osi/include/compat.h"
 #include "rust/src/connection/ffi/connection_shim.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/include/acl_api.h"
@@ -123,15 +123,14 @@ bool BTM_SecAddDevice(const RawAddress& bd_addr, DEV_CLASS dev_class,
 
   if (dev_class != kDevClassEmpty) p_dev_rec->dev_class = dev_class;
 
-  memset(p_dev_rec->sec_bd_name, 0, sizeof(tBTM_BD_NAME));
+  memset(p_dev_rec->sec_bd_name, 0, sizeof(BD_NAME));
 
   if (bd_name && bd_name[0]) {
     log::debug("  Remote name known for device:{} name:{}",
                ADDRESS_TO_LOGGABLE_CSTR(bd_addr),
                reinterpret_cast<const char*>(bd_name));
     p_dev_rec->sec_rec.sec_flags |= BTM_SEC_NAME_KNOWN;
-    strlcpy((char*)p_dev_rec->sec_bd_name, (char*)bd_name,
-            BTM_MAX_REM_BD_NAME_LEN + 1);
+    bd_name_copy(p_dev_rec->sec_bd_name, bd_name);
   }
 
   if (p_link_key) {
@@ -331,7 +330,7 @@ bool btm_dev_support_role_switch(const RawAddress& bd_addr) {
     return false;
   }
 
-  if (!controller_get_interface()->SupportsRoleSwitch()) {
+  if (!bluetooth::shim::GetController()->SupportsRoleSwitch()) {
     log::verbose("Local controller does not support role switch");
     return false;
   }

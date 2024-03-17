@@ -20,8 +20,8 @@ use bt_utils::array_utils;
 use crate::async_helper::{AsyncHelper, CallbackSender};
 use crate::bluetooth::{Bluetooth, BluetoothDevice};
 use crate::bluetooth_adv::{
-    AdvertiseData, AdvertiseManager, AdvertisingSetParameters, BtifGattAdvCallbacks,
-    IAdvertisingSetCallback, PeriodicAdvertisingParameters,
+    AdvertiseData, AdvertiseManager, AdvertiserActions, AdvertisingSetParameters,
+    BtifGattAdvCallbacks, IAdvertisingSetCallback, PeriodicAdvertisingParameters,
 };
 use crate::callbacks::Callbacks;
 use crate::uuid::UuidHelper;
@@ -1168,7 +1168,7 @@ pub enum ScanType {
 
 impl Default for ScanType {
     fn default() -> Self {
-        ScanType::Passive
+        ScanType::Active
     }
 }
 
@@ -1388,6 +1388,7 @@ impl GattAsyncIntf {
                 scan_type,
                 scan_interval,
                 scan_window,
+                1,
             );
         }
         self.gatt.as_ref().unwrap().lock().unwrap().scanner.start_scan();
@@ -1881,6 +1882,10 @@ impl BluetoothGatt {
             }
         }
     }
+
+    pub fn handle_adv_action(&mut self, action: AdvertiserActions) {
+        self.adv_manager.get_impl().handle_action(action);
+    }
 }
 
 #[derive(Debug, FromPrimitive, ToPrimitive)]
@@ -2023,9 +2028,20 @@ impl IBluetoothGatt for BluetoothGatt {
 
         // If the client is not specifying scan settings, the default one will be used.
         let settings = settings.unwrap_or_else(|| ScanSettings {
-            interval: sysprop::get_i32(sysprop::PropertyI32::LeInquiryScanInterval),
-            window: sysprop::get_i32(sysprop::PropertyI32::LeInquiryScanWindow),
-            scan_type: ScanType::default(),
+            interval: sysprop::get_i32(sysprop::PropertyI32::LeAdvMonScanInterval),
+            window: sysprop::get_i32(sysprop::PropertyI32::LeAdvMonScanWindow),
+            // TODO(b/290300475): Use the default value (Active) here after the issue is addressed.
+            // TODO(b/262746968): Forward the scanning settings from ARC++ APPs.
+            // Either of the TODOs above could fix this workaround for the below issues:
+            // - b/290300475: Offloaded filtering would be broken on some hardwares if scan mode is
+            //                Active. Thus, if |filter| is not none then the scan type should be set
+            //                to Passive.
+            // - b/328711786: Android only supports Active scan, i.e., ARC++ APPs always expect
+            //                Active scan. However, ARC++ bridge is not able to specify the scan
+            //                type through the BluetoothLowEnergyScanSession API. Fortunately ARC++
+            //                bridge is not able to specify the filter either, so when |filter| is
+            //                none we always set the scan type to Active.
+            scan_type: if filter.is_none() { ScanType::Active } else { ScanType::Passive },
         });
 
         // Multiplexing scanners happens at this layer. The implementations of start_scan

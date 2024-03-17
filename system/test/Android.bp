@@ -135,6 +135,13 @@ filegroup {
 }
 
 filegroup {
+    name: "TestMockBtaRas",
+    srcs: [
+        "mock/mock_bta_ras*.cc",
+    ],
+}
+
+filegroup {
     name: "TestMockBtaScn",
     srcs: [
         "mock/mock_bta_scn.cc",
@@ -181,6 +188,7 @@ filegroup {
         ":TestMockBtaLeAudio",
         ":TestMockBtaLeAudioHalVerifier",
         ":TestMockBtaPan",
+        ":TestMockBtaRas",
         ":TestMockBtaSdp",
         ":TestMockBtaSys",
         ":TestMockBtaVc",
@@ -334,6 +342,13 @@ filegroup {
 }
 
 filegroup {
+    name: "TestMockMainShimStack",
+    srcs: [
+        "mock/mock_main_shim_stack.cc",
+    ],
+}
+
+filegroup {
     name: "TestMockMainShimLeScanning",
     srcs: [
         "mock/mock_main_shim.cc",
@@ -390,6 +405,13 @@ filegroup {
     name: "TestMockStackBtm",
     srcs: [
         "mock/mock_stack_btm*.cc",
+    ],
+}
+
+filegroup {
+    name: "TestMockStackBtmIso",
+    srcs: [
+        "mock/mock_stack_btm_iso.cc",
     ],
 }
 
@@ -611,12 +633,11 @@ cc_test {
         "mts_defaults",
     ],
     shared_libs: [
-        "android.hardware.bluetooth.audio@2.0",
-        "android.hardware.bluetooth.audio@2.1",
         "libbase",
         "libbinder",
         "libbinder_ndk",
         "libchrome",
+        "libcutils",
         "libhidlbase",
         "liblog",
         "libutils",
@@ -624,15 +645,13 @@ cc_test {
     include_dirs: ["packages/modules/Bluetooth/system"],
     srcs: ["common/hal_version_manager_test.cc"],
     static_libs: [
-        "android.hardware.bluetooth@1.0",
-        "android.hardware.bluetooth@1.1",
+        "android.hardware.audio.common@5.0",
+        "android.hardware.bluetooth.audio@2.0",
+        "android.hardware.bluetooth.audio@2.1",
         "android.hardware.common-V2-ndk",
         "android.hardware.common.fmq-V1-ndk",
-        "bluetooth_flags_c_lib",
         "libbt-audio-hal-interface",
-        "libflagtest",
     ],
-    header_libs: ["libbluetooth_headers"],
     test_suites: ["general-tests"],
     cflags: [
         "-Wall",

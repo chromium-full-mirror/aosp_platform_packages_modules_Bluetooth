@@ -14,22 +14,29 @@
  * limitations under the License.
  */
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <sys/socket.h>
 
 #include "common/init_flags.h"
 #include "device/include/controller.h"
+#include "gmock/gmock.h"
+#include "hci/controller_interface_mock.h"
 #include "osi/include/allocator.h"
 #include "stack/btm/btm_int_types.h"
 #include "stack/include/l2cap_controller_interface.h"
 #include "stack/include/l2cap_hci_link_interface.h"
 #include "stack/include/l2cdefs.h"
 #include "stack/l2cap/l2c_int.h"
+#include "test/mock/mock_main_shim_entry.h"
 
 tBTM_CB btm_cb;
 extern tL2C_CB l2cb;
 
 void l2c_link_send_to_lower_br_edr(tL2C_LCB* p_lcb, BT_HDR* p_buf);
 void l2c_link_send_to_lower_ble(tL2C_LCB* p_lcb, BT_HDR* p_buf);
+
+using testing::Return;
 
 namespace {
 constexpr uint16_t kAclBufferCountClassic = 123;
@@ -45,16 +52,19 @@ class StackL2capTest : public ::testing::Test {
       return kAclBufferCountClassic;
     };
     controller_.get_acl_buffer_count_ble = []() { return kAclBufferCountBle; };
-    controller_.SupportsBle = []() -> bool { return true; };
+    bluetooth::hci::testing::mock_controller_ = &controller_interface_;
+    ON_CALL(controller_interface_, SupportsBle).WillByDefault(Return(true));
     l2c_init();
   }
 
   void TearDown() override {
     l2c_free();
     controller_ = {};
+    bluetooth::hci::testing::mock_controller_ = nullptr;
   }
 
   controller_t controller_;
+  bluetooth::hci::testing::MockControllerInterface controller_interface_;
 };
 
 TEST_F(StackL2capTest, l2cble_process_data_length_change_event) {
@@ -245,4 +255,15 @@ TEST_F(StackL2capTest, l2cap_result_code_text) {
       l2cap_result_code_text(
           static_cast<tL2CAP_CONN>(std::numeric_limits<std::uint16_t>::max()))
           .c_str());
+}
+
+TEST_F(StackL2capTest, L2CA_Dumpsys) {
+  int sv[2];
+  char buf[32];
+  ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+  ASSERT_EQ(0, fcntl(sv[1], F_SETFL, fcntl(sv[1], F_GETFL, 0) | O_NONBLOCK));
+
+  L2CA_Dumpsys(sv[0]);
+  while (read(sv[1], buf, sizeof(buf)) != -1) {
+  }
 }

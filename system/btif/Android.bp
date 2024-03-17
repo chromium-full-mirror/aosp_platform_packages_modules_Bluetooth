@@ -99,6 +99,7 @@ cc_library_static {
         "avrcp/avrcp_service.cc",
         // Callouts
         "co/bta_av_co.cc",
+        "co/bta_av_co_peer.cc",
         "co/bta_hh_co.cc",
         "co/bta_pan_co.cc",
         // HAL layer
@@ -165,7 +166,6 @@ cc_library_static {
         "libflatbuffers-cpp",
     ],
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
     ],
     apex_available: [
@@ -204,6 +204,7 @@ cc_library_static {
         "src/btif_sdp_server.cc",
         "src/btif_sock.cc",
         "src/btif_sock_l2cap.cc",
+        "src/btif_sock_logging.cc",
         "src/btif_sock_rfc.cc",
         "src/btif_sock_sco.cc",
         "src/btif_sock_sdp.cc",
@@ -244,6 +245,7 @@ cc_library_static {
         "libbt-platform-protos-lite",
         "libbt-stack-core",
         "libbt_shim_bridge",
+        "libcom.android.sysprop.bluetooth.wrapped",
         "libflatbuffers-cpp",
         "libstatslog_bt",
     ],
@@ -254,7 +256,6 @@ cc_library_static {
         "libcrypto",
     ],
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
         /* we export all classes, so change default visibility, instead of having EXPORT_SYMBOL on each class*/
         "-fvisibility=default",
@@ -280,11 +281,15 @@ cc_test {
     host_supported: true,
     include_dirs: btifCommonIncludes,
     srcs: [
+        ":OsiCompatSources",
+        ":TestCommonMockFunctions",
+        ":TestFakeOsi",
         "test/btif_dm_test.cc",
         "test/btif_storage_test.cc",
     ],
     header_libs: ["libbluetooth_headers"],
     shared_libs: [
+        "libbase",
         "libcrypto",
         "libcutils",
         "libhidlbase",
@@ -332,7 +337,6 @@ cc_test {
         "libgmock",
         "liblc3",
         "libopus",
-        "libosi",
         "libprotobuf-cpp-lite",
         "libstatslog_bt",
         "libudrv-uipc",
@@ -361,7 +365,6 @@ cc_test {
             ],
         },
     },
-    cflags: ["-DBUILDCFG"],
     sanitize: {
         integer_overflow: true,
     },
@@ -394,10 +397,12 @@ cc_test {
         "libosi",
     ],
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
     ],
-    shared_libs: ["liblog"],
+    shared_libs: [
+        "libbase",
+        "liblog",
+    ],
 }
 
 // btif avrcp audio track unit tests
@@ -431,10 +436,10 @@ cc_test {
         "libosi",
     ],
     shared_libs: [
+        "libbase",
         "liblog",
     ],
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
     ],
 }
@@ -462,6 +467,7 @@ cc_test {
     ],
     header_libs: ["libbluetooth_headers"],
     shared_libs: [
+        "libbase",
         "libcrypto",
         "libcutils",
         "liblog",
@@ -484,7 +490,6 @@ cc_test {
         },
     },
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
     ],
     sanitize: {
@@ -513,6 +518,7 @@ cc_test {
     ],
     header_libs: ["libbluetooth_headers"],
     shared_libs: [
+        "libbase",
         "libbinder_ndk",
         "libcrypto",
         "libcutils",
@@ -528,7 +534,6 @@ cc_test {
         "libgmock",
         "libosi",
     ],
-    cflags: ["-DBUILDCFG"],
     target: {
         android: {
             static_libs: [
@@ -555,6 +560,7 @@ cc_test {
     ],
     header_libs: ["libbluetooth_headers"],
     shared_libs: [
+        "libbase",
         "libcutils",
         "liblog",
     ],
@@ -566,9 +572,9 @@ cc_test {
         "libbt_shim_ffi",
         "libchrome",
         "libcom.android.sysprop.bluetooth.wrapped",
+        "libgmock",
     ],
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
     ],
 }
@@ -608,6 +614,7 @@ cc_test {
         ":TestMockBtaLeAudio",
         ":TestMockBtaLeAudioHalVerifier",
         ":TestMockBtaPan",
+        ":TestMockBtaRas",
         ":TestMockBtaScn",
         ":TestMockBtaSdp",
         ":TestMockBtaSys",
@@ -675,7 +682,6 @@ cc_test {
         "libstatslog_bt",
     ],
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
     ],
     target: {
@@ -735,6 +741,7 @@ cc_test {
         ":TestMockBtaLeAudio",
         ":TestMockBtaLeAudioHalVerifier",
         ":TestMockBtaPan",
+        ":TestMockBtaRas",
         ":TestMockBtaScn",
         ":TestMockBtaSdp",
         ":TestMockBtaSys",
@@ -798,7 +805,6 @@ cc_test {
         "libstatslog_bt",
     ],
     cflags: [
-        "-DBUILDCFG",
         "-Wno-unused-parameter",
     ],
     target: {

@@ -21,13 +21,14 @@
  *  This module contains action functions of the link control state machine.
  *
  ******************************************************************************/
-#include <android_bluetooth_sysprop.h>
+#include <android_bluetooth_flags.h>
 #include <bluetooth/log.h>
 #include <string.h>
 
 #include "avct_api.h"
 #include "avct_int.h"
 #include "bta/include/bta_sec_api.h"
+#include "btif/include/btif_av.h"
 #include "device/include/device_iot_config.h"
 #include "internal_include/bt_target.h"
 #include "osi/include/allocator.h"
@@ -226,7 +227,7 @@ void avct_lcb_open_ind(tAVCT_LCB* p_lcb, tAVCT_LCB_EVT* p_data) {
   int i;
   bool bind = false;
 
-  if (GET_SYSPROP(A2dp, src_sink_coexist, false)) {
+  if (btif_av_src_sink_coexist_enabled()) {
     bool is_originater = false;
 
     for (i = 0; i < AVCT_NUM_CONN; i++, p_ccb++) {
@@ -679,7 +680,7 @@ void avct_lcb_msg_ind(tAVCT_LCB* p_lcb, tAVCT_LCB_EVT* p_data) {
   }
 
   bool bind = false;
-  if (GET_SYSPROP(A2dp, src_sink_coexist, false)) {
+  if (btif_av_src_sink_coexist_enabled()) {
     bind = avct_msg_ind_for_src_sink_coexist(p_lcb, p_data, label, cr_ipid);
     osi_free_and_reset((void**)&p_data->p_buf);
     if (bind) return;
@@ -718,9 +719,12 @@ bool avct_msg_ind_for_src_sink_coexist(tAVCT_LCB* p_lcb, tAVCT_LCB_EVT* p_data,
   tAVCT_CCB* p_ccb;
   int p_buf_len;
   uint8_t* p;
-  uint16_t pid;
+  uint16_t pid, type;
 
   p = (uint8_t*)(p_data->p_buf + 1) + p_data->p_buf->offset;
+  if (IS_FLAG_ENABLED(a2dp_concurrent_source_sink)) {
+    AVCT_PARSE_HDR(p, label, type, cr_ipid);
+  }
 
   BE_STREAM_TO_UINT16(pid, p);
 

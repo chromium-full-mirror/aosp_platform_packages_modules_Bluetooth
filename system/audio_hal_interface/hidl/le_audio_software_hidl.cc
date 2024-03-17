@@ -35,7 +35,7 @@ using ::bluetooth::audio::hidl::SessionType_2_1;
 
 using ::bluetooth::audio::le_audio::LeAudioClientInterface;
 using ::bluetooth::audio::le_audio::StartRequestState;
-using ::le_audio::DsaMode;
+using ::bluetooth::le_audio::DsaMode;
 
 /**
  * Helper utils
@@ -265,7 +265,8 @@ bool LeAudioTransport::IsRequestCompletedAfterUpdate(
 
   auto ret = std::get<1>(result);
   LOG_VERBOSE("new state: %d, return: %s",
-              static_cast<int>(start_request_state_.load()), ret);
+              static_cast<int>(start_request_state_.load()),
+              ret ? "true" : "false");
   return ret;
 }
 

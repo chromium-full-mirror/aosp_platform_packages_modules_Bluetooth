@@ -19,6 +19,8 @@
 #include <gtest/gtest.h>
 
 #include "btm_iso_api.h"
+#include "hci/controller_interface_mock.h"
+#include "hci/hci_packets.h"
 #include "hci/include/hci_layer.h"
 #include "main/shim/hci_layer.h"
 #include "mock_controller.h"
@@ -29,6 +31,7 @@
 #include "stack/include/bt_types.h"
 #include "stack/include/hci_error_code.h"
 #include "stack/include/hcidefs.h"
+#include "test/mock/mock_main_shim_entry.h"
 #include "test/mock/mock_main_shim_hci_layer.h"
 
 using bluetooth::hci::IsoManager;
@@ -141,11 +144,11 @@ class IsoManagerTest : public Test {
     controller::SetMockControllerInterface(&controller_interface_);
     bluetooth::shim::testing::hci_layer_set_interface(
         &bluetooth::shim::interface);
+    bluetooth::hci::testing::mock_controller_ = &controller_;
 
     big_callbacks_.reset(new MockBigCallbacks());
     cig_callbacks_.reset(new MockCigCallbacks());
     IsIsoActive = false;
-
     EXPECT_CALL(controller_interface_, GetIsoBufferCount())
         .Times(AtLeast(1))
         .WillRepeatedly(Return(6));
@@ -166,6 +169,7 @@ class IsoManagerTest : public Test {
     hcic::SetMockHcicInterface(nullptr);
     controller::SetMockControllerInterface(nullptr);
     bluetooth::shim::testing::hci_layer_set_interface(nullptr);
+    bluetooth::hci::testing::mock_controller_ = nullptr;
   }
 
   virtual void InitIsoManager() {
@@ -339,6 +343,7 @@ class IsoManagerTest : public Test {
   IsoManager* manager_instance_;
   bluetooth::shim::MockIsoInterface iso_interface_;
   hcic::MockHcicInterface hcic_interface_;
+  bluetooth::hci::testing::MockControllerInterface controller_;
   controller::MockControllerInterface controller_interface_;
 
   std::unique_ptr<MockBigCallbacks> big_callbacks_;
@@ -2215,12 +2220,8 @@ TEST_F(IsoManagerTest, SendIsoDataNoCredits) {
   }
 
   // Return all credits for this one handle
-  uint8_t mock_rsp[5];
-  uint8_t* p = mock_rsp;
-  UINT8_TO_STREAM(p, 1);
-  UINT16_TO_STREAM(p, volatile_test_cig_create_cmpl_evt_.conn_handles[0]);
-  UINT16_TO_STREAM(p, num_buffers);
-  IsoManager::GetInstance()->HandleNumComplDataPkts(mock_rsp, sizeof(mock_rsp));
+  IsoManager::GetInstance()->HandleNumComplDataPkts(
+      volatile_test_cig_create_cmpl_evt_.conn_handles[0], num_buffers);
 
   // Check on BIG
   IsoManager::GetInstance()->CreateBig(volatile_test_big_params_evt_.big_id,
@@ -2270,12 +2271,8 @@ TEST_F(IsoManagerTest, SendIsoDataCreditsReturned) {
   }
 
   // Return all credits for this one handle
-  uint8_t mock_rsp[5];
-  uint8_t* p = mock_rsp;
-  UINT8_TO_STREAM(p, 1);
-  UINT16_TO_STREAM(p, volatile_test_cig_create_cmpl_evt_.conn_handles[0]);
-  UINT16_TO_STREAM(p, num_buffers);
-  IsoManager::GetInstance()->HandleNumComplDataPkts(mock_rsp, sizeof(mock_rsp));
+  IsoManager::GetInstance()->HandleNumComplDataPkts(
+      volatile_test_cig_create_cmpl_evt_.conn_handles[0], num_buffers);
 
   // Expect some more events go down the HCI
   EXPECT_CALL(iso_interface_, HciSend).Times(num_buffers).RetiresOnSaturation();
@@ -2286,11 +2283,8 @@ TEST_F(IsoManagerTest, SendIsoDataCreditsReturned) {
   }
 
   // Return all credits for this one handle
-  p = mock_rsp;
-  UINT8_TO_STREAM(p, 1);
-  UINT16_TO_STREAM(p, volatile_test_cig_create_cmpl_evt_.conn_handles[0]);
-  UINT16_TO_STREAM(p, num_buffers);
-  IsoManager::GetInstance()->HandleNumComplDataPkts(mock_rsp, sizeof(mock_rsp));
+  IsoManager::GetInstance()->HandleNumComplDataPkts(
+      volatile_test_cig_create_cmpl_evt_.conn_handles[0], num_buffers);
 
   // Check on BIG
   IsoManager::GetInstance()->CreateBig(volatile_test_big_params_evt_.big_id,
@@ -2310,11 +2304,8 @@ TEST_F(IsoManagerTest, SendIsoDataCreditsReturned) {
   }
 
   // Return all credits for this one handle
-  p = mock_rsp;
-  UINT8_TO_STREAM(p, 1);
-  UINT16_TO_STREAM(p, volatile_test_big_params_evt_.conn_handles[0]);
-  UINT16_TO_STREAM(p, num_buffers);
-  IsoManager::GetInstance()->HandleNumComplDataPkts(mock_rsp, sizeof(mock_rsp));
+  IsoManager::GetInstance()->HandleNumComplDataPkts(
+      volatile_test_big_params_evt_.conn_handles[0], num_buffers);
 
   // Expect some more events go down the HCI
   EXPECT_CALL(iso_interface_, HciSend).Times(num_buffers).RetiresOnSaturation();
@@ -2575,12 +2566,7 @@ TEST_F(IsoManagerDeathTestNoCleanup,
   IsoManager::GetInstance()->Stop();
 
   // Expect no assert on this call - should be gracefully ignored
-  uint8_t mock_rsp[5];
-  uint8_t* p = mock_rsp;
-  UINT8_TO_STREAM(p, 1);
-  UINT16_TO_STREAM(p, handle);
-  UINT16_TO_STREAM(p, num_buffers);
-  IsoManager::GetInstance()->HandleNumComplDataPkts(mock_rsp, sizeof(mock_rsp));
+  IsoManager::GetInstance()->HandleNumComplDataPkts(handle, num_buffers);
 }
 
 /* This test case simulates HCI thread scheduling events on the main thread,

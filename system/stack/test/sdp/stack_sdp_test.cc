@@ -25,6 +25,7 @@
 #include "stack/include/sdpdefs.h"
 #include "stack/sdp/internal/sdp_api.h"
 #include "stack/sdp/sdpint.h"
+#include "test/fake/fake_osi.h"
 #include "test/mock/mock_osi_allocator.h"
 #include "test/mock/mock_stack_l2cap_api.h"
 
@@ -32,56 +33,66 @@
 #define BT_DEFAULT_BUFFER_SIZE (4096 + 16)
 #endif
 
+namespace {
+
 static int L2CA_ConnectReq2_cid = 0x42;
 static RawAddress addr = RawAddress({0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6});
 static tSDP_DISCOVERY_DB* sdp_db = nullptr;
 
-class StackSdpMainTest : public ::testing::Test {
+class StackSdpWithMocksTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    sdp_init();
+    fake_osi_ = std::make_unique<test::fake::FakeOsi>();
+
     test::mock::stack_l2cap_api::L2CA_ConnectReq2.body =
-        [](uint16_t psm, const RawAddress& p_bd_addr, uint16_t sec_level) {
-          return ++L2CA_ConnectReq2_cid;
-        };
-    test::mock::stack_l2cap_api::L2CA_DataWrite.body = [](uint16_t cid,
+        [](uint16_t /* psm */, const RawAddress& /* p_bd_addr */,
+           uint16_t /* sec_level */) { return ++L2CA_ConnectReq2_cid; };
+    test::mock::stack_l2cap_api::L2CA_DataWrite.body = [](uint16_t /* cid */,
                                                           BT_HDR* p_data) {
       osi_free_and_reset((void**)&p_data);
       return 0;
     };
-    test::mock::stack_l2cap_api::L2CA_DisconnectReq.body = [](uint16_t cid) {
-      return true;
-    };
+    test::mock::stack_l2cap_api::L2CA_DisconnectReq.body =
+        [](uint16_t /* cid */) { return true; };
     test::mock::stack_l2cap_api::L2CA_Register2.body =
-        [](uint16_t psm, const tL2CAP_APPL_INFO& p_cb_info, bool enable_snoop,
-           tL2CAP_ERTM_INFO* p_ertm_info, uint16_t my_mtu,
-           uint16_t required_remote_mtu, uint16_t sec_level) {
-          return 42;  // return non zero
-        };
-    test::mock::osi_allocator::osi_malloc.body = [](size_t size) {
-      return malloc(size);
-    };
-    test::mock::osi_allocator::osi_free.body = [](void* ptr) { free(ptr); };
-    test::mock::osi_allocator::osi_free_and_reset.body = [](void** ptr) {
-      free(*ptr);
-      *ptr = nullptr;
-    };
+        [](uint16_t psm, const tL2CAP_APPL_INFO& /* p_cb_info */,
+           bool /* enable_snoop */, tL2CAP_ERTM_INFO* /* p_ertm_info */,
+           uint16_t /* my_mtu */, uint16_t /* required_remote_mtu */,
+           uint16_t /* sec_level */) { return psm; };
+  }
+
+  void TearDown() override {
+    test::mock::stack_l2cap_api::L2CA_ConnectReq2 = {};
+    test::mock::stack_l2cap_api::L2CA_Register2 = {};
+    test::mock::stack_l2cap_api::L2CA_DataWrite = {};
+    test::mock::stack_l2cap_api::L2CA_DisconnectReq = {};
+
+    fake_osi_.reset();
+  }
+
+  std::unique_ptr<test::fake::FakeOsi> fake_osi_;
+};
+
+class StackSdpInitTest : public StackSdpWithMocksTest {
+ protected:
+  void SetUp() override {
+    StackSdpWithMocksTest::SetUp();
+    sdp_init();
     sdp_db = (tSDP_DISCOVERY_DB*)osi_malloc(BT_DEFAULT_BUFFER_SIZE);
   }
 
   void TearDown() override {
     osi_free(sdp_db);
-    test::mock::stack_l2cap_api::L2CA_ConnectReq2 = {};
-    test::mock::stack_l2cap_api::L2CA_Register2 = {};
-    test::mock::stack_l2cap_api::L2CA_DataWrite = {};
-    test::mock::stack_l2cap_api::L2CA_DisconnectReq = {};
-    test::mock::osi_allocator::osi_malloc = {};
-    test::mock::osi_allocator::osi_free = {};
-    test::mock::osi_allocator::osi_free_and_reset = {};
+    sdp_free();
+    StackSdpWithMocksTest::TearDown();
   }
 };
 
-TEST_F(StackSdpMainTest, sdp_service_search_request) {
+}  // namespace
+
+TEST_F(StackSdpInitTest, nop) {}
+
+TEST_F(StackSdpInitTest, sdp_service_search_request) {
   ASSERT_TRUE(SDP_ServiceSearchRequest(addr, sdp_db, nullptr));
   int cid = L2CA_ConnectReq2_cid;
   tCONN_CB* p_ccb = sdpu_find_ccb_by_cid(cid);
@@ -112,7 +123,7 @@ tCONN_CB* find_ccb(uint16_t cid, uint8_t state) {
   return nullptr;  // not found
 }
 
-TEST_F(StackSdpMainTest, sdp_service_search_request_queuing) {
+TEST_F(StackSdpInitTest, sdp_service_search_request_queuing) {
   ASSERT_TRUE(SDP_ServiceSearchRequest(addr, sdp_db, nullptr));
   const int cid = L2CA_ConnectReq2_cid;
   tCONN_CB* p_ccb1 = find_ccb(cid, SDP_STATE_CONN_SETUP);
@@ -144,13 +155,13 @@ TEST_F(StackSdpMainTest, sdp_service_search_request_queuing) {
   ASSERT_EQ(p_ccb2->con_state, SDP_STATE_IDLE);
 }
 
-void sdp_callback(const RawAddress& bd_addr, tSDP_RESULT result) {
+void sdp_callback(const RawAddress& /* bd_addr */, tSDP_RESULT result) {
   if (result == SDP_SUCCESS) {
     ASSERT_TRUE(SDP_ServiceSearchRequest(addr, sdp_db, nullptr));
   }
 }
 
-TEST_F(StackSdpMainTest, sdp_service_search_request_queuing_race_condition) {
+TEST_F(StackSdpInitTest, sdp_service_search_request_queuing_race_condition) {
   // start first request
   ASSERT_TRUE(SDP_ServiceSearchRequest(addr, sdp_db, sdp_callback));
   const int cid1 = L2CA_ConnectReq2_cid;
@@ -176,7 +187,7 @@ TEST_F(StackSdpMainTest, sdp_service_search_request_queuing_race_condition) {
   sdp_disconnect(p_ccb2, SDP_SUCCESS);
 }
 
-TEST_F(StackSdpMainTest, sdp_disc_wait_text) {
+TEST_F(StackSdpInitTest, sdp_disc_wait_text) {
   std::vector<std::pair<tSDP_DISC_WAIT, std::string>> states = {
       std::make_pair(SDP_DISC_WAIT_CONN, "SDP_DISC_WAIT_CONN"),
       std::make_pair(SDP_DISC_WAIT_HANDLES, "SDP_DISC_WAIT_HANDLES"),
@@ -195,7 +206,7 @@ TEST_F(StackSdpMainTest, sdp_disc_wait_text) {
                    .c_str());
 }
 
-TEST_F(StackSdpMainTest, sdp_state_text) {
+TEST_F(StackSdpInitTest, sdp_state_text) {
   std::vector<std::pair<tSDP_STATE, std::string>> states = {
       std::make_pair(SDP_STATE_IDLE, "SDP_STATE_IDLE"),
       std::make_pair(SDP_STATE_CONN_SETUP, "SDP_STATE_CONN_SETUP"),
@@ -214,7 +225,7 @@ TEST_F(StackSdpMainTest, sdp_state_text) {
                    .c_str());
 }
 
-TEST_F(StackSdpMainTest, sdp_flags_text) {
+TEST_F(StackSdpInitTest, sdp_flags_text) {
   std::vector<std::pair<tSDP_DISC_WAIT, std::string>> flags = {
       std::make_pair(SDP_FLAGS_IS_ORIG, "SDP_FLAGS_IS_ORIG"),
       std::make_pair(SDP_FLAGS_HIS_CFG_DONE, "SDP_FLAGS_HIS_CFG_DONE"),
@@ -231,7 +242,7 @@ TEST_F(StackSdpMainTest, sdp_flags_text) {
                    .c_str());
 }
 
-TEST_F(StackSdpMainTest, sdp_status_text) {
+TEST_F(StackSdpInitTest, sdp_status_text) {
   std::vector<std::pair<tSDP_STATUS, std::string>> status = {
       std::make_pair(SDP_SUCCESS, "SDP_SUCCESS"),
       std::make_pair(SDP_INVALID_VERSION, "SDP_INVALID_VERSION"),
@@ -263,4 +274,135 @@ TEST_F(StackSdpMainTest, sdp_status_text) {
                sdp_status_text(static_cast<tSDP_STATUS>(
                                    std::numeric_limits<uint16_t>::max()))
                    .c_str());
+}
+
+static tSDP_DISCOVERY_DB db{};
+static tSDP_DISC_REC rec{};
+static tSDP_DISC_ATTR uuid_desc_attr{};
+static tSDP_DISC_ATTR client_exe_url_attr{};
+static tSDP_DISC_ATTR service_desc_attr{};
+static tSDP_DISC_ATTR doc_url_desc_attr{};
+static tSDP_DISC_ATTR spec_id_attr{};
+static tSDP_DISC_ATTR vendor_id_attr{};
+static tSDP_DISC_ATTR vendor_id_src_attr{};
+static tSDP_DISC_ATTR prod_id_attr{};
+static tSDP_DISC_ATTR prod_version_attr{};
+static tSDP_DISC_ATTR primary_rec_attr{};
+
+class SDP_GetDiRecord_Tests : public ::testing::Test {
+protected:
+
+  void SetUp() override {
+    db.p_first_rec = &rec;
+    rec.p_first_attr = &uuid_desc_attr;
+
+    uuid_desc_attr.attr_id = ATTR_ID_SERVICE_ID;
+    uuid_desc_attr.p_next_attr = &client_exe_url_attr;
+
+    client_exe_url_attr.attr_id = ATTR_ID_CLIENT_EXE_URL;
+    client_exe_url_attr.p_next_attr = &service_desc_attr;
+
+    service_desc_attr.attr_id = ATTR_ID_SERVICE_DESCRIPTION;
+    service_desc_attr.p_next_attr = &doc_url_desc_attr;
+
+    doc_url_desc_attr.attr_id = ATTR_ID_DOCUMENTATION_URL;
+    doc_url_desc_attr.p_next_attr = &spec_id_attr;
+
+    spec_id_attr.attr_id = ATTR_ID_SPECIFICATION_ID;
+    spec_id_attr.p_next_attr = &vendor_id_attr;
+
+    vendor_id_attr.attr_id = ATTR_ID_VENDOR_ID;
+    vendor_id_attr.p_next_attr = &vendor_id_src_attr;
+
+    vendor_id_src_attr.attr_id = ATTR_ID_VENDOR_ID_SOURCE;
+    vendor_id_src_attr.p_next_attr = &prod_id_attr;
+
+    prod_id_attr.attr_id = ATTR_ID_PRODUCT_ID;
+    prod_id_attr.p_next_attr = &prod_version_attr;
+
+    prod_version_attr.attr_id = ATTR_ID_PRODUCT_VERSION;
+    prod_version_attr.p_next_attr = &primary_rec_attr;
+
+    primary_rec_attr.attr_id = ATTR_ID_PRIMARY_RECORD;
+    primary_rec_attr.p_next_attr = nullptr;
+  }
+
+  void TearDown() override {
+    db = {};
+    rec = {};
+    uuid_desc_attr = {};
+    client_exe_url_attr = {};
+    service_desc_attr = {};
+    doc_url_desc_attr = {};
+    spec_id_attr = {};
+    vendor_id_attr = {};
+    vendor_id_src_attr = {};
+    prod_id_attr = {};
+    prod_version_attr = {};
+    primary_rec_attr = {};
+  }
+};
+
+// regression test for b/297831980 and others
+TEST_F(SDP_GetDiRecord_Tests, SDP_GetDiRecord_Regression_test0) {
+  // tune the type/len and value of each attribute in
+  // each test
+  uuid_desc_attr.attr_len_type = (UUID_DESC_TYPE<<12) | 2;
+  uuid_desc_attr.attr_value.v.u16 = UUID_SERVCLASS_PNP_INFORMATION;
+
+  // use a 2-byte string so that it can be
+  // saved in tSDP_DISC_ATVAL
+  const char *const text = "AB";
+  int len = strlen(text);
+  client_exe_url_attr.attr_len_type = (URL_DESC_TYPE<<12) | len;
+  memcpy(client_exe_url_attr.attr_value.v.array, text, len);
+
+  // make this attr not found by id
+  service_desc_attr.attr_id = ATTR_ID_SERVICE_DESCRIPTION + 1;
+  service_desc_attr.attr_len_type = (TEXT_STR_DESC_TYPE<<12) | len;
+  memcpy(service_desc_attr.attr_value.v.array, text, len);
+
+  // make a wrong type
+  doc_url_desc_attr.attr_len_type =(TEXT_STR_DESC_TYPE<<12) | len;
+  memcpy(doc_url_desc_attr.attr_value.v.array, text, len);
+
+  // setup unexpected sizes for the following attrs
+  spec_id_attr.attr_len_type = (UINT_DESC_TYPE << 12) | 1;
+  spec_id_attr.attr_value.v.u16 = 0x1111;
+
+  vendor_id_attr.attr_len_type = (UINT_DESC_TYPE << 12) | 1;
+  vendor_id_attr.attr_value.v.u16 = 0x2222;
+
+  vendor_id_src_attr.attr_len_type = (UINT_DESC_TYPE << 12) | 1;
+  vendor_id_src_attr.attr_value.v.u16 = 0x3333;
+
+  prod_id_attr.attr_len_type = (UINT_DESC_TYPE << 12) | 1;
+  prod_id_attr.attr_value.v.u16 = 0x4444;
+
+  prod_version_attr.attr_len_type = (UINT_DESC_TYPE << 12) | 1;
+  prod_version_attr.attr_value.v.u16 = 0x5555;
+
+  // setup wrong size for primary_rec_attr
+  primary_rec_attr.attr_len_type = (BOOLEAN_DESC_TYPE << 12) | 0;
+  primary_rec_attr.attr_value.v.u8 = 0x66;
+
+  tSDP_DI_GET_RECORD device_info{};
+
+  SDP_GetDiRecord(1, &device_info, &db);
+
+  ASSERT_STREQ(text, device_info.rec.client_executable_url);
+
+  // service description could not be found
+  ASSERT_EQ(strlen(device_info.rec.service_description), (size_t) 0);
+
+  // with a wrong attr type, the attr value won't be accepted
+  ASSERT_EQ(strlen(device_info.rec.documentation_url), (size_t) 0);
+
+  // none of the following values got setup
+  ASSERT_EQ(device_info.spec_id, 0);
+  ASSERT_EQ(device_info.rec.vendor, 0);
+  ASSERT_EQ(device_info.rec.vendor_id_source, 0);
+  ASSERT_EQ(device_info.rec.product, 0);
+  ASSERT_EQ(device_info.rec.version, 0);
+  ASSERT_FALSE(device_info.rec.primary_record);
 }

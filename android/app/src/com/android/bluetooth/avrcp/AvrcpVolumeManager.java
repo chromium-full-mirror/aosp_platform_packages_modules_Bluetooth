@@ -41,7 +41,6 @@ class AvrcpVolumeManager extends AudioDeviceCallback {
 
     // All volumes are stored at system volume values, not AVRCP values
     private static final String VOLUME_MAP = "bluetooth_volume_map";
-    private static final String VOLUME_REJECTLIST = "absolute_volume_rejectlist";
     private static final String VOLUME_CHANGE_LOG_TITLE = "BTAudio Volume Events";
 
     @VisibleForTesting
@@ -179,7 +178,7 @@ class AvrcpVolumeManager extends AudioDeviceCallback {
 
     void setVolume(@NonNull BluetoothDevice device, int avrcpVolume) {
         int deviceVolume = avrcpToSystemVolume(avrcpVolume);
-        mVolumeEventLogger.logd(DEBUG, TAG, "setVolume:"
+        mVolumeEventLogger.logd(TAG, "setVolume:"
                         + " device=" + device
                         + " avrcpVolume=" + avrcpVolume
                         + " deviceVolume=" + deviceVolume
@@ -196,7 +195,7 @@ class AvrcpVolumeManager extends AudioDeviceCallback {
             return;
         }
         int avrcpVolume = systemToAvrcpVolume(deviceVolume);
-        mVolumeEventLogger.logd(DEBUG, TAG, "sendVolumeChanged:"
+        mVolumeEventLogger.logd(TAG, "sendVolumeChanged:"
                         + " device=" + device
                         + " avrcpVolume=" + avrcpVolume
                         + " deviceVolume=" + deviceVolume

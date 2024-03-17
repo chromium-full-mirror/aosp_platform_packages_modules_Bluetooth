@@ -45,9 +45,9 @@ using AudioConfigurationAIDL =
 using ::aidl::android::hardware::bluetooth::audio::LatencyMode;
 using ::aidl::android::hardware::bluetooth::audio::LeAudioCodecConfiguration;
 
-using ::le_audio::CodecManager;
-using ::le_audio::set_configurations::AudioSetConfiguration;
-using ::le_audio::types::CodecLocation;
+using ::bluetooth::le_audio::CodecManager;
+using ::bluetooth::le_audio::set_configurations::AudioSetConfiguration;
+using ::bluetooth::le_audio::types::CodecLocation;
 }  // namespace
 
 std::vector<AudioSetConfiguration> get_offload_capabilities() {
@@ -325,6 +325,28 @@ void LeAudioClientInterface::Sink::CancelStreamingRequest() {
         break;
     }
   }
+
+  auto aidl_instance = get_aidl_transport_instance(is_broadcaster_);
+  auto start_request_state = aidl_instance->GetStartRequestState();
+  switch (start_request_state) {
+    case StartRequestState::IDLE:
+      LOG_WARN(", no pending start stream request");
+      return;
+    case StartRequestState::PENDING_BEFORE_RESUME:
+      LOG_INFO("Response before sending PENDING to audio HAL");
+      aidl_instance->SetStartRequestState(StartRequestState::CANCELED);
+      return;
+    case StartRequestState::PENDING_AFTER_RESUME:
+      LOG_INFO("Response after sending PENDING to audio HAL");
+      aidl_instance->ClearStartRequestState();
+      get_aidl_client_interface(is_broadcaster_)
+          ->StreamStarted(aidl::BluetoothAudioCtrlAck::FAILURE);
+      return;
+    case StartRequestState::CONFIRMED:
+    case StartRequestState::CANCELED:
+      LOG_ERROR("Invalid state, start stream already confirmed");
+      break;
+  }
 }
 
 void LeAudioClientInterface::Sink::CancelStreamingRequestV2() {
@@ -389,7 +411,7 @@ void LeAudioClientInterface::Sink::StopSession() {
 }
 
 void LeAudioClientInterface::Sink::UpdateAudioConfigToHal(
-    const ::le_audio::offload_config& offload_config) {
+    const ::bluetooth::le_audio::offload_config& offload_config) {
   if (HalVersionManager::GetHalTransport() ==
       BluetoothAudioHalTransport::HIDL) {
     return;
@@ -405,7 +427,7 @@ void LeAudioClientInterface::Sink::UpdateAudioConfigToHal(
 }
 
 void LeAudioClientInterface::Sink::UpdateBroadcastAudioConfigToHal(
-    const ::le_audio::broadcast_offload_config& offload_config) {
+    const ::bluetooth::le_audio::broadcast_offload_config& offload_config) {
   if (HalVersionManager::GetHalTransport() ==
       BluetoothAudioHalTransport::HIDL) {
     return;
@@ -615,8 +637,6 @@ void LeAudioClientInterface::Source::ConfirmStreamingRequest() {
 }
 
 void LeAudioClientInterface::Source::ConfirmStreamingRequestV2() {
-  LOG_INFO("Rymek source");
-
   auto lambda = [&](StartRequestState currect_start_request_state)
       -> std::pair<StartRequestState, bool> {
     switch (currect_start_request_state) {
@@ -753,7 +773,7 @@ void LeAudioClientInterface::Source::StopSession() {
 }
 
 void LeAudioClientInterface::Source::UpdateAudioConfigToHal(
-    const ::le_audio::offload_config& offload_config) {
+    const ::bluetooth::le_audio::offload_config& offload_config) {
   if (HalVersionManager::GetHalTransport() ==
       BluetoothAudioHalTransport::HIDL) {
     return;

@@ -122,7 +122,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
     public static final UUID UUID_CONTENT_CONTROL_ID =
             UUID.fromString("00002bba-0000-1000-8000-00805f9b34fb");
 
-    private static final byte SEARCH_CONTROL_POINT_RESULT_SUCCESS = 0x01;
     private static final byte SEARCH_CONTROL_POINT_RESULT_FAILURE = 0x02;
 
     private static final float PLAY_SPEED_MIN = 0.25f;
@@ -608,7 +607,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
                                 ? op.mDescriptor.getCharacteristic().getUuid()
                                 : null));
         mEventLogger.logd(
-                DBG,
                 TAG,
                 "onAuthorizedGattOperation: device= "
                         + device
@@ -624,8 +622,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
                 // Always ask for the latest position
                 if (op.mCharacteristic.getUuid().equals(
                         mCharacteristics.get(CharId.TRACK_POSITION).getUuid())) {
-                    long positionMs = TRACK_POSITION_UNAVAILABLE;
-                    positionMs = mCallbacks.onGetCurrentTrackPosition();
+                    long positionMs = mCallbacks.onGetCurrentTrackPosition();
                     final int position =
                             (positionMs != TRACK_POSITION_UNAVAILABLE)
                                     ? (int) millisecondsToMcsInterval(positionMs)
@@ -800,7 +797,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
         for (BluetoothDevice device : mAdapterService.getBondedDevices()) {
             List<ParcelUuid> uuidList = mMcpService.getNotificationSubscriptions(mCcid, device);
             mEventLogger.logd(
-                    DBG,
                     TAG,
                     "restoreCccValuesForStoredDevices: device= "
                             + device
@@ -810,7 +806,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
             /* Restore CCCD values for device */
             for (ParcelUuid uuid : uuidList) {
                 mEventLogger.logd(
-                        DBG,
                         TAG,
                         "restoreCccValuesForStoredDevices: device= " + device + ", char= " + uuid);
                 setCcc(device, uuid.getUuid(), 0,
@@ -1026,7 +1021,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
     }
 
     private void setInitialCharacteristicValues(boolean notify) {
-        mEventLogger.logd(DBG, TAG, "setInitialCharacteristicValues");
+        mEventLogger.logd(TAG, "setInitialCharacteristicValues");
         updateMediaStateChar(mCurrentMediaState.getValue());
         updatePlayerNameChar("", notify);
         updatePlayerIconUrlChar("");
@@ -1216,7 +1211,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
 
         Request req = new Request(opcode, intVal);
         mEventLogger.logd(
-                DBG,
                 TAG,
                 "handleMediaControlPointRequest: sending "
                         + Request.Opcodes.toString(opcode)
@@ -1262,7 +1256,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
     }
 
     private boolean initGattService(UUID serviceUuid) {
-        mEventLogger.logd(DBG, TAG, "initGattService: uuid= " + serviceUuid);
+        mEventLogger.logd(TAG, "initGattService: uuid= " + serviceUuid);
 
         if (mBluetoothGattServer == null) {
             BluetoothManager manager = mContext.getSystemService(BluetoothManager.class);
@@ -1334,10 +1328,10 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
         }
 
         if (Arrays.equals(value, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-            mEventLogger.logd(DBG, TAG, "setCcc: device= " + device + ", notify: " + true);
+            mEventLogger.logd(TAG, "setCcc: device= " + device + ", notify: " + true);
             mMcpService.setNotificationSubscription(mCcid, device, new ParcelUuid(charUuid), true);
         } else if (Arrays.equals(value, BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)) {
-            mEventLogger.logd(DBG, TAG, "setCcc: device= " + device + ", notify: " + false);
+            mEventLogger.logd(TAG, "setCcc: device= " + device + ", notify: " + false);
             mMcpService.setNotificationSubscription(mCcid, device, new ParcelUuid(charUuid), false);
         } else {
             mEventLogger.loge(TAG, "Not handled CCC value: " + Arrays.toString(value));
@@ -1391,7 +1385,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
 
         if (!isFeatureSupported(ServiceFeature.MEDIA_STATE)) return;
 
-        mEventLogger.logd(DBG, TAG, "updateMediaStateChar: state= " + MediaState.toString(state));
+        mEventLogger.logd(TAG, "updateMediaStateChar: state= " + MediaState.toString(state));
 
         BluetoothGattCharacteristic stateChar =
                 mCharacteristics.get(CharId.MEDIA_STATE);
@@ -1408,7 +1402,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
         if (!isFeatureSupported(feature)) return;
 
         mEventLogger.logd(
-                DBG,
                 TAG,
                 "updateObjectIdChar: charId= "
                         + CharId.FromFeature(feature)
@@ -1625,7 +1618,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
     public void onDeviceAuthorizationSet(BluetoothDevice device) {
         int auth = getDeviceAuthorization(device);
         mEventLogger.logd(
-                DBG,
                 TAG,
                 "onDeviceAuthorizationSet: device= "
                         + device
@@ -1684,7 +1676,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
             if (notify && isFeatureSupported(ServiceFeature.PLAYING_ORDER_NOTIFY)) {
                 notifyCharacteristic(orderChar, null);
             }
-            mEventLogger.logd(DBG, TAG, "updatePlayingOrderChar: order= " + order);
+            mEventLogger.logd(TAG, "updatePlayingOrderChar: order= " + order);
         }
     }
 
@@ -1774,7 +1766,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
                     notifyCharacteristic(characteristic, null);
                 }
                 mEventLogger.logd(
-                        DBG,
                         TAG,
                         "updateSeekingSpeedChar: intSpeed=" + intSpeed + ", speed= " + speed);
             }
@@ -1815,7 +1806,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
                 notifyCharacteristic(characteristic, null);
             }
             mEventLogger.logd(
-                    DBG,
                     TAG,
                     "updatePlaybackSpeedChar: intSpeed=" + intSpeed + ", speed= " + speed);
         }
@@ -1847,7 +1837,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
             }
         }
         mEventLogger.logd(
-                DBG,
                 TAG,
                 "updateTrackPositionChar: positionMs= " + positionMs + ", position= " + position);
     }
@@ -1883,7 +1872,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
                 notifyCharacteristic(characteristic, null);
             }
             mEventLogger.logd(
-                    DBG,
                     TAG,
                     "updateTrackDurationChar: durationMs= "
                             + durationMs
@@ -1916,7 +1904,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
             if (notify && isFeatureSupported(ServiceFeature.TRACK_TITLE_NOTIFY)) {
                 notifyCharacteristic(characteristic, null);
             }
-            mEventLogger.logd(DBG, TAG, "updateTrackTitleChar: title= '" + title + "'");
+            mEventLogger.logd(TAG, "updateTrackTitleChar: title= '" + title + "'");
         }
     }
 
@@ -1945,7 +1933,6 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
             notifyCharacteristic(characteristic, null);
         }
         mEventLogger.logd(
-                DBG,
                 TAG,
                 "updateSupportedOpcodesChar: opcodes= "
                         + Request.SupportedOpcodes.toString(opcodes));
@@ -1959,15 +1946,13 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
         if (isFeatureSupported(ServiceFeature.PLAYING_ORDER_SUPPORTED)) {
             mCharacteristics.get(CharId.PLAYING_ORDER_SUPPORTED)
                     .setValue(supportedOrder, BluetoothGattCharacteristic.FORMAT_UINT16, 0);
-            mEventLogger.logd(
-                    DBG, TAG, "updatePlayingOrderSupportedChar: order= " + supportedOrder);
+            mEventLogger.logd(TAG, "updatePlayingOrderSupportedChar: order= " + supportedOrder);
         }
     }
 
     private void updateIconObjIdChar(Long objId) {
         if (isFeatureSupported(ServiceFeature.PLAYER_ICON_OBJ_ID)) {
             mEventLogger.logd(
-                    DBG,
                     TAG,
                     "updateObjectIdChar charId= "
                             + CharId.PLAYER_ICON_OBJ_ID
@@ -2017,7 +2002,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
         }
         if (isFeatureSupported(ServiceFeature.PLAYER_ICON_URL)) {
             mCharacteristics.get(CharId.PLAYER_ICON_URL).setValue(url);
-            mEventLogger.logd(DBG, TAG, "updatePlayerIconUrlChar: " + url);
+            mEventLogger.logd(TAG, "updatePlayerIconUrlChar: " + url);
         }
     }
 
@@ -2042,7 +2027,7 @@ public class MediaControlGattService implements MediaControlGattServiceInterface
         BluetoothGattCharacteristic characteristic =
                 mCharacteristics.get(CharId.PLAYER_NAME);
         characteristic.setValue(name);
-        mEventLogger.logd(DBG, TAG, "updatePlayerNameChar: name= '" + name + "'");
+        mEventLogger.logd(TAG, "updatePlayerNameChar: name= '" + name + "'");
         if (notify && isFeatureSupported(ServiceFeature.PLAYER_NAME_NOTIFY)) {
             notifyCharacteristic(characteristic, null);
         }
