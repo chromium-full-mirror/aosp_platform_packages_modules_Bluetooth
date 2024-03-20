@@ -28,7 +28,6 @@
 #include "device/include/controller.h"
 #include "stack/include/btm_api_types.h"
 #include "stack/include/btm_status.h"
-#include "stack/include/hcidefs.h"
 #include "types/raw_address.h"
 
 // Mocked compile conditionals, if any
@@ -51,14 +50,6 @@ bt_device_features_t features_classic[MAX_FEATURES_CLASSIC_PAGE_COUNT] = {{
     .as_array{0},
 }};
 uint8_t last_features_classic_page_index{0};
-
-uint16_t acl_data_size_classic{0};
-uint16_t acl_data_size_ble{0};
-uint16_t iso_data_size{0};
-
-uint16_t acl_buffer_count_classic{0};
-uint8_t acl_buffer_count_ble{0};
-uint8_t iso_buffer_count{0};
 
 uint8_t ble_acceptlist_size{0};
 uint8_t ble_resolving_list_max_size{0};
@@ -101,24 +92,6 @@ uint8_t* get_local_supported_codecs(uint8_t* number_of_codecs) {
 
 const uint8_t* get_ble_supported_states(void) { return ble_supported_states; }
 
-uint16_t get_acl_data_size_classic(void) { return acl_data_size_classic; }
-
-uint16_t get_acl_data_size_ble(void) { return acl_data_size_ble; }
-
-uint16_t get_iso_data_size(void) { return iso_data_size; }
-
-uint16_t get_acl_packet_size_classic(void) {
-  return acl_data_size_classic + HCI_DATA_PREAMBLE_SIZE;
-}
-
-uint16_t get_acl_packet_size_ble(void) {
-  return acl_data_size_ble + HCI_DATA_PREAMBLE_SIZE;
-}
-
-uint16_t get_iso_packet_size(void) {
-  return iso_data_size + HCI_DATA_PREAMBLE_SIZE;
-}
-
 uint16_t get_ble_suggested_default_data_length(void) {
   return ble_suggested_default_data_length;
 }
@@ -141,12 +114,6 @@ uint8_t get_ble_periodic_advertiser_list_size(void) {
   return ble_periodic_advertiser_list_size;
 }
 
-uint16_t get_acl_buffer_count_classic(void) { return acl_buffer_count_classic; }
-
-uint8_t get_acl_buffer_count_ble(void) { return acl_buffer_count_ble; }
-
-uint8_t get_iso_buffer_count(void) { return iso_buffer_count; }
-
 uint8_t get_ble_acceptlist_size(void) { return ble_acceptlist_size; }
 
 uint8_t get_ble_resolving_list_max_size(void) {
@@ -166,7 +133,6 @@ tBTM_STATUS clear_event_filter() { return BTM_SUCCESS; }
 
 tBTM_STATUS clear_event_mask() { return BTM_SUCCESS; }
 
-tBTM_STATUS le_rand(LeRandCallback /* cb */) { return BTM_SUCCESS; }
 tBTM_STATUS set_event_filter_connection_setup_all_devices() {
   return BTM_SUCCESS;
 }
@@ -190,24 +156,12 @@ const controller_t interface = {
 
     get_ble_supported_states,
 
-    get_acl_data_size_classic,
-    get_acl_data_size_ble,
-    get_iso_data_size,
-
-    get_acl_packet_size_classic,
-    get_acl_packet_size_ble,
-    get_iso_packet_size,
-
     get_ble_suggested_default_data_length,
     get_ble_maximum_tx_data_length,
     get_ble_maximum_tx_time,
     get_ble_maximum_advertising_data_length,
     get_ble_number_of_supported_advertising_sets,
     get_ble_periodic_advertiser_list_size,
-
-    get_acl_buffer_count_classic,
-    get_acl_buffer_count_ble,
-    get_iso_buffer_count,
 
     get_ble_acceptlist_size,
 
@@ -217,7 +171,6 @@ const controller_t interface = {
     get_le_all_initiating_phys,
     clear_event_filter,
     clear_event_mask,
-    le_rand,
     set_event_filter_connection_setup_all_devices,
     set_event_filter_allow_device_connection,
     set_default_event_mask_except,
