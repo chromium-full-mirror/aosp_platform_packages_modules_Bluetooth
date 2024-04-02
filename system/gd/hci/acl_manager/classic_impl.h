@@ -393,16 +393,15 @@ struct classic_impl : public security::ISecurityManagerListener {
                 Address address,
                 ErrorCode status,
                 std::string valid_incoming_addresses) {
-              ASSERT_LOG(
-                  status == ErrorCode::UNKNOWN_CONNECTION,
-                  "No prior connection request for %s expecting:%s",
-                  ADDRESS_TO_LOGGABLE_CSTR(address),
-                  valid_incoming_addresses.c_str());
               log::warn(
                   "No matching connection to {} ({})",
                   ADDRESS_TO_LOGGABLE_CSTR(address),
                   ErrorCodeText(status));
-              log::warn("Firmware error after RemoteNameRequestCancel?");  // see b/184239841
+              ASSERT_LOG(
+                  status != ErrorCode::SUCCESS,
+                  "No prior connection request for {} expecting:{}",
+                  ADDRESS_TO_LOGGABLE_CSTR(address),
+                  valid_incoming_addresses.c_str());
               remote_name_request_module->ReportRemoteNameRequestCancellation(address);
             },
             common::Unretained(remote_name_request_module_),
