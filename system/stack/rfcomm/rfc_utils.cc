@@ -24,16 +24,13 @@
 
 #define LOG_TAG "rfcomm"
 
-#include <base/logging.h>
 #include <bluetooth/log.h>
 
 #include <cstdint>
 
-#include "include/check.h"
 #include "internal_include/bt_target.h"
-#include "os/log.h"
+#include "os/logging/log_adapter.h"
 #include "osi/include/allocator.h"
-#include "osi/include/osi.h"  // UNUSED_ATTR
 #include "stack/include/bt_hdr.h"
 #include "stack/include/port_ext.h"
 #include "stack/rfcomm/rfc_int.h"
@@ -322,10 +319,11 @@ void rfcomm_mcb_timer_timeout(void* data) {
  * Returns          void
  *
  ******************************************************************************/
-void rfc_sec_check_complete(UNUSED_ATTR const RawAddress* bd_addr,
-                            UNUSED_ATTR tBT_TRANSPORT transport,
-                            void* p_ref_data, tBTM_STATUS res) {
-  CHECK(p_ref_data != nullptr);
+void rfc_sec_check_complete(const RawAddress* /* bd_addr */,
+                            tBT_TRANSPORT /* transport */, void* p_ref_data,
+                            tBTM_STATUS res) {
+  log::assert_that(p_ref_data != nullptr,
+                   "assert failed: p_ref_data != nullptr");
   tPORT* p_port = (tPORT*)p_ref_data;
 
   /* Verify that PORT is still waiting for Security to complete */

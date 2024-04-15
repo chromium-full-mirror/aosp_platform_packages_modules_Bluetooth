@@ -30,6 +30,7 @@
 #include <base/strings/stringprintf.h>
 #include <bluetooth/log.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -38,13 +39,13 @@
 #include "common/init_flags.h"
 #include "common/metrics.h"
 #include "common/time_util.h"
-#include "device/include/controller.h"
 #include "device/include/device_iot_config.h"
 #include "device/include/interop.h"
 #include "hci/controller_interface.h"
 #include "internal_include/bt_target.h"
 #include "l2c_api.h"
 #include "main/shim/entry.h"
+#include "main/shim/helpers.h"
 #include "osi/include/allocator.h"
 #include "osi/include/properties.h"
 #include "stack/btm/btm_ble_int.h"
@@ -179,7 +180,7 @@ static bool handleUnexpectedEncryptionChange() {
   return sHandleUnexpectedEncryptionChange;
 }
 
-void NotifyBondingCanceled(tBTM_STATUS btm_status) {
+void NotifyBondingCanceled(tBTM_STATUS /* btm_status */) {
   if (btm_sec_cb.api.p_bond_cancel_cmpl_callback) {
     btm_sec_cb.api.p_bond_cancel_cmpl_callback(BTM_SUCCESS);
   }
@@ -395,7 +396,7 @@ void BTM_SetPinType(uint8_t pin_type, PIN_CODE pin_code, uint8_t pin_code_len) {
 
   /* If device is not up security mode will be set as a part of startup */
   if ((btm_sec_cb.cfg.pin_type != pin_type) &&
-      controller_get_interface()->get_is_ready()) {
+      bluetooth::shim::GetController() != nullptr) {
     btsnd_hcic_write_pin_type(pin_type);
   }
 
@@ -620,7 +621,7 @@ tBTM_STATUS btm_sec_bond_by_transport(const RawAddress& bd_addr,
     return (BTM_NO_RESOURCES);
   }
 
-  if (!controller_get_interface()->get_is_ready()) {
+  if (bluetooth::shim::GetController() == nullptr) {
     log::error("controller module is not ready");
     return (BTM_NO_RESOURCES);
   }
@@ -754,7 +755,8 @@ tBTM_STATUS btm_sec_bond_by_transport(const RawAddress& bd_addr,
  *  Note: After 2.1 parameters are not used and preserved here not to change API
  ******************************************************************************/
 tBTM_STATUS BTM_SecBond(const RawAddress& bd_addr, tBLE_ADDR_TYPE addr_type,
-                        tBT_TRANSPORT transport, tBT_DEVICE_TYPE device_type) {
+                        tBT_TRANSPORT transport,
+                        tBT_DEVICE_TYPE /* device_type */) {
   if (transport == BT_TRANSPORT_AUTO) {
     if (addr_type == BLE_ADDR_PUBLIC) {
       transport =
@@ -1300,25 +1302,6 @@ void BTM_RemoteOobDataReply(tBTM_STATUS res, const RawAddress& bd_addr,
 
 /*******************************************************************************
  *
- * Function         BTM_BothEndsSupportSecureConnections
- *
- * Description      This function is called to check if both the local device
- *                  and the peer device specified by bd_addr support BR/EDR
- *                  Secure Connections.
- *
- * Parameters:      bd_addr - address of the peer
- *
- * Returns          true if BR/EDR Secure Connections are supported by both
- *                  local and the remote device, else false.
- *
- ******************************************************************************/
-bool BTM_BothEndsSupportSecureConnections(const RawAddress& bd_addr) {
-  return ((bluetooth::shim::GetController()->SupportsSecureConnections()) &&
-          (BTM_PeerSupportsSecureConnections(bd_addr)));
-}
-
-/*******************************************************************************
- *
  * Function         BTM_PeerSupportsSecureConnections
  *
  * Description      This function is called to check if the peer supports
@@ -1472,8 +1455,7 @@ tBTM_STATUS btm_sec_l2cap_access_req_by_requirement(
   log::debug(
       "Checking l2cap access requirements peer:{} security:0x{:x} "
       "is_initiator:{}",
-      ADDRESS_TO_LOGGABLE_CSTR(bd_addr), security_required,
-      logbool(is_originator).c_str());
+      ADDRESS_TO_LOGGABLE_CSTR(bd_addr), security_required, is_originator);
 
   tBTM_STATUS rc = BTM_SUCCESS;
   bool chk_acp_auth_done = false;
@@ -1494,8 +1476,7 @@ tBTM_STATUS btm_sec_l2cap_access_req_by_requirement(
       log::warn(
           "Policy requires mode 4 level 4, but local_support_for_sc={}, "
           "rmt_support_for_sc={}, failing connection",
-          local_supports_sc,
-          logbool(p_dev_rec->SupportsSecureConnections()).c_str());
+          local_supports_sc, p_dev_rec->SupportsSecureConnections());
       if (p_callback) {
         (*p_callback)(&bd_addr, transport, (void*)p_ref_data,
                       BTM_MODE4_LEVEL4_NOT_SUPPORTED);
@@ -1845,8 +1826,7 @@ tBTM_STATUS btm_sec_mx_access_request(const RawAddress& bd_addr,
       log::debug(
           "Secure Connection only mode unsupported local_SC_support:{} "
           "remote_SC_support:{}",
-          logbool(local_supports_sc).c_str(),
-          logbool(p_dev_rec->SupportsSecureConnections()).c_str());
+          local_supports_sc, p_dev_rec->SupportsSecureConnections());
       if (p_callback)
         (*p_callback)(&bd_addr, transport, (void*)p_ref_data,
                       BTM_MODE4_LEVEL4_NOT_SUPPORTED);
@@ -2072,8 +2052,8 @@ void btm_sec_check_pending_reqs(void) {
  *
  ******************************************************************************/
 void btm_sec_dev_reset(void) {
-  ASSERT_LOG(bluetooth::shim::GetController()->SupportsSimplePairing(),
-             "only controllers with SSP is supported");
+  log::assert_that(bluetooth::shim::GetController()->SupportsSimplePairing(),
+                   "only controllers with SSP is supported");
 
   /* set the default IO capabilities */
   btm_sec_cb.devcb.loc_io_caps = btif_storage_get_local_io_caps();
@@ -2217,6 +2197,12 @@ void btm_sec_rmt_name_request_complete(const RawAddress* p_bd_addr,
   }
 
   if (!p_bd_name) p_bd_name = (const uint8_t*)kBtmBdNameEmpty;
+
+  BTM_LogHistory(kBtmLogTag, (p_bd_addr) ? *p_bd_addr : RawAddress::kEmpty,
+                 "RNR complete",
+                 base::StringPrintf("status:%s name:%s",
+                                    hci_error_code_text(status).c_str(),
+                                    PRIVATE_NAME(p_bd_name)));
 
   if (p_dev_rec == nullptr) {
     log::debug(
@@ -2538,8 +2524,7 @@ void btm_io_capabilities_req(RawAddress p) {
       log::debug(
           "SC only service, local_support_for_sc:{}, remote_support_for_sc:{} "
           "-> fail pairing",
-          logbool(local_supports_sc).c_str(),
-          logbool(p_dev_rec->SupportsSecureConnections()).c_str());
+          local_supports_sc, p_dev_rec->SupportsSecureConnections());
       err_code = HCI_ERR_PAIRING_NOT_ALLOWED;
     }
   }
@@ -3748,8 +3733,7 @@ void btm_sec_connected(const RawAddress& bda, uint16_t handle,
   /* After connection is established we perform security if we do not know */
   /* the name, or if we are originator because some procedure can have */
   /* been scheduled while connection was down */
-  log::debug("Is connection locally initiated:{}",
-             logbool(p_dev_rec->is_originator).c_str());
+  log::debug("Is connection locally initiated:{}", p_dev_rec->is_originator);
   if (!(p_dev_rec->sec_rec.sec_flags & BTM_SEC_NAME_KNOWN) ||
       p_dev_rec->is_originator) {
     res = btm_sec_execute_procedure(p_dev_rec);
@@ -4253,7 +4237,8 @@ void btm_sec_pin_code_request(const RawAddress p_bda) {
              ADDRESS_TO_LOGGABLE_CSTR(p_bda),
              tBTM_SEC_CB::btm_pair_state_descr(btm_sec_cb.pairing_state));
 
-  RawAddress local_bd_addr = *controller_get_interface()->get_address();
+  RawAddress local_bd_addr = bluetooth::ToRawAddress(
+      bluetooth::shim::GetController()->GetMacAddress());
   if (p_bda == local_bd_addr) {
     btsnd_hcic_pin_code_neg_reply(p_bda);
     return;
@@ -4396,11 +4381,6 @@ void btm_sec_update_clock_offset(uint16_t handle, uint16_t clock_offset) {
   p_inq_info->results.clock_offset = clock_offset | BTM_CLOCK_OFFSET_VALID;
 }
 
-uint16_t BTM_GetClockOffset(const RawAddress& remote_bda) {
-  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(remote_bda);
-  return (p_dev_rec) ? p_dev_rec->clock_offset : 0;
-}
-
 /******************************************************************
  * S T A T I C     F U N C T I O N S
  ******************************************************************/
@@ -4421,7 +4401,7 @@ uint16_t BTM_GetClockOffset(const RawAddress& remote_bda) {
  *
  ******************************************************************************/
 tBTM_STATUS btm_sec_execute_procedure(tBTM_SEC_DEV_REC* p_dev_rec) {
-  CHECK(p_dev_rec != nullptr);
+  log::assert_that(p_dev_rec != nullptr, "assert failed: p_dev_rec != nullptr");
   log::debug(
       "security_required:0x{:x} security_flags:0x{:x} security_state:{}[{}]",
       p_dev_rec->sec_rec.security_required, p_dev_rec->sec_rec.sec_flags,
@@ -4793,7 +4773,7 @@ const char* tBTM_SEC_CB::btm_pair_state_descr(tBTM_PAIRING_STATE state) {
  ******************************************************************************/
 void btm_sec_dev_rec_cback_event(tBTM_SEC_DEV_REC* p_dev_rec,
                                  tBTM_STATUS btm_status, bool is_le_transport) {
-  ASSERT(p_dev_rec != nullptr);
+  log::assert_that(p_dev_rec != nullptr, "assert failed: p_dev_rec != nullptr");
   log::debug("transport={}, btm_status={}", is_le_transport ? "le" : "classic",
              btm_status_text(btm_status).c_str());
 

@@ -27,7 +27,6 @@
 #include "stack/include/l2c_api.h"
 
 #include <base/location.h>
-#include <base/logging.h>
 #include <base/strings/stringprintf.h>
 #include <bluetooth/log.h>
 
@@ -37,7 +36,6 @@
 #include "common/init_flags.h"
 #include "hal/snoop_logger.h"
 #include "hci/controller_interface.h"
-#include "include/check.h"
 #include "internal_include/bt_target.h"
 #include "internal_include/bt_trace.h"
 #include "main/shim/dumpsys.h"
@@ -45,7 +43,6 @@
 #include "os/log.h"
 #include "os/system_properties.h"
 #include "osi/include/allocator.h"
-#include "stack/btm/btm_sec.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_psm_types.h"
 #include "stack/include/btm_api.h"
@@ -56,9 +53,6 @@
 #include "types/raw_address.h"
 
 using namespace bluetooth;
-
-void btsnd_hcic_enhanced_flush(uint16_t handle,
-                               uint8_t packet_type);  // TODO Remove
 
 using base::StringPrintf;
 
@@ -97,8 +91,8 @@ uint16_t L2CA_LeCreditThreshold() {
 }
 
 static bool check_l2cap_credit() {
-  CHECK(L2CA_LeCreditThreshold() < L2CA_LeCreditDefault())
-      << "Threshold must be smaller than default credits";
+  log::assert_that(L2CA_LeCreditThreshold() < L2CA_LeCreditDefault(),
+                   "Threshold must be smaller than default credits");
   return true;
 }
 
@@ -1586,7 +1580,7 @@ uint16_t L2CA_FlushChannel(uint16_t lcid, uint16_t num_to_flush) {
       if (bluetooth::shim::GetController()->SupportsNonFlushablePb() &&
           (BTM_GetNumScoLinks() == 0)) {
         /* The only packet type defined - 0 - Automatically-Flushable Only */
-        btsnd_hcic_enhanced_flush(p_lcb->Handle(), 0);
+        l2c_acl_flush(p_lcb->Handle());
       }
     }
 
@@ -1796,7 +1790,7 @@ bool L2CA_GetPeerChannelId(uint16_t lcid, uint16_t* rcid) {
     return false;
   }
 
-  ASSERT(rcid != nullptr);
+  log::assert_that(rcid != nullptr, "assert failed: rcid != nullptr");
   *rcid = p_ccb->remote_cid;
   return true;
 }
@@ -1817,8 +1811,9 @@ void L2CA_Dumpsys(int fd) {
     while (ccb != nullptr) {
       LOG_DUMPSYS(
           fd, "  active channel lcid:0x%04x rcid:0x%04x is_ecoc:%s in_use:%s",
-          ccb->local_cid, ccb->remote_cid, logbool(ccb->ecoc).c_str(),
-          logbool(ccb->in_use).c_str());
+          ccb->local_cid, ccb->remote_cid,
+          ccb->ecoc ? "true" : "false",
+          ccb->in_use ? "true" : "false");
       ccb = ccb->p_next_ccb;
     }
   }

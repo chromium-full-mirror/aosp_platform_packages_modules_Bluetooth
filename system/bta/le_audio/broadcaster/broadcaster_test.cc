@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <bluetooth/log.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <hardware/audio.h>
@@ -29,7 +30,6 @@
 #include "bta/le_audio/content_control_id_keeper.h"
 #include "bta/le_audio/le_audio_types.h"
 #include "bta/le_audio/mock_codec_manager.h"
-#include "bta/test/common/mock_controller.h"
 #include "hci/controller_interface_mock.h"
 #include "stack/include/btm_iso_api.h"
 #include "test/common/mock_functions.h"
@@ -54,6 +54,7 @@ using testing::SaveArg;
 using testing::Test;
 
 using namespace bluetooth::le_audio;
+using namespace bluetooth;
 
 using bluetooth::le_audio::DsaMode;
 using bluetooth::le_audio::LeAudioCodecConfiguration;
@@ -91,7 +92,7 @@ bt_status_t do_in_main_thread(const base::Location& from_here,
                 num_async_tasks--;
               },
               std::move(task), std::ref(num_async_tasks)))) {
-    LOG(ERROR) << __func__ << ": failed from " << from_here.ToString();
+    log::error("failed from {}", from_here.ToString());
     return BT_STATUS_FAIL;
   }
   num_async_tasks++;
@@ -109,7 +110,7 @@ static void init_message_loop_thread() {
   }
 
   if (!message_loop_thread.EnableRealTimeScheduling())
-    LOG(ERROR) << "Unable to set real time scheduling";
+    log::error("Unable to set real time scheduling");
 
   message_loop_ = message_loop_thread.message_loop();
   if (message_loop_ == nullptr) FAIL() << "unable to get message loop.";
@@ -929,13 +930,11 @@ TEST_F(BroadcasterTest, VendorCodecConfig) {
   ConfigCodecManagerMock(types::CodecLocation::HOST);
 
   ON_CALL(*mock_codec_manager_, GetBroadcastConfig)
-      .WillByDefault(Invoke(
-          [](const std::vector<std::pair<types::LeAudioContextType, uint8_t>>&
-                 subgroup_quality,
-             std::optional<const types::PublishedAudioCapabilities*> pacs) {
-            return std::make_unique<broadcaster::BroadcastConfiguration>(
-                vendor_stereo_16_2_1);
-          }));
+      .WillByDefault(Invoke([](const bluetooth::le_audio::CodecManager::
+                                   BroadcastConfigurationRequirements&) {
+        return std::make_unique<broadcaster::BroadcastConfiguration>(
+            vendor_stereo_16_2_1);
+      }));
   ContentControlIdKeeper::GetInstance()->SetCcid(LeAudioContextType::MEDIA,
                                                  media_ccid);
 

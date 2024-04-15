@@ -24,7 +24,7 @@
  ******************************************************************************/
 
 #define LOG_TAG "devctl"
-#include <base/logging.h>
+
 #include <bluetooth/log.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -34,7 +34,6 @@
 #include "btif/include/btif_bqr.h"
 #include "btm_sec_cb.h"
 #include "btm_sec_int_types.h"
-#include "device/include/controller.h"
 #include "hci/controller_interface.h"
 #include "internal_include/bt_target.h"
 #include "main/shim/btm_api.h"
@@ -167,15 +166,13 @@ void BTM_db_reset(void) {
   }
 }
 
-static bool set_sec_state_idle(void* data, void* context) {
+static bool set_sec_state_idle(void* data, void* /* context */) {
   tBTM_SEC_DEV_REC* p_dev_rec = static_cast<tBTM_SEC_DEV_REC*>(data);
   p_dev_rec->sec_rec.sec_state = BTM_SEC_STATE_IDLE;
   return true;
 }
 
 void BTM_reset_complete() {
-  const controller_t* controller = controller_get_interface();
-
   /* Tell L2CAP that all connections are gone */
   l2cu_device_reset();
 
@@ -205,8 +202,9 @@ void BTM_reset_complete() {
   /* Set up the BLE privacy settings */
   if (bluetooth::shim::GetController()->SupportsBle() &&
       bluetooth::shim::GetController()->SupportsBlePrivacy() &&
-      controller->get_ble_resolving_list_max_size() > 0) {
-    btm_ble_resolving_list_init(controller->get_ble_resolving_list_max_size());
+      bluetooth::shim::GetController()->GetLeResolvingListSize() > 0) {
+    btm_ble_resolving_list_init(
+        bluetooth::shim::GetController()->GetLeResolvingListSize());
     /* set the default random private address timeout */
     btsnd_hcic_ble_set_rand_priv_addr_timeout(
         btm_get_next_private_addrress_interval_ms() / 1000);
@@ -236,7 +234,9 @@ void BTM_reset_complete() {
  * Returns          true if device is up, else false
  *
  ******************************************************************************/
-bool BTM_IsDeviceUp(void) { return controller_get_interface()->get_is_ready(); }
+bool BTM_IsDeviceUp(void) {
+  return bluetooth::shim::GetController() != nullptr;
+}
 
 /*******************************************************************************
  *
@@ -300,7 +300,7 @@ static void decode_controller_support() {
   log::verbose("Local supported SCO packet types: 0x{:04x}",
                btm_cb.btm_sco_pkt_types_supported);
 
-  BTM_acl_after_controller_started(controller_get_interface());
+  BTM_acl_after_controller_started();
   btm_sec_dev_reset();
 
   if (bluetooth::shim::GetController()->SupportsRssiWithInquiryResults()) {
@@ -331,7 +331,7 @@ tBTM_STATUS BTM_SetLocalDeviceName(const char* p_name) {
   if (!p_name || !p_name[0] || (strlen((char*)p_name) > BD_NAME_LEN))
     return (BTM_ILLEGAL_VALUE);
 
-  if (!controller_get_interface()->get_is_ready()) return (BTM_DEV_RESET);
+  if (bluetooth::shim::GetController() == nullptr) return (BTM_DEV_RESET);
   /* Save the device name if local storage is enabled */
   p = (uint8_t*)btm_sec_cb.cfg.bd_name;
   if (p != (uint8_t*)p_name)
@@ -428,7 +428,7 @@ tBTM_STATUS BTM_SetDeviceClass(DEV_CLASS dev_class) {
 
   btm_cb.devcb.dev_class = dev_class;
 
-  if (!controller_get_interface()->get_is_ready()) return (BTM_DEV_RESET);
+  if (bluetooth::shim::GetController() == nullptr) return (BTM_DEV_RESET);
 
   btsnd_hcic_write_dev_class(dev_class);
 
@@ -776,7 +776,7 @@ tBTM_STATUS BTM_BT_Quality_Report_VSE_Register(
 
   if (retval != BTM_SUCCESS) {
     log::warn("Fail to (un)register VSEvents: {}, is_register: {}", retval,
-              logbool(is_register));
+              is_register);
     return retval;
   }
 
@@ -786,7 +786,6 @@ tBTM_STATUS BTM_BT_Quality_Report_VSE_Register(
     btm_cb.p_bqr_report_receiver = nullptr;
   }
 
-  log::info("Success to (un)register VSEvents. is_register: {}",
-            logbool(is_register));
+  log::info("Success to (un)register VSEvents. is_register: {}", is_register);
   return retval;
 }

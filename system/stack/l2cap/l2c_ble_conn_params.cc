@@ -25,9 +25,7 @@
 
 #define LOG_TAG "l2c_ble_conn_params"
 
-#include <base/logging.h>
 #include <bluetooth/log.h>
-#include <log/log.h>
 
 #include "hci/controller_interface.h"
 #include "internal_include/stack_config.h"
@@ -245,9 +243,9 @@ void l2cble_start_conn_update(tL2C_LCB* p_lcb) {
                ->SupportsBleConnectionParametersRequest() &&
            acl_peer_supports_ble_connection_parameters_request(
                p_lcb->remote_bd_addr))) {
-        btsnd_hcic_ble_upd_ll_conn_params(p_lcb->Handle(), min_conn_int,
-                                          max_conn_int, peripheral_latency,
-                                          supervision_tout, 0, 0);
+        acl_ble_connection_parameters_request(p_lcb->Handle(), min_conn_int,
+                                              max_conn_int, peripheral_latency,
+                                              supervision_tout, 0, 0);
         p_lcb->conn_update_mask |= L2C_BLE_UPDATE_PENDING;
       } else {
         l2cu_send_peer_ble_par_req(p_lcb, min_conn_int, max_conn_int,
@@ -265,10 +263,10 @@ void l2cble_start_conn_update(tL2C_LCB* p_lcb) {
                ->SupportsBleConnectionParametersRequest() &&
            acl_peer_supports_ble_connection_parameters_request(
                p_lcb->remote_bd_addr))) {
-        btsnd_hcic_ble_upd_ll_conn_params(p_lcb->Handle(), p_lcb->min_interval,
-                                          p_lcb->max_interval, p_lcb->latency,
-                                          p_lcb->timeout, p_lcb->min_ce_len,
-                                          p_lcb->max_ce_len);
+        acl_ble_connection_parameters_request(
+            p_lcb->Handle(), p_lcb->min_interval, p_lcb->max_interval,
+            p_lcb->latency, p_lcb->timeout, p_lcb->min_ce_len,
+            p_lcb->max_ce_len);
         p_lcb->conn_update_mask |= L2C_BLE_UPDATE_PENDING;
       } else {
         l2cu_send_peer_ble_par_req(p_lcb, p_lcb->min_interval,
@@ -318,42 +316,6 @@ void l2cble_process_conn_update_evt(uint16_t handle, uint8_t status,
                p_lcb->conn_update_mask, p_lcb->subrate_req_mask);
 }
 
-/*******************************************************************************
- *
- * Function         l2cble_process_rc_param_request_evt
- *
- * Description      process LE Remote Connection Parameter Request Event.
- *
- * Returns          void
- *
- ******************************************************************************/
-void l2cble_process_rc_param_request_evt(uint16_t handle, uint16_t int_min,
-                                         uint16_t int_max, uint16_t latency,
-                                         uint16_t timeout) {
-  tL2C_LCB* p_lcb = l2cu_find_lcb_by_handle(handle);
-
-  if (p_lcb != NULL) {
-    p_lcb->min_interval = int_min;
-    p_lcb->max_interval = int_max;
-    p_lcb->latency = latency;
-    p_lcb->timeout = timeout;
-
-    /* if update is enabled, always accept connection parameter update */
-    if ((p_lcb->conn_update_mask & L2C_BLE_CONN_UPDATE_DISABLE) == 0) {
-      btsnd_hcic_ble_rc_param_req_reply(handle, int_min, int_max, latency,
-                                        timeout, 0, 0);
-    } else {
-      log::verbose("L2CAP - LE - update currently disabled");
-      p_lcb->conn_update_mask |= L2C_BLE_NEW_CONN_PARAM;
-      btsnd_hcic_ble_rc_param_req_neg_reply(handle,
-                                            HCI_ERR_UNACCEPT_CONN_INTERVAL);
-    }
-
-  } else {
-    log::warn("No link to update connection parameter");
-  }
-}
-
 void l2cble_use_preferred_conn_params(const RawAddress& bda) {
   tL2C_LCB* p_lcb = l2cu_find_lcb_by_bd_addr(bda, BT_TRANSPORT_LE);
   tBTM_SEC_DEV_REC* p_dev_rec = btm_find_or_alloc_dev(bda);
@@ -385,7 +347,7 @@ void l2cble_use_preferred_conn_params(const RawAddress& bda) {
     p_lcb->timeout = p_dev_rec->conn_params.supervision_tout;
     p_lcb->latency = p_dev_rec->conn_params.peripheral_latency;
 
-    btsnd_hcic_ble_upd_ll_conn_params(
+    acl_ble_connection_parameters_request(
         p_lcb->Handle(), p_dev_rec->conn_params.min_conn_int,
         p_dev_rec->conn_params.max_conn_int,
         p_dev_rec->conn_params.peripheral_latency,

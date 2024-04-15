@@ -74,8 +74,7 @@ import java.util.Objects;
 import java.util.Scanner;
 
 final class A2dpStateMachine extends StateMachine {
-    private static final boolean DBG = true;
-    private static final String TAG = "A2dpStateMachine";
+    private static final String TAG = A2dpStateMachine.class.getSimpleName();
 
     static final int CONNECT = 1;
     static final int DISCONNECT = 2;
@@ -284,7 +283,8 @@ final class A2dpStateMachine extends StateMachine {
                         result,
                         mLastConnectionState,
                         BluetoothProfile.STATE_DISCONNECTED,
-                        BluetoothProtoEnums.REASON_UNEXPECTED_STATE);
+                        BluetoothProtoEnums.REASON_UNEXPECTED_STATE,
+                        MetricsLogger.getInstance().getRemoteDeviceInfoProto(mDevice));
             }
         }
     }
@@ -631,7 +631,8 @@ final class A2dpStateMachine extends StateMachine {
                         BluetoothProtoEnums.RESULT_SUCCESS,
                         mLastConnectionState,
                         BluetoothProfile.STATE_CONNECTED,
-                        BluetoothProtoEnums.REASON_SUCCESS);
+                        BluetoothProtoEnums.REASON_SUCCESS,
+                        MetricsLogger.getInstance().getRemoteDeviceInfoProto(mDevice));
             }
         }
     }
@@ -675,15 +676,17 @@ final class A2dpStateMachine extends StateMachine {
             mCodecStatus = newCodecStatus;
         }
 
-        if (DBG) {
+        // The following is a large enough debug operation such that we want to guard it was an
+        // isLoggable check
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "A2DP Codec Config: " + prevCodecConfig + "->"
                     + newCodecStatus.getCodecConfig());
             for (BluetoothCodecConfig codecConfig :
-                     newCodecStatus.getCodecsLocalCapabilities()) {
+                    newCodecStatus.getCodecsLocalCapabilities()) {
                 Log.d(TAG, "A2DP Codec Local Capability: " + codecConfig);
             }
             for (BluetoothCodecConfig codecConfig :
-                     newCodecStatus.getCodecsSelectableCapabilities()) {
+                    newCodecStatus.getCodecsSelectableCapabilities()) {
                 Log.d(TAG, "A2DP Codec Selectable Capability: " + codecConfig);
             }
         }
@@ -740,8 +743,8 @@ final class A2dpStateMachine extends StateMachine {
         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT
                         | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
         mA2dpService.handleConnectionStateChanged(mDevice, prevState, newState);
-        Utils.sendBroadcast(mA2dpService, intent, BLUETOOTH_CONNECT,
-                Utils.getTempAllowlistBroadcastOptions());
+        mA2dpService.sendBroadcast(
+                intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastOptions().toBundle());
     }
 
     private void broadcastAudioState(int newState, int prevState) {
@@ -752,8 +755,8 @@ final class A2dpStateMachine extends StateMachine {
         intent.putExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, prevState);
         intent.putExtra(BluetoothProfile.EXTRA_STATE, newState);
         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-        Utils.sendBroadcast(mA2dpService, intent, BLUETOOTH_CONNECT,
-                Utils.getTempAllowlistBroadcastOptions());
+        mA2dpService.sendBroadcast(
+                intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastOptions().toBundle());
     }
 
     @Override
@@ -872,8 +875,6 @@ final class A2dpStateMachine extends StateMachine {
 
     @Override
     protected void log(String msg) {
-        if (DBG) {
-            super.log(msg);
-        }
+        super.log(msg);
     }
 }

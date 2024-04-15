@@ -36,8 +36,11 @@
 #endif
 
 #include <android_bluetooth_flags.h>
+#include <bluetooth/log.h>
 
+#include "common/strings.h"
 #include "devices.h"
+#include "le_audio_log_history.h"
 #include "le_audio_types.h"
 
 namespace bluetooth::le_audio {
@@ -54,8 +57,8 @@ class LeAudioDeviceGroup {
 
     types::CigState GetState(void) const { return state_; }
     void SetState(bluetooth::le_audio::types::CigState state) {
-      LOG_VERBOSE("%s -> %s", bluetooth::common::ToString(state_).c_str(),
-                  bluetooth::common::ToString(state).c_str());
+      log::verbose("{} -> {}", bluetooth::common::ToString(state_),
+                   bluetooth::common::ToString(state));
       state_ = state;
     }
 
@@ -72,6 +75,12 @@ class LeAudioDeviceGroup {
     LeAudioDeviceGroup* group_;
     types::CigState state_;
   } cig;
+
+  bool IsGroupConfiguredTo(
+      const set_configurations::AudioSetConfiguration& cfg) {
+    if (!stream_conf.conf) return false;
+    return cfg == *stream_conf.conf;
+  }
 
   /* Current configuration strategy - recalculated on demand */
   mutable std::optional<types::LeAudioConfigurationStrategy> strategy_ =
@@ -201,14 +210,15 @@ class LeAudioDeviceGroup {
   bool GetPresentationDelay(uint32_t* delay, uint8_t direction) const;
   uint16_t GetRemoteDelay(uint8_t direction) const;
   bool UpdateAudioContextAvailability(void);
-  bool UpdateAudioSetConfigurationCache(types::LeAudioContextType ctx_type);
+  bool UpdateAudioSetConfigurationCache(
+      types::LeAudioContextType ctx_type) const;
   bool ReloadAudioLocations(void);
   bool ReloadAudioDirections(void);
   std::shared_ptr<const set_configurations::AudioSetConfiguration>
   GetActiveConfiguration(void) const;
   bool IsPendingConfiguration(void) const;
   std::shared_ptr<const set_configurations::AudioSetConfiguration>
-  GetConfiguration(types::LeAudioContextType ctx_type);
+  GetConfiguration(types::LeAudioContextType ctx_type) const;
   std::shared_ptr<const set_configurations::AudioSetConfiguration>
   GetCachedConfiguration(types::LeAudioContextType ctx_type) const;
   void InvalidateCachedConfigurations(void);
@@ -222,10 +232,9 @@ class LeAudioDeviceGroup {
   bool IsAudioSetConfigurationSupported(
       LeAudioDevice* leAudioDevice,
       const set_configurations::AudioSetConfiguration* audio_set_conf) const;
-  std::optional<LeAudioCodecConfiguration> GetCodecConfigurationByDirection(
-      types::LeAudioContextType group_context_type, uint8_t direction);
-  std::optional<LeAudioCodecConfiguration>
-  GetCachedCodecConfigurationByDirection(
+  LeAudioCodecConfiguration GetAudioSessionCodecConfigForDirection(
+      types::LeAudioContextType group_context_type, uint8_t direction) const;
+  bool HasCodecConfigurationForDirection(
       types::LeAudioContextType group_context_type, uint8_t direction) const;
   bool IsAudioSetConfigurationAvailable(
       types::LeAudioContextType group_context_type);
@@ -238,9 +247,9 @@ class LeAudioDeviceGroup {
 
   inline types::AseState GetState(void) const { return current_state_; }
   void SetState(types::AseState state) {
-    LOG_INFO(" current state: %s, new state %s, in_transition_ %d",
-             bluetooth::common::ToString(current_state_).c_str(),
-             bluetooth::common::ToString(state).c_str(), in_transition_);
+    log::info("current state: {}, new state {}, in_transition_ {}",
+              bluetooth::common::ToString(current_state_),
+              bluetooth::common::ToString(state), in_transition_);
     LeAudioLogHistory::Get()->AddLogHistory(
         kLogStateMachineTag, group_id_, RawAddress::kEmpty, kLogStateChangedOp,
         bluetooth::common::ToString(current_state_) + "->" +
@@ -249,7 +258,7 @@ class LeAudioDeviceGroup {
 
     if (target_state_ == current_state_) {
       in_transition_ = false;
-      LOG_INFO("In transition flag cleared");
+      log::info("In transition flag cleared");
     }
   }
 
@@ -261,9 +270,9 @@ class LeAudioDeviceGroup {
     return notify_streaming_when_cises_are_ready_;
   }
   void SetTargetState(types::AseState state) {
-    LOG_INFO("target state: %s, new target state: %s, in_transition_ %d",
-             bluetooth::common::ToString(target_state_).c_str(),
-             bluetooth::common::ToString(state).c_str(), in_transition_);
+    log::info("target state: {}, new target state: {}, in_transition_ {}",
+              bluetooth::common::ToString(target_state_),
+              bluetooth::common::ToString(state), in_transition_);
     LeAudioLogHistory::Get()->AddLogHistory(
         kLogStateMachineTag, group_id_, RawAddress::kEmpty,
         kLogTargetStateChangedOp,
@@ -273,7 +282,7 @@ class LeAudioDeviceGroup {
     target_state_ = state;
 
     in_transition_ = target_state_ != current_state_;
-    LOG_INFO("In transition flag  = %d", in_transition_);
+    log::info("In transition flag  = {}", in_transition_);
   }
 
   /* Returns context types for which support was recently added or removed */
@@ -308,25 +317,23 @@ class LeAudioDeviceGroup {
   inline void SetAvailableContexts(
       types::BidirectionalPair<types::AudioContexts> new_contexts) {
     group_available_contexts_ = new_contexts;
-    LOG_DEBUG(
-        " group id: %d, available contexts sink: %s, available contexts "
-        "source: "
-        "%s",
-        group_id_, group_available_contexts_.sink.to_string().c_str(),
-        group_available_contexts_.source.to_string().c_str());
+    log::debug(
+        "group id: {}, available contexts sink: {}, available contexts source: "
+        "{}",
+        group_id_, group_available_contexts_.sink.to_string(),
+        group_available_contexts_.source.to_string());
   }
 
   types::AudioContexts GetAvailableContexts(
       int direction = types::kLeAudioDirectionBoth) const {
-    ASSERT_LOG(direction <= (types::kLeAudioDirectionBoth),
-               "Invalid direction used.");
+    log::assert_that(direction <= (types::kLeAudioDirectionBoth),
+                     "Invalid direction used.");
     if (direction < types::kLeAudioDirectionBoth) {
-      LOG_DEBUG(
-          " group id: %d, available contexts sink: %s, available contexts "
-          "source: "
-          "%s",
-          group_id_, group_available_contexts_.sink.to_string().c_str(),
-          group_available_contexts_.source.to_string().c_str());
+      log::debug(
+          "group id: {}, available contexts sink: {}, available contexts "
+          "source: {}",
+          group_id_, group_available_contexts_.sink.to_string(),
+          group_available_contexts_.source.to_string());
       return group_available_contexts_.get(direction);
     } else {
       return types::get_bidirectional(group_available_contexts_);
@@ -389,7 +396,7 @@ class LeAudioDeviceGroup {
    */
   const set_configurations::AudioSetConfiguration*
   FindFirstSupportedConfiguration(
-      types::LeAudioContextType context_type,
+      const CodecManager::UnicastConfigurationRequirements& requirements,
       const set_configurations::AudioSetConfigurations* confs) const;
 
  private:
@@ -406,7 +413,7 @@ class LeAudioDeviceGroup {
       const types::BidirectionalPair<std::vector<uint8_t>>& ccid_lists);
   bool IsAudioSetConfigurationSupported(
       const set_configurations::AudioSetConfiguration* audio_set_configuration,
-      types::LeAudioContextType context_type,
+      const CodecManager::UnicastConfigurationRequirements& requirements,
       types::LeAudioConfigurationStrategy required_snk_strategy) const;
   uint32_t GetTransportLatencyUs(uint8_t direction) const;
   bool IsCisPartOfCurrentStream(uint16_t cis_conn_hdl) const;
@@ -431,9 +438,10 @@ class LeAudioDeviceGroup {
    * change. Stored as a pair of (is_valid_cache, configuration*). `pair.first`
    * being `false` means that the cached value should be refreshed.
    */
-  std::map<types::LeAudioContextType,
-           std::pair<bool, const std::shared_ptr<
-                               set_configurations::AudioSetConfiguration>>>
+  mutable std::map<
+      types::LeAudioContextType,
+      std::pair<bool, const std::shared_ptr<
+                          set_configurations::AudioSetConfiguration>>>
       context_to_configuration_cache_map;
 
   types::AseState target_state_;

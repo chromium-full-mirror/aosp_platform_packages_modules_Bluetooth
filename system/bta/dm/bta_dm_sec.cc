@@ -28,7 +28,6 @@
 #include "btif/include/btif_dm.h"
 #include "btif/include/btif_storage.h"
 #include "internal_include/bt_target.h"
-#include "osi/include/osi.h"     // UNUSED_ATTR
 #include "stack/include/bt_dev_class.h"
 #include "stack/include/btm_ble_sec_api_types.h"
 #include "stack/include/btm_client_interface.h"
@@ -124,32 +123,6 @@ void bta_dm_remote_key_missing(const RawAddress bd_addr) {
     tBTA_DM_SEC sec_event;
     sec_event.key_missing.bd_addr = bd_addr;
     bta_dm_sec_cb.p_sec_cback(BTA_DM_KEY_MISSING_EVT, &sec_event);
-  }
-}
-
-/*******************************************************************************
- *
- * Function         bta_dm_add_device
- *
- * Description      This function adds a Link Key to an security database entry.
- *                  It is normally called during host startup to restore all
- *                  required information stored in the NVRAM.
- ******************************************************************************/
-void bta_dm_add_device(std::unique_ptr<tBTA_DM_API_ADD_DEVICE> msg) {
-  DEV_CLASS dc = kDevClassEmpty;
-  LinkKey* p_lc = NULL;
-
-  /* If not all zeros, the device class has been specified */
-  if (msg->dc_known) dc = msg->dc;
-
-  if (msg->link_key_known) p_lc = &msg->link_key;
-
-  auto add_result = get_btm_client_interface().security.BTM_SecAddDevice(
-      msg->bd_addr, dc, msg->bd_name, nullptr, p_lc, msg->key_type,
-      msg->pin_length);
-  if (!add_result) {
-    log::error("Error adding device:{}",
-               ADDRESS_TO_LOGGABLE_CSTR(msg->bd_addr));
   }
 }
 
@@ -331,7 +304,7 @@ static uint8_t bta_dm_pin_cback(const RawAddress& bd_addr, DEV_CLASS dev_class,
  *
  ******************************************************************************/
 static uint8_t bta_dm_new_link_key_cback(const RawAddress& bd_addr,
-                                         UNUSED_ATTR DEV_CLASS dev_class,
+                                         DEV_CLASS /* dev_class */,
                                          BD_NAME bd_name, const LinkKey& key,
                                          uint8_t key_type, bool is_ctkd) {
   tBTA_DM_SEC sec_event;
@@ -377,9 +350,10 @@ static uint8_t bta_dm_new_link_key_cback(const RawAddress& bd_addr,
  * Returns          void
  *
  ******************************************************************************/
-static void bta_dm_authentication_complete_cback(
-    const RawAddress& bd_addr, UNUSED_ATTR DEV_CLASS dev_class, BD_NAME bd_name,
-    tHCI_REASON reason) {
+static void bta_dm_authentication_complete_cback(const RawAddress& bd_addr,
+                                                 DEV_CLASS /* dev_class */,
+                                                 BD_NAME bd_name,
+                                                 tHCI_REASON reason) {
   if (reason != HCI_SUCCESS) {
     if (bta_dm_sec_cb.p_sec_cback) {
       // Build out the security event data structure
@@ -844,7 +818,7 @@ static uint8_t bta_dm_ble_smp_cback(tBTM_LE_EVT event, const RawAddress& bda,
  *
  ******************************************************************************/
 void bta_dm_encrypt_cback(const RawAddress* bd_addr, tBT_TRANSPORT transport,
-                          UNUSED_ATTR void* p_ref_data, tBTM_STATUS result) {
+                          void* /* p_ref_data */, tBTM_STATUS result) {
   tBTA_DM_ENCRYPT_CBACK* p_callback = nullptr;
   tBTA_DM_PEER_DEVICE* device = find_connected_device(*bd_addr, transport);
   if (device != nullptr) {

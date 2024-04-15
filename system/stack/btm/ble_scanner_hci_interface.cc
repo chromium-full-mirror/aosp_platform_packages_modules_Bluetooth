@@ -18,11 +18,9 @@
 #include "ble_scanner_hci_interface.h"
 
 #include <base/functional/bind.h>
-#include <base/logging.h>
 #include <bluetooth/log.h>
 
 #include "btm_api.h"
-#include "device/include/controller.h"
 #include "hci/controller_interface.h"
 #include "main/shim/entry.h"
 #include "stack/include/bt_types.h"
@@ -38,7 +36,7 @@ static void status_callback(base::Callback<void(uint8_t)> cb, uint8_t* data,
                             uint16_t len) {
   uint8_t status;
 
-  LOG_ASSERT(len == 1) << "Received bad response length: " << len;
+  log::assert_that(len == 1, "Received bad response length: {}", len);
   STREAM_TO_UINT8(status, data);
 
   cb.Run(status);
@@ -49,12 +47,13 @@ static void status_handle_callback(base::Callback<void(uint8_t, uint16_t)> cb,
   uint8_t status;
   uint16_t handle = HCI_INVALID_HANDLE;
 
-  LOG_ASSERT((len > 0) && (len < 4)) << "Received bad response length: " << len;
+  log::assert_that((len > 0) && (len < 4), "Received bad response length: {}",
+                   len);
   uint8_t* pp = data;
   STREAM_TO_UINT8(status, pp);
 
   if (status == HCI_SUCCESS) {
-    LOG_ASSERT(len == 3) << "Received bad response length: " << len;
+    log::assert_that(len == 3, "Received bad response length: {}", len);
 
     STREAM_TO_UINT16(handle, pp);
     handle = handle & 0x0EFF;
@@ -110,7 +109,7 @@ class BleScannerImplBase : public BleScannerHciInterface {
   void PeriodicAdvertiserListGetSize(
       BleScannerHciInterface::list_size_cb command_complete) override {
     command_complete.Run(
-        controller_get_interface()->get_ble_periodic_advertiser_list_size());
+        bluetooth::shim::GetController()->GetLePeriodicAdvertiserListSize());
   }
 
   void PeriodicAdvertiserListAddDevice(uint8_t adv_addr_type,
@@ -302,9 +301,9 @@ class BleScannerCompleteImpl : public BleScannerListImpl,
 }  // namespace
 
 void BleScannerHciInterface::Initialize() {
-  LOG_ASSERT(instance == nullptr) << "Was already initialized.";
+  log::assert_that(instance == nullptr, "Was already initialized.");
 
-  if ((controller_get_interface()->get_ble_periodic_advertiser_list_size()) &&
+  if ((bluetooth::shim::GetController()->GetLePeriodicAdvertiserListSize()) &&
       (bluetooth::shim::GetController()
            ->SupportsBlePeriodicAdvertisingSyncTransferSender())) {
     log::info("Advertiser list in controller can be used");
@@ -314,8 +313,8 @@ void BleScannerHciInterface::Initialize() {
                  ->SupportsBlePeriodicAdvertisingSyncTransferSender()) {
     log::info("Periodic Adv Sync Transfer Sender role is supported");
     instance = new BleScannerSyncTransferImpl();
-  } else if (controller_get_interface()
-                 ->get_ble_periodic_advertiser_list_size()) {
+  } else if (bluetooth::shim::GetController()
+                 ->GetLePeriodicAdvertiserListSize()) {
     log::info("Periodic Adv Sync Transfer Recipient role is supported");
     instance = new BleScannerListImpl();
   }

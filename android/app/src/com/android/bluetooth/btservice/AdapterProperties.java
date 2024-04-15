@@ -75,8 +75,6 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 class AdapterProperties {
-    private static final boolean DBG = true;
-    private static final boolean VDBG = false;
     private static final String TAG = "AdapterProperties";
 
     private static final String MAX_CONNECTED_AUDIO_DEVICES_PROPERTY =
@@ -674,7 +672,7 @@ class AdapterProperties {
         String currentAddress = currentDevice.getAddress();
         String currentBrEdrAddress =
                 Flags.identityAddressNullIfUnknown()
-                        ? Utils.getBrEdrAddress(currentDevice)
+                        ? Utils.getBrEdrAddress(currentDevice, mService)
                         : mService.getIdentityAddress(currentAddress);
         debugLog("cleanupPrevBondRecordsFor: " + currentDevice);
         if (currentBrEdrAddress == null) {
@@ -685,7 +683,7 @@ class AdapterProperties {
             String address = device.getAddress();
             String brEdrAddress =
                     Flags.identityAddressNullIfUnknown()
-                            ? Utils.getBrEdrAddress(device)
+                            ? Utils.getBrEdrAddress(device, mService)
                             : mService.getIdentityAddress(address);
             if (currentBrEdrAddress.equals(brEdrAddress) && !currentAddress.equals(address)) {
                 if (mService.getNative()
@@ -760,10 +758,16 @@ class AdapterProperties {
         BluetoothDevice device = connIntent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
         int state = connIntent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1);
         int metricId = mService.getMetricId(device);
+        byte[] remoteDeviceInfoBytes = MetricsLogger.getInstance().getRemoteDeviceInfoProto(device);
         if (state == BluetoothProfile.STATE_CONNECTING) {
             BluetoothStatsLog.write(BluetoothStatsLog.BLUETOOTH_DEVICE_NAME_REPORTED,
                     metricId, device.getName());
-            MetricsLogger.getInstance().logSanitizedBluetoothDeviceName(metricId, device.getName());
+            BluetoothStatsLog.write(
+                    BluetoothStatsLog.REMOTE_DEVICE_INFORMATION_WITH_METRIC_ID,
+                    metricId,
+                    remoteDeviceInfoBytes);
+            MetricsLogger.getInstance()
+                    .logAllowlistedDeviceNameHash(metricId, device.getName(), true);
         }
         BluetoothStatsLog.write(BluetoothStatsLog.BLUETOOTH_CONNECTION_STATE_CHANGED, state,
                 0 /* deprecated */, profile, mService.obfuscateAddress(device),
@@ -825,8 +829,11 @@ class AdapterProperties {
                             + BluetoothProfile.getProfileName(profile)
                             + ", device=" + device + ", " + prevState + " -> " + state);
                 }
-                mService.sendBroadcastAsUser(intent, UserHandle.ALL, BLUETOOTH_CONNECT,
-                        Utils.getTempAllowlistBroadcastOptions());
+                mService.sendBroadcastAsUser(
+                        intent,
+                        UserHandle.ALL,
+                        BLUETOOTH_CONNECT,
+                        Utils.getTempBroadcastOptions().toBundle());
             }
         }
     }
@@ -998,8 +1005,11 @@ class AdapterProperties {
                         intent = new Intent(BluetoothAdapter.ACTION_LOCAL_NAME_CHANGED);
                         intent.putExtra(BluetoothAdapter.EXTRA_LOCAL_NAME, mName);
                         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-                        mService.sendBroadcastAsUser(intent, UserHandle.ALL,
-                                BLUETOOTH_CONNECT, Utils.getTempAllowlistBroadcastOptions());
+                        mService.sendBroadcastAsUser(
+                                intent,
+                                UserHandle.ALL,
+                                BLUETOOTH_CONNECT,
+                                Utils.getTempBroadcastOptions().toBundle());
                         debugLog("Name is: " + mName);
                         break;
                     case AbstractionLayer.BT_PROPERTY_BDADDR:
@@ -1008,8 +1018,11 @@ class AdapterProperties {
                         intent = new Intent(BluetoothAdapter.ACTION_BLUETOOTH_ADDRESS_CHANGED);
                         intent.putExtra(BluetoothAdapter.EXTRA_BLUETOOTH_ADDRESS, address);
                         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-                        mService.sendBroadcastAsUser(intent, UserHandle.ALL,
-                                BLUETOOTH_CONNECT, Utils.getTempAllowlistBroadcastOptions());
+                        mService.sendBroadcastAsUser(
+                                intent,
+                                UserHandle.ALL,
+                                BLUETOOTH_CONNECT,
+                                Utils.getTempBroadcastOptions().toBundle());
                         break;
                     case AbstractionLayer.BT_PROPERTY_CLASS_OF_DEVICE:
                         if (val == null || val.length != 3) {
@@ -1029,8 +1042,8 @@ class AdapterProperties {
                         intent = new Intent(BluetoothAdapter.ACTION_SCAN_MODE_CHANGED);
                         intent.putExtra(BluetoothAdapter.EXTRA_SCAN_MODE, mScanMode);
                         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-                        Utils.sendBroadcast(mService, intent, BLUETOOTH_SCAN,
-                                Utils.getTempAllowlistBroadcastOptions());
+                        mService.sendBroadcast(
+                                intent, BLUETOOTH_SCAN, Utils.getTempBroadcastOptions().toBundle());
                         debugLog("Scan Mode:" + mScanMode);
                         break;
                     case AbstractionLayer.BT_PROPERTY_UUIDS:
@@ -1205,14 +1218,14 @@ class AdapterProperties {
                 mService.clearDiscoveringPackages();
                 mDiscoveryEndMs = System.currentTimeMillis();
                 intent = new Intent(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
-                Utils.sendBroadcast(mService, intent, BLUETOOTH_SCAN,
-                        getBroadcastOptionsForDiscoveryFinished());
+                mService.sendBroadcast(
+                        intent, BLUETOOTH_SCAN, getBroadcastOptionsForDiscoveryFinished());
             } else if (state == AbstractionLayer.BT_DISCOVERY_STARTED) {
                 mDiscovering = true;
                 mDiscoveryEndMs = System.currentTimeMillis() + DEFAULT_DISCOVERY_TIMEOUT_MS;
                 intent = new Intent(BluetoothAdapter.ACTION_DISCOVERY_STARTED);
-                Utils.sendBroadcast(mService, intent, BLUETOOTH_SCAN,
-                        Utils.getTempAllowlistBroadcastOptions());
+                mService.sendBroadcast(
+                        intent, BLUETOOTH_SCAN, Utils.getTempBroadcastOptions().toBundle());
             }
         }
     }
@@ -1320,15 +1333,11 @@ class AdapterProperties {
     }
 
     private static void infoLog(String msg) {
-        if (VDBG) {
-            Log.i(TAG, msg);
-        }
+        Log.i(TAG, msg);
     }
 
     private static void debugLog(String msg) {
-        if (DBG) {
-            Log.d(TAG, msg);
-        }
+        Log.d(TAG, msg);
     }
 
     private static void errorLog(String msg) {

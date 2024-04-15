@@ -36,7 +36,6 @@
 #include "gatt/database_builder.h"
 #include "hardware/bt_gatt_types.h"
 #include "has_types.h"
-#include "mock_controller.h"
 #include "mock_csis_client.h"
 #include "stack/include/bt_uuid16.h"
 #include "test/common/mock_functions.h"
@@ -82,7 +81,7 @@ using ::testing::WithArg;
 // }
 
 RawAddress GetTestAddress(int index) {
-  CHECK_LT(index, UINT8_MAX);
+  EXPECT_LT(index, UINT8_MAX);
   RawAddress result = {
       {0xC0, 0xDE, 0xC0, 0xDE, 0x00, static_cast<uint8_t>(index)}};
   return result;
@@ -656,7 +655,6 @@ class HasClientTestBase : public ::testing::Test {
 
   void SetUp(void) override {
     reset_mock_function_count_map();
-    controller::SetMockControllerInterface(&controller_interface_);
     bluetooth::manager::SetMockBtmInterface(&btm_interface);
     bluetooth::storage::SetMockBtifStorageInterface(&btif_storage_interface_);
     gatt::SetMockBtaGattInterface(&gatt_interface);
@@ -664,6 +662,9 @@ class HasClientTestBase : public ::testing::Test {
     callbacks.reset(new MockHasCallbacks());
 
     encryption_result = true;
+
+    ON_CALL(btm_interface, IsLinkKeyKnown(_, _))
+        .WillByDefault(DoAll(Return(true)));
 
     ON_CALL(btm_interface, SetEncryption(_, _, _, _, _))
         .WillByDefault(
@@ -761,7 +762,6 @@ class HasClientTestBase : public ::testing::Test {
     gatt::SetMockBtaGattInterface(nullptr);
     bluetooth::storage::SetMockBtifStorageInterface(nullptr);
     bluetooth::manager::SetMockBtmInterface(nullptr);
-    controller::SetMockControllerInterface(nullptr);
     callbacks.reset();
 
     current_peer_active_preset_idx_.clear();
@@ -956,7 +956,7 @@ class HasClientTestBase : public ::testing::Test {
       std::vector<uint8_t> value, bool indicate, int index, int num_of_indices,
       GATT_WRITE_OP_CB cb, void* cb_data) {
     auto presets = current_peer_presets_.at(conn_id);
-    LOG_ASSERT(!presets.empty()) << __func__ << " Mocking error!";
+    log::assert_that(!presets.empty(), "Mocking error!");
 
     /* Index is a start index, not necessary is a valid index for the
      * peer device */
@@ -998,7 +998,7 @@ class HasClientTestBase : public ::testing::Test {
                                       uint8_t index, GATT_WRITE_OP_CB cb,
                                       void* cb_data) {
     auto presets = current_peer_presets_.at(conn_id);
-    LOG_ASSERT(!presets.empty()) << __func__ << " Mocking error!";
+    log::assert_that(!presets.empty(), "Mocking error!");
 
     auto preset = presets.find(index);
     if (preset == presets.end()) {
@@ -1172,7 +1172,6 @@ class HasClientTestBase : public ::testing::Test {
   std::unique_ptr<MockHasCallbacks> callbacks;
   bluetooth::manager::MockBtmInterface btm_interface;
   bluetooth::storage::MockBtifStorageInterface btif_storage_interface_;
-  controller::MockControllerInterface controller_interface_;
   gatt::MockBtaGattInterface gatt_interface;
   gatt::MockBtaGattQueue gatt_queue;
   MockCsisClient mock_csis_client_module_;
@@ -1233,6 +1232,27 @@ TEST_F(HasClientTest, test_connect) { TestConnect(GetTestAddress(1)); }
 TEST_F(HasClientTest, test_add_from_storage) {
   TestAddFromStorage(GetTestAddress(1), 0, true);
   TestAddFromStorage(GetTestAddress(2), 0, false);
+}
+
+TEST_F(HasClientTest, test_connect_after_remove) {
+  const RawAddress test_address = GetTestAddress(1);
+
+  /* Override the default action to prevent us sendind the connected event */
+  EXPECT_CALL(gatt_interface,
+              Open(gatt_if, test_address, BTM_BLE_DIRECT_CONNECTION, _))
+      .WillOnce(Return());
+  HasClient::Get()->Connect(test_address);
+  TestDisconnect(test_address, GATT_INVALID_CONN_ID);
+  Mock::VerifyAndClearExpectations(&gatt_interface);
+
+  EXPECT_CALL(*callbacks,
+              OnConnectionState(ConnectionState::DISCONNECTED, test_address));
+
+  // Device has no Link Key
+  ON_CALL(btm_interface, IsLinkKeyKnown(test_address, _))
+      .WillByDefault(DoAll(Return(true)));
+  HasClient::Get()->Connect(test_address);
+  Mock::VerifyAndClearExpectations(&callbacks);
 }
 
 TEST_F(HasClientTest, test_disconnect_non_connected) {
@@ -2169,10 +2189,16 @@ TEST_F(HasClientTest, test_presets_changed_generic_update_add_and_delete) {
   InjectPresetChanged(
       test_conn_id, test_address, false, new_test_preset2, 8 /* prev_index */,
       ::bluetooth::le_audio::has::PresetCtpChangeId::PRESET_GENERIC_UPDATE,
+      false /* is_last */);
+
+  /* Third event deletes preset 1 with the generic update */
+  InjectPresetChanged(
+      test_conn_id, test_address, false, new_test_preset1, 0 /* prev_index */,
+      ::bluetooth::le_audio::has::PresetCtpChangeId::PRESET_GENERIC_UPDATE,
       true /* is_last */);
 
   /* Verify received preset info - expect presets 1, 32 unchanged, 8, 9
-   * updated, and 2, 4, 5 deleted.
+   * updated, and 1, 2, 4, 5 deleted.
    */
   ASSERT_EQ(2u, updated_preset_details.size());
   ASSERT_EQ(new_test_preset1.GetIndex(),
@@ -2188,10 +2214,11 @@ TEST_F(HasClientTest, test_presets_changed_generic_update_add_and_delete) {
   ASSERT_EQ(new_test_preset2.IsWritable(), updated_preset_details[1].writable);
   ASSERT_EQ(new_test_preset2.GetName(), updated_preset_details[1].preset_name);
 
-  ASSERT_EQ(3u, deleted_preset_details.size());
+  ASSERT_EQ(4u, deleted_preset_details.size());
   ASSERT_EQ(2, deleted_preset_details[0].preset_index);
   ASSERT_EQ(4, deleted_preset_details[1].preset_index);
   ASSERT_EQ(5, deleted_preset_details[2].preset_index);
+  ASSERT_EQ(1, deleted_preset_details[3].preset_index);
 }
 
 TEST_F(HasClientTest, test_presets_changed_deleted) {

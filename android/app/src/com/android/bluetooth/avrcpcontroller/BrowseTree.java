@@ -26,6 +26,7 @@ import com.android.bluetooth.Utils;
 import com.google.common.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -50,9 +51,7 @@ import java.util.UUID;
  *          ....
  */
 public class BrowseTree {
-    private static final String TAG = "BrowseTree";
-    private static final boolean DBG = Log.isLoggable(TAG, Log.DEBUG);
-    private static final boolean VDBG = Log.isLoggable(TAG, Log.VERBOSE);
+    private static final String TAG = BrowseTree.class.getSimpleName();
 
     public static final String ROOT = "__ROOT__";
     public static final String UP = "__UP__";
@@ -282,7 +281,7 @@ public class BrowseTree {
         }
 
         synchronized void setCached(boolean cached) {
-            if (DBG) Log.d(TAG, "Set Cache" + cached + "Node" + toString());
+            Log.d(TAG, "Set Cache" + cached + "Node" + toString());
             mCached = cached;
             if (!cached) {
                 for (BrowseNode child : mChildren) {
@@ -368,9 +367,7 @@ public class BrowseTree {
             Log.e(TAG, "folder " + parentID + " not found!");
             return null;
         }
-        if (VDBG) {
-            Log.d(TAG, "Size" + mBrowseMap.size());
-        }
+        Log.d(TAG, "Size" + mBrowseMap.size());
         return bn;
     }
 
@@ -419,7 +416,7 @@ public class BrowseTree {
     synchronized boolean setCurrentAddressedPlayer(String uid) {
         BrowseNode bn = mBrowseMap.get(uid);
         if (bn == null) {
-            if (DBG) Log.d(TAG, "Setting an unknown addressed player, ignoring bn " + uid);
+            Log.w(TAG, "Setting an unknown addressed player, ignoring bn " + uid);
             mRootNode.setCached(false);
             mRootNode.mChildren.add(mNowPlayingNode);
             mBrowseMap.put(NOW_PLAYING_PREFIX, mNowPlayingNode);
@@ -451,18 +448,14 @@ public class BrowseTree {
         }
     }
 
-    /**
-     * Get a list of items using the piece of cover art identified by the given handle.
-     */
-    synchronized ArrayList<String> getNodesUsingCoverArt(String handle) {
-        if (!mCoverArtMap.containsKey(handle)) return new ArrayList<String>();
-        return (ArrayList<String>) mCoverArtMap.get(handle).clone();
+    /** Get a list of items using the piece of cover art identified by the given handle. */
+    synchronized List<String> getNodesUsingCoverArt(String handle) {
+        if (!mCoverArtMap.containsKey(handle)) return Collections.emptyList();
+        return (List<String>) mCoverArtMap.get(handle).clone();
     }
 
-    /**
-     * Get a list of Cover Art UUIDs that are no longer being used by the tree. Clear that list.
-     */
-    synchronized ArrayList<String> getAndClearUnusedCoverArt() {
+    /** Get a list of Cover Art UUIDs that are no longer being used by the tree. Clear that list. */
+    synchronized List<String> getAndClearUnusedCoverArt() {
         ArrayList<String> unused = new ArrayList<String>();
         for (String uuid : mCoverArtMap.keySet()) {
             if (mCoverArtMap.get(uuid).isEmpty()) {
@@ -481,8 +474,8 @@ public class BrowseTree {
      * be notified of the change.
      */
     synchronized Set<BrowseNode> notifyImageDownload(String uuid, Uri uri) {
-        if (DBG) Log.d(TAG, "Received downloaded image handle to cascade to BrowseNodes using it");
-        ArrayList<String> nodes = getNodesUsingCoverArt(uuid);
+        Log.d(TAG, "Received downloaded image handle to cascade to BrowseNodes using it");
+        List<String> nodes = getNodesUsingCoverArt(uuid);
         HashSet<BrowseNode> parents = new HashSet<BrowseNode>();
         for (String nodeId : nodes) {
             BrowseNode node = findBrowseNodeByID(nodeId);
@@ -550,17 +543,15 @@ public class BrowseTree {
     static BrowseNode getEldestChild(BrowseNode ancestor, BrowseNode target) {
         // ancestor is an ancestor of target
         BrowseNode descendant = target;
-        if (DBG) {
-            Log.d(TAG, "NAVIGATING ancestor" + ancestor.toString() + "Target"
-                    + target.toString());
-        }
+        Log.d(TAG, "NAVIGATING ancestor" + ancestor.toString() + "Target"
+                + target.toString());
         while (!ancestor.equals(descendant.mParent)) {
             descendant = descendant.mParent;
             if (descendant == null) {
                 return null;
             }
         }
-        if (DBG) Log.d(TAG, "NAVIGATING Descendant" + descendant.toString());
+        Log.d(TAG, "NAVIGATING Descendant" + descendant.toString());
         return descendant;
     }
 }

@@ -24,10 +24,8 @@
 
 #define LOG_TAG "l2c_ble"
 
-#include <base/logging.h>
 #include <base/strings/stringprintf.h>
 #include <bluetooth/log.h>
-#include <log/log.h>
 
 #ifdef __ANDROID__
 #include <android/sysprop/BluetoothProperties.sysprop.h>
@@ -35,17 +33,12 @@
 
 #include "btif/include/core_callbacks.h"
 #include "btif/include/stack_manager_t.h"
-#include "device/include/controller.h"
 #include "hci/controller_interface.h"
 #include "internal_include/bt_target.h"
-#include "internal_include/stack_config.h"
-#include "main/shim/acl_api.h"
 #include "main/shim/entry.h"
-#include "os/log.h"
 #include "osi/include/allocator.h"
 #include "osi/include/properties.h"
 #include "stack/btm/btm_ble_sec.h"
-#include "stack/btm/btm_dev.h"
 #include "stack/btm/btm_int_types.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/btm/btm_sec_int_types.h"

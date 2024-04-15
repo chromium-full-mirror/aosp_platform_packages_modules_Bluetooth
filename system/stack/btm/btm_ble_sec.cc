@@ -19,6 +19,7 @@
 
 #include "stack/btm/btm_ble_sec.h"
 
+#include <android_bluetooth_sysprop.h>
 #include <base/strings/stringprintf.h>
 #include <bluetooth/log.h>
 
@@ -28,7 +29,6 @@
 
 #include "btif/include/btif_storage.h"
 #include "crypto_toolbox/crypto_toolbox.h"
-#include "device/include/controller.h"
 #include "device/include/interop.h"
 #include "device/include/interop_config.h"
 #include "hci/controller_interface.h"
@@ -605,8 +605,9 @@ tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr,
 
   uint16_t tx_time = BTM_BLE_DATA_TX_TIME_MAX_LEGACY;
 
-  if (controller_get_interface()->get_bt_version()->hci_version >=
-      HCI_PROTO_VERSION_5_0)
+  if (bluetooth::shim::GetController()
+          ->GetLocalVersionInformation()
+          .hci_version_ >= bluetooth::hci::HciVersion::V_5_0)
     tx_time = BTM_BLE_DATA_TX_TIME_MAX;
 
   if (!BTM_IsAclConnectionUp(bd_addr, BT_TRANSPORT_LE)) {
@@ -622,11 +623,13 @@ tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr,
     return BTM_ILLEGAL_VALUE;
   }
 
-  tx_pdu_length = std::min<uint16_t>(
-      tx_pdu_length,
-      controller_get_interface()->get_ble_maximum_tx_data_length());
-  tx_time = std::min<uint16_t>(
-      tx_time, controller_get_interface()->get_ble_maximum_tx_time());
+  tx_pdu_length =
+      std::min<uint16_t>(tx_pdu_length, bluetooth::shim::GetController()
+                                            ->GetLeMaximumDataLength()
+                                            .supported_max_tx_octets_);
+  tx_time = std::min<uint16_t>(tx_time, bluetooth::shim::GetController()
+                                            ->GetLeMaximumDataLength()
+                                            .supported_max_tx_time_);
 
   btsnd_hcic_ble_set_data_length(hci_handle, tx_pdu_length, tx_time);
   p_dev_rec->set_suggested_tx_octect(tx_pdu_length);
@@ -1232,8 +1235,16 @@ tBTM_STATUS btm_ble_start_encrypt(const RawAddress& bda, bool use_stk,
     return BTM_WRONG_MODE;
   }
 
-  if (p_rec->sec_rec.is_security_state_encrypting()) {
-    log::warn("Link Encryption is active, Busy!");
+  if (p_rec->sec_rec.is_security_state_le_encrypting()) {
+    log::warn("LE link encryption is active, Busy!");
+    return BTM_BUSY;
+  }
+
+  // Some controllers may not like encrypting both transports at the same time
+  bool allow_le_enc_with_bredr = GET_SYSPROP(Ble, allow_enc_with_bredr, false);
+  if (!allow_le_enc_with_bredr &&
+      p_rec->sec_rec.is_security_state_bredr_encrypting()) {
+    log::warn("BR/EDR link encryption is active, Busy!");
     return BTM_BUSY;
   }
 
@@ -1402,8 +1413,8 @@ void btm_ble_ltk_request_reply(const RawAddress& bda, bool use_stk,
    * end up here. We will eventually consolidate both entries, this is to avoid
    * race conditions. */
 
-  ASSERT_LOG(p_rec->sec_rec.ble_keys.key_type & BTM_LE_KEY_LENC,
-             "local enccryption key not present");
+  log::assert_that(p_rec->sec_rec.ble_keys.key_type & BTM_LE_KEY_LENC,
+                   "local enccryption key not present");
   p_cb->key_size = p_rec->sec_rec.ble_keys.key_size;
   btsnd_hcic_ble_ltk_req_reply(btm_sec_cb.enc_handle,
                                p_rec->sec_rec.ble_keys.lltk);
@@ -1517,9 +1528,9 @@ static uint8_t btm_ble_br_keys_req(tBTM_SEC_DEV_REC* p_dev_rec,
  * Returns          void
  *
  ******************************************************************************/
-void btm_ble_connected(const RawAddress& bda, uint16_t handle, uint8_t enc_mode,
-                       uint8_t role, tBLE_ADDR_TYPE addr_type,
-                       bool addr_matched,
+void btm_ble_connected(const RawAddress& bda, uint16_t handle,
+                       uint8_t /* enc_mode */, uint8_t role,
+                       tBLE_ADDR_TYPE addr_type, bool addr_matched,
                        bool can_read_discoverable_characteristics) {
   tBTM_SEC_DEV_REC* p_dev_rec = btm_find_or_alloc_dev(bda);
 

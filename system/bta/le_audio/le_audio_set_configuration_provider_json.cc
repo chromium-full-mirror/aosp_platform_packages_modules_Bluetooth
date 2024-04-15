@@ -15,7 +15,7 @@
  *
  */
 
-#include <base/logging.h>
+#include <bluetooth/log.h>
 
 #include <mutex>
 #include <string>
@@ -85,8 +85,9 @@ struct AudioSetConfigurationProviderJson {
   AudioSetConfigurationProviderJson(types::CodecLocation location) {
     dual_bidirection_swb_supported_ = osi_property_get_bool(
         "bluetooth.leaudio.dual_bidirection_swb.supported", false);
-    ASSERT_LOG(LoadContent(kLeAudioSetConfigs, kLeAudioSetScenarios, location),
-               ": Unable to load le audio set configuration files.");
+    log::assert_that(
+        LoadContent(kLeAudioSetConfigs, kLeAudioSetScenarios, location),
+        ": Unable to load le audio set configuration files.");
   }
 
   /* Use the same scenario configurations for different contexts to avoid
@@ -150,17 +151,17 @@ struct AudioSetConfigurationProviderJson {
     if (context_configurations_.count(context_type))
       return &context_configurations_.at(context_type);
 
-    LOG_WARN(": No predefined scenario for the context %d was found.",
-             (int)context_type);
+    log::warn(": No predefined scenario for the context {} was found.",
+              (int)context_type);
 
     auto [it_begin, it_end] = ScenarioToContextTypes(kDefaultScenario);
     if (it_begin != it_end) {
-      LOG_WARN(": Using '%s' scenario by default.", kDefaultScenario);
+      log::warn(": Using '{}' scenario by default.", kDefaultScenario);
       return &context_configurations_.at(it_begin->second);
     }
 
-    LOG_ERROR(
-        ": No valid configuration for the default '%s' scenario, or no audio "
+    log::error(
+        ": No valid configuration for the default '{}' scenario, or no audio "
         "set configurations loaded at all.",
         kDefaultScenario);
     return nullptr;
@@ -222,8 +223,9 @@ struct AudioSetConfigurationProviderJson {
       auto ptr = param->data();
       uint32_t audio_channel_allocation;
 
-      ASSERT_LOG((param->size() == sizeof(audio_channel_allocation)),
-                 "invalid channel allocation value %d", (int)param->size());
+      log::assert_that((param->size() == sizeof(audio_channel_allocation)),
+                       "invalid channel allocation value {}",
+                       (int)param->size());
       STREAM_TO_UINT32(audio_channel_allocation, ptr);
       codec.channel_count_per_iso_stream =
           std::bitset<32>(audio_channel_allocation).count();
@@ -299,7 +301,7 @@ struct AudioSetConfigurationProviderJson {
       std::vector<const fbs::le_audio::CodecConfiguration*>* codec_cfgs,
       std::vector<const fbs::le_audio::QosConfiguration*>* qos_cfgs,
       types::CodecLocation location) {
-    ASSERT_LOG(flat_cfg != nullptr, "flat_cfg cannot be null");
+    log::assert_that(flat_cfg != nullptr, "flat_cfg cannot be null");
     std::string codec_config_key = flat_cfg->codec_config_name()->str();
     auto* qos_config_key_array = flat_cfg->qos_config_name();
 
@@ -319,9 +321,10 @@ struct AudioSetConfigurationProviderJson {
       }
     }
 
-    LOG_INFO("Audio set config %s: codec config %s, qos_sink %s, qos_source %s",
-             flat_cfg->name()->c_str(), codec_config_key.c_str(),
-             qos_sink_key.c_str(), qos_source_key.c_str());
+    log::info(
+        "Audio set config {}: codec config {}, qos_sink {}, qos_source {}",
+        flat_cfg->name()->c_str(), codec_config_key, qos_sink_key,
+        qos_source_key);
 
     const fbs::le_audio::QosConfiguration* qos_sink_cfg = nullptr;
     for (auto i = qos_cfgs->begin(); i != qos_cfgs->end(); ++i) {
@@ -347,7 +350,7 @@ struct AudioSetConfigurationProviderJson {
       qos.sink.retransmission_number = qos_sink_cfg->retransmission_number();
       qos.sink.max_transport_latency = qos_sink_cfg->max_transport_latency();
     } else {
-      LOG_ERROR("No qos config matching key %s found", qos_sink_key.c_str());
+      log::error("No qos config matching key {} found", qos_sink_key);
     }
 
     if (qos_source_cfg != nullptr) {
@@ -358,7 +361,7 @@ struct AudioSetConfigurationProviderJson {
       qos.source.max_transport_latency =
           qos_source_cfg->max_transport_latency();
     } else {
-      LOG_ERROR("No qos config matching key %s found", qos_source_key.c_str());
+      log::error("No qos config matching key {} found", qos_source_key);
     }
 
     const fbs::le_audio::CodecConfiguration* codec_cfg = nullptr;
@@ -402,11 +405,10 @@ struct AudioSetConfigurationProviderJson {
       }
     } else {
       if (codec_cfg == nullptr) {
-        LOG_ERROR("No codec config matching key %s found",
-                  codec_config_key.c_str());
+        log::error("No codec config matching key {} found", codec_config_key);
       } else {
-        LOG_ERROR("Configuration '%s' has no valid subconfigurations.",
-                  flat_cfg->name()->c_str());
+        log::error("Configuration '{}' has no valid subconfigurations.",
+                   flat_cfg->name()->c_str());
       }
     }
 
@@ -477,7 +479,7 @@ struct AudioSetConfigurationProviderJson {
     if ((flat_qos_configs == nullptr) || (flat_qos_configs->size() == 0))
       return false;
 
-    LOG_DEBUG(": Updating %d qos config entries.", flat_qos_configs->size());
+    log::debug(": Updating {} qos config entries.", flat_qos_configs->size());
     std::vector<const fbs::le_audio::QosConfiguration*> qos_cfgs;
     for (auto const& flat_qos_cfg : *flat_qos_configs) {
       qos_cfgs.push_back(flat_qos_cfg);
@@ -487,8 +489,8 @@ struct AudioSetConfigurationProviderJson {
     if ((flat_codec_configs == nullptr) || (flat_codec_configs->size() == 0))
       return false;
 
-    LOG_DEBUG(": Updating %d codec config entries.",
-              flat_codec_configs->size());
+    log::debug(": Updating {} codec config entries.",
+               flat_codec_configs->size());
     std::vector<const fbs::le_audio::CodecConfiguration*> codec_cfgs;
     for (auto const& flat_codec_cfg : *flat_codec_configs) {
       codec_cfgs.push_back(flat_codec_cfg);
@@ -497,7 +499,7 @@ struct AudioSetConfigurationProviderJson {
     auto flat_configs = configurations_root->configurations();
     if ((flat_configs == nullptr) || (flat_configs->size() == 0)) return false;
 
-    LOG_DEBUG(": Updating %d config entries.", flat_configs->size());
+    log::debug(": Updating {} config entries.", flat_configs->size());
     for (auto const& flat_cfg : *flat_configs) {
       auto configuration = AudioSetConfigurationFromFlat(flat_cfg, &codec_cfgs,
                                                          &qos_cfgs, location);
@@ -557,12 +559,12 @@ struct AudioSetConfigurationProviderJson {
     if ((flat_scenarios == nullptr) || (flat_scenarios->size() == 0))
       return false;
 
-    LOG_DEBUG(": Updating %d scenarios.", flat_scenarios->size());
+    log::debug(": Updating {} scenarios.", flat_scenarios->size());
     for (auto const& scenario : *flat_scenarios) {
-      LOG_DEBUG("Scenario %s configs:", scenario->name()->c_str());
+      log::debug("Scenario {} configs:", scenario->name()->c_str());
       auto configs = AudioSetConfigurationsFromFlatScenario(scenario);
       for (auto& config : configs) {
-        LOG_DEBUG("\t\t Audio set config: %s", config->name.c_str());
+        log::debug("\t\t Audio set config: {}", config->name);
       }
 
       auto [it_begin, it_end] =
@@ -598,13 +600,14 @@ struct AudioSetConfigurationProvider::impl {
       : config_provider_(config_provider) {}
 
   void Initialize(types::CodecLocation location) {
-    ASSERT_LOG(!config_provider_impl_, " Config provider not available.");
+    log::assert_that(!config_provider_impl_, "Config provider not available.");
     config_provider_impl_ =
         std::make_unique<AudioSetConfigurationProviderJson>(location);
   }
 
   void Cleanup() {
-    ASSERT_LOG(config_provider_impl_, " Config provider not available.");
+    log::assert_that(config_provider_impl_ != nullptr,
+                     "Config provider not available.");
     config_provider_impl_.reset();
   }
 
@@ -741,7 +744,7 @@ bool AudioSetConfigurationProvider::CheckConfigurationIsDualBiDirSwb(
       ++ase_cnt;
     }
 
-    ASSERT_LOG(
+    log::assert_that(
         set_configuration.topology_info.has_value(),
         "No topology info, which is required to properly configure the ASEs");
     if (set_configuration.topology_info->device_count.get(direction) == 1 &&

@@ -36,8 +36,7 @@ import java.util.Objects;
 
 class VendorCommandResponseProcessor {
 
-    private static final String TAG = "VendorCommandResponseProcessor";
-    private static final boolean DBG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final String TAG = VendorCommandResponseProcessor.class.getSimpleName();
 
     private final HeadsetClientService mService;
     private final NativeInterface mNativeInterface;
@@ -123,7 +122,7 @@ class VendorCommandResponseProcessor {
             Log.e(TAG, "Failed to send vendor specific at command");
             return false;
         }
-        logD("Send vendor command: " + atCommand);
+        Log.d(TAG, "Send vendor command: " + atCommand);
         return true;
     }
 
@@ -168,7 +167,7 @@ class VendorCommandResponseProcessor {
             return false;
         } else {
             broadcastVendorSpecificEventIntent(vendorId, eventCode, atString, device);
-            logD("process vendor event " + vendorId + ", " + eventCode + ", "
+            Log.d(TAG, "process vendor event " + vendorId + ", " + eventCode + ", "
                     + atString + " for device" + device);
         }
         return true;
@@ -176,20 +175,14 @@ class VendorCommandResponseProcessor {
 
     private void broadcastVendorSpecificEventIntent(int vendorId, String vendorEventCode,
             String vendorResponse, BluetoothDevice device) {
-        logD("broadcastVendorSpecificEventIntent(" + vendorResponse + ")");
+        Log.d(TAG, "broadcastVendorSpecificEventIntent(" + vendorResponse + ")");
         Intent intent = new Intent(BluetoothHeadsetClient
                                    .ACTION_VENDOR_SPECIFIC_HEADSETCLIENT_EVENT);
         intent.putExtra(BluetoothHeadsetClient.EXTRA_VENDOR_ID, vendorId);
         intent.putExtra(BluetoothHeadsetClient.EXTRA_VENDOR_EVENT_CODE, vendorEventCode);
         intent.putExtra(BluetoothHeadsetClient.EXTRA_VENDOR_EVENT_FULL_ARGS, vendorResponse);
         intent.putExtra(BluetoothDevice.EXTRA_DEVICE, device);
-        Utils.sendBroadcast(mService, intent, BLUETOOTH_CONNECT,
-                Utils.getTempAllowlistBroadcastOptions());
-    }
-
-    private void logD(String msg) {
-        if (DBG) {
-            Log.d(TAG, msg);
-        }
+        mService.sendBroadcast(
+                intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastOptions().toBundle());
     }
 }

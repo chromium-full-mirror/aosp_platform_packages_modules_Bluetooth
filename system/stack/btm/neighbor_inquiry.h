@@ -23,6 +23,7 @@
 #include "internal_include/bt_target.h"
 #include "macros.h"
 #include "osi/include/alarm.h"
+#include "stack/btm/btm_eir.h"
 #include "stack/include/bt_device_type.h"
 #include "stack/include/bt_name.h"
 #include "stack/include/btm_api_types.h"
@@ -217,7 +218,6 @@ inline std::string btm_inquiry_cmpl_status_text(
 typedef struct {
   tBTM_STATUS status;
   RawAddress bd_addr;
-  uint16_t length;
   BD_NAME remote_bd_name;
   tHCI_STATUS hci_status;
 } tBTM_REMOTE_DEV_NAME;

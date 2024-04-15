@@ -33,7 +33,6 @@
 #include "btif_storage.h"
 
 #include <alloca.h>
-#include <base/logging.h>
 #include <bluetooth/log.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,8 +48,10 @@
 #include "btif_util.h"
 #include "common/init_flags.h"
 #include "core_callbacks.h"
-#include "device/include/controller.h"
+#include "hci/controller_interface.h"
 #include "internal_include/bt_target.h"
+#include "main/shim/entry.h"
+#include "main/shim/helpers.h"
 #include "osi/include/allocator.h"
 #include "stack/include/bt_octets.h"
 #include "stack/include/bt_uuid16.h"
@@ -489,8 +490,9 @@ static void btif_read_le_key(const uint8_t key_type, const size_t key_len,
                              RawAddress bd_addr, const tBLE_ADDR_TYPE addr_type,
                              const bool add_key, bool* device_added,
                              bool* key_found) {
-  CHECK(device_added);
-  CHECK(key_found);
+  log::assert_that(device_added != nullptr,
+                   "assert failed: device_added != nullptr");
+  log::assert_that(key_found != nullptr, "assert failed: key_found != nullptr");
 
   tBTA_LE_KEY_VALUE key;
   memset(&key, 0, sizeof(key));
@@ -534,8 +536,8 @@ static void btif_read_le_key(const uint8_t key_type, const size_t key_len,
  ******************************************************************************/
 size_t btif_split_uuids_string(const char* str, bluetooth::Uuid* p_uuid,
                                size_t max_uuids) {
-  CHECK(str);
-  CHECK(p_uuid);
+  log::assert_that(str != nullptr, "assert failed: str != nullptr");
+  log::assert_that(p_uuid != nullptr, "assert failed: p_uuid != nullptr");
 
   size_t num_uuids = 0;
   while (str && num_uuids < max_uuids) {
@@ -617,14 +619,14 @@ bt_status_t btif_storage_get_adapter_property(bt_property_t* property) {
   if (property->type == BT_PROPERTY_BDADDR) {
     RawAddress* bd_addr = (RawAddress*)property->val;
     /* Fetch the local BD ADDR */
-    const controller_t* controller = controller_get_interface();
-    if (!controller->get_is_ready()) {
+    if (bluetooth::shim::GetController() == nullptr) {
       log::error("Controller not ready! Unable to return Bluetooth Address");
       *bd_addr = RawAddress::kEmpty;
       return BT_STATUS_FAIL;
     } else {
       log::info("Controller ready!");
-      *bd_addr = *controller->get_address();
+      *bd_addr = bluetooth::ToRawAddress(
+          bluetooth::shim::GetController()->GetMacAddress());
     }
     property->len = RawAddress::kLength;
     return BT_STATUS_SUCCESS;
@@ -1276,26 +1278,6 @@ bt_status_t btif_storage_get_ble_local_key(uint8_t key_type,
   return BT_STATUS_FAIL;
 }
 
-/*******************************************************************************
- *
- * Function         btif_storage_remove_ble_local_keys
- *
- * Description      BTIF storage API - Deletes the bonded device from NVRAM
- *
- * Returns          BT_STATUS_SUCCESS if the deletion was successful,
- *                  BT_STATUS_FAIL otherwise
- *
- ******************************************************************************/
-bt_status_t btif_storage_remove_ble_local_keys(void) {
-  bool ret = true;
-  for (size_t i = 0; i < std::size(BTIF_STORAGE_LOCAL_LE_KEYS); i++) {
-    auto key = BTIF_STORAGE_LOCAL_LE_KEYS[i];
-    if (btif_config_exist(BTIF_STORAGE_SECTION_ADAPTER, key.name))
-      ret &= btif_config_remove(BTIF_STORAGE_SECTION_ADAPTER, key.name);
-  }
-  return ret ? BT_STATUS_SUCCESS : BT_STATUS_FAIL;
-}
-
 bt_status_t btif_in_fetch_bonded_ble_device(
     const std::string& remote_bd_addr, int add,
     btif_bonded_devices_t* p_bonded_devices) {
@@ -1365,27 +1347,6 @@ bt_status_t btif_storage_set_remote_addr_type(const RawAddress* remote_bd_addr,
   return ret ? BT_STATUS_SUCCESS : BT_STATUS_FAIL;
 }
 
-void btif_storage_set_remote_addr_type(const RawAddress& remote_bd_addr,
-                                       const tBLE_ADDR_TYPE& addr_type) {
-  if (!btif_config_set_int(remote_bd_addr.ToString(),
-                           BTIF_STORAGE_KEY_ADDR_TYPE,
-                           static_cast<int>(addr_type)))
-    log::error("Unable to set storage property");
-  else {
-#if TARGET_FLOSS
-    // Floss needs to get address type for diagnosis API.
-    btif_storage_invoke_addr_type_update(remote_bd_addr, addr_type);
-#endif
-  }
-}
-
-void btif_storage_set_remote_device_type(const RawAddress& remote_bd_addr,
-                                         const tBT_DEVICE_TYPE& device_type) {
-  if (!btif_config_set_int(remote_bd_addr.ToString(), BTIF_STORAGE_KEY_DEV_TYPE,
-                           static_cast<int>(device_type)))
-    log::error("Unable to set storage property");
-}
-
 bool btif_has_ble_keys(const std::string& bdstr) {
   return btif_config_exist(bdstr, BTIF_STORAGE_KEY_LE_KEY_PENC);
 }
@@ -1407,24 +1368,6 @@ bt_status_t btif_storage_get_remote_addr_type(const RawAddress* remote_bd_addr,
                                  BTIF_STORAGE_KEY_ADDR_TYPE, &val);
   *addr_type = static_cast<tBLE_ADDR_TYPE>(val);
   return ret ? BT_STATUS_SUCCESS : BT_STATUS_FAIL;
-}
-
-bool btif_storage_get_remote_addr_type(const RawAddress& remote_bd_addr,
-                                       tBLE_ADDR_TYPE& addr_type) {
-  int val;
-  bool ret = btif_config_get_int(remote_bd_addr.ToString(),
-                                 BTIF_STORAGE_KEY_ADDR_TYPE, &val);
-  addr_type = static_cast<tBLE_ADDR_TYPE>(val);
-  return ret;
-}
-
-bool btif_storage_get_remote_device_type(const RawAddress& remote_bd_addr,
-                                         tBT_DEVICE_TYPE& device_type) {
-  int val;
-  bool ret = btif_config_get_int(remote_bd_addr.ToString(),
-                                 BTIF_STORAGE_KEY_DEV_TYPE, &val);
-  device_type = static_cast<tBT_DEVICE_TYPE>(val);
-  return ret;
 }
 
 /** Stores information about GATT server supported features */
@@ -1470,12 +1413,6 @@ bool btif_storage_is_restricted_device(const RawAddress* remote_bd_addr) {
   int val;
   return btif_config_get_int(remote_bd_addr->ToString(),
                              BTIF_STORAGE_KEY_RESTRICTED, &val);
-}
-
-int btif_storage_get_num_bonded_devices(void) {
-  btif_bonded_devices_t bonded_devices;
-  btif_in_fetch_bonded_devices(&bonded_devices, 0);
-  return bonded_devices.num_devices;
 }
 
 // Get the name of a device from btif for interop database matching.

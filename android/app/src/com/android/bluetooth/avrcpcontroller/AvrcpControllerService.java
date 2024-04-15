@@ -40,10 +40,10 @@ import com.android.bluetooth.avrcpcontroller.BluetoothMediaBrowserService.Browse
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.ProfileService;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.modules.utils.SynchronousResultReceiver;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -54,8 +54,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class AvrcpControllerService extends ProfileService {
     static final String TAG = AvrcpControllerService.class.getSimpleName();
-    static final boolean DBG = Log.isLoggable(TAG, Log.DEBUG);
-    static final boolean VDBG = Log.isLoggable(TAG, Log.VERBOSE);
 
     static final int MAXIMUM_CONNECTED_DEVICES = 5;
 
@@ -119,10 +117,8 @@ public class AvrcpControllerService extends ProfileService {
         @Override
         public void onImageDownloadComplete(BluetoothDevice device,
                 AvrcpCoverArtManager.DownloadEvent event) {
-            if (DBG) {
-                Log.d(TAG, "Image downloaded [device: " + device + ", uuid: " + event.getUuid()
-                        + ", uri: " + event.getUri());
-            }
+            Log.d(TAG, "Image downloaded [device: " + device + ", uuid: " + event.getUuid()
+                    + ", uri: " + event.getUri());
             AvrcpControllerStateMachine stateMachine = getStateMachine(device);
             if (stateMachine == null) {
                 Log.e(TAG, "No state machine found for device " + device);
@@ -160,7 +156,7 @@ public class AvrcpControllerService extends ProfileService {
             mCoverArtManager = new AvrcpCoverArtManager(this, new ImageDownloadCallback());
         }
         sBrowseTree = new BrowseTree(null);
-        sService = this;
+        setAvrcpControllerService(this);
 
         // Start the media browser service.
         Intent startIntent = new Intent(this, BluetoothMediaBrowserService.class);
@@ -178,7 +174,7 @@ public class AvrcpControllerService extends ProfileService {
         }
         mDeviceStateMap.clear();
 
-        sService = null;
+        setAvrcpControllerService(null);
         sBrowseTree = null;
         if (mCoverArtManager != null) {
             mCoverArtManager.cleanup();
@@ -189,8 +185,14 @@ public class AvrcpControllerService extends ProfileService {
         mNativeInterface.cleanup();
     }
 
-    public static AvrcpControllerService getAvrcpControllerService() {
+    public static synchronized AvrcpControllerService getAvrcpControllerService() {
         return sService;
+    }
+
+    /** Testing API to inject a mock AvrcpControllerService */
+    @VisibleForTesting
+    public static synchronized void setAvrcpControllerService(AvrcpControllerService service) {
+        sService = service;
     }
 
     /**
@@ -207,9 +209,7 @@ public class AvrcpControllerService extends ProfileService {
      */
     @VisibleForTesting
     boolean setActiveDevice(BluetoothDevice device) {
-        if (DBG) {
-            Log.d(TAG, "setActiveDevice(device=" + device + ")");
-        }
+        Log.d(TAG, "setActiveDevice(device=" + device + ")");
         A2dpSinkService a2dpSinkService = A2dpSinkService.getA2dpSinkService();
         if (a2dpSinkService == null) {
             Log.w(TAG, "setActiveDevice(device=" + device + "): A2DP Sink not available");
@@ -274,7 +274,7 @@ public class AvrcpControllerService extends ProfileService {
     }
 
     void playItem(String parentMediaId) {
-        if (DBG) Log.d(TAG, "playItem(" + parentMediaId + ")");
+        Log.d(TAG, "playItem(" + parentMediaId + ")");
         // Check if the requestedNode is a player rather than a song
         BrowseTree.BrowseNode requestedNode = sBrowseTree.findBrowseNodeByID(parentMediaId);
         if (requestedNode == null) {
@@ -282,7 +282,7 @@ public class AvrcpControllerService extends ProfileService {
                 // Check each state machine for the song and then play it
                 requestedNode = stateMachine.findNode(parentMediaId);
                 if (requestedNode != null) {
-                    if (DBG) Log.d(TAG, "Found a node");
+                    Log.d(TAG, "Found a node, node=" + requestedNode);
                     BluetoothDevice device = stateMachine.getDevice();
                     if (device != null) {
                         setActiveDevice(device);
@@ -304,7 +304,7 @@ public class AvrcpControllerService extends ProfileService {
      *     must be performed.
      */
     public synchronized BrowseResult getContents(String parentMediaId) {
-        if (DBG) Log.d(TAG, "getContents(" + parentMediaId + ")");
+        Log.d(TAG, "getContents(" + parentMediaId + ")");
 
         BrowseTree.BrowseNode requestedNode = sBrowseTree.findBrowseNodeByID(parentMediaId);
         if (requestedNode == null) {
@@ -316,12 +316,10 @@ public class AvrcpControllerService extends ProfileService {
             }
         }
 
-        if (DBG) {
-            Log.d(TAG, "getContents(" + parentMediaId + "): "
-                    + (requestedNode == null
-                            ? "Failed to find node"
-                            : "node=" + requestedNode + ", device=" + requestedNode.getDevice()));
-        }
+        Log.d(TAG, "getContents(" + parentMediaId + "): "
+                + (requestedNode == null
+                        ? "Failed to find node"
+                        : "node=" + requestedNode + ", device=" + requestedNode.getDevice()));
 
         // If we don't find a node in the tree then do not have any way to browse for the contents.
         // Return an empty list instead.
@@ -340,7 +338,7 @@ public class AvrcpControllerService extends ProfileService {
         List<MediaItem> contents = requestedNode.getContents();
 
         if (!requestedNode.isCached()) {
-            if (DBG) Log.d(TAG, "getContents(" + parentMediaId + "): node download pending");
+            Log.d(TAG, "getContents(" + parentMediaId + "): node download pending");
             refreshContents(requestedNode);
             /* Ongoing downloads can have partial results and we want to make sure they get sent
              * to the client. If a download gets kicked off as a result of this request, the
@@ -348,10 +346,8 @@ public class AvrcpControllerService extends ProfileService {
              */
             return new BrowseResult(contents, BrowseResult.DOWNLOAD_PENDING);
         }
-        if (DBG) {
-            Log.d(TAG, "getContents(" + parentMediaId + "): return node, contents="
-                    + requestedNode.getContents());
-        }
+        Log.d(TAG, "getContents(" + parentMediaId + "): return node, contents="
+                + requestedNode.getContents());
         return new BrowseResult(contents, BrowseResult.SUCCESS);
     }
 
@@ -390,84 +386,53 @@ public class AvrcpControllerService extends ProfileService {
         }
 
         @Override
-        public void getConnectedDevices(AttributionSource source,
-                SynchronousResultReceiver receiver) {
-            try {
-                AvrcpControllerService service = getService(source);
-                List<BluetoothDevice> defaultValue = new ArrayList<BluetoothDevice>(0);
-                if (service != null) {
-                    defaultValue = service.getConnectedDevices();
-                }
-                receiver.send(defaultValue);
-            } catch (RuntimeException e) {
-                receiver.propagateException(e);
+        public List<BluetoothDevice> getConnectedDevices(AttributionSource source) {
+            AvrcpControllerService service = getService(source);
+            if (service == null) {
+                return Collections.emptyList();
             }
+            return service.getConnectedDevices();
         }
 
         @Override
-        public void getDevicesMatchingConnectionStates(int[] states,
-                AttributionSource source, SynchronousResultReceiver receiver) {
-            try {
-                AvrcpControllerService service = getService(source);
-                List<BluetoothDevice> defaultValue = new ArrayList<BluetoothDevice>(0);
-                if (service != null) {
-                    defaultValue = service.getDevicesMatchingConnectionStates(states);
-                }
-                receiver.send(defaultValue);
-            } catch (RuntimeException e) {
-                receiver.propagateException(e);
+        public List<BluetoothDevice> getDevicesMatchingConnectionStates(
+                int[] states, AttributionSource source) {
+            AvrcpControllerService service = getService(source);
+            if (service == null) {
+                return Collections.emptyList();
             }
+            return service.getDevicesMatchingConnectionStates(states);
         }
 
         @Override
-        public void getConnectionState(BluetoothDevice device, AttributionSource source,
-                SynchronousResultReceiver receiver) {
-            try {
-                AvrcpControllerService service = getService(source);
-                int defaultValue = BluetoothProfile.STATE_DISCONNECTED;
-                if (service != null) {
-                    defaultValue = service.getConnectionState(device);
-                }
-                receiver.send(defaultValue);
-            } catch (RuntimeException e) {
-                receiver.propagateException(e);
+        public int getConnectionState(BluetoothDevice device, AttributionSource source) {
+            AvrcpControllerService service = getService(source);
+            if (service == null) {
+                return BluetoothProfile.STATE_DISCONNECTED;
             }
+            return service.getConnectionState(device);
         }
 
         @Override
-        public void sendGroupNavigationCmd(BluetoothDevice device, int keyCode, int keyState,
-                AttributionSource source, SynchronousResultReceiver receiver) {
-            try {
-                getService(source);
-                Log.w(TAG, "sendGroupNavigationCmd not implemented");
-                receiver.send(null);
-            } catch (RuntimeException e) {
-                receiver.propagateException(e);
-            }
+        public void sendGroupNavigationCmd(
+                BluetoothDevice device, int keyCode, int keyState, AttributionSource source) {
+            getService(source);
+            Log.w(TAG, "sendGroupNavigationCmd not implemented");
         }
 
         @Override
-        public void setPlayerApplicationSetting(BluetoothAvrcpPlayerSettings settings,
-                AttributionSource source, SynchronousResultReceiver receiver) {
-            try {
-                getService(source);
-                Log.w(TAG, "setPlayerApplicationSetting not implemented");
-                receiver.send(null);
-            } catch (RuntimeException e) {
-                receiver.propagateException(e);
-            }
+        public void setPlayerApplicationSetting(
+                BluetoothAvrcpPlayerSettings settings, AttributionSource source) {
+            getService(source);
+            Log.w(TAG, "setPlayerApplicationSetting not implemented");
         }
 
         @Override
-        public void getPlayerSettings(BluetoothDevice device,
-                AttributionSource source, SynchronousResultReceiver receiver) {
-            try {
-                getService(source);
-                Log.w(TAG, "getPlayerSettings not implemented");
-                receiver.send(null);
-            } catch (RuntimeException e) {
-                receiver.propagateException(e);
-            }
+        public BluetoothAvrcpPlayerSettings getPlayerSettings(
+                BluetoothDevice device, AttributionSource source) {
+            getService(source);
+            Log.w(TAG, "getPlayerSettings not implemented");
+            return null;
         }
     }
 
@@ -526,9 +491,7 @@ public class AvrcpControllerService extends ProfileService {
      * player to stop and start playing.
      */
     public void onAudioFocusStateChanged(int state) {
-        if (DBG) {
-            Log.d(TAG, "onAudioFocusStateChanged(state=" + state + ")");
-        }
+        Log.d(TAG, "onAudioFocusStateChanged(state=" + state + ")");
 
         // Make sure the active device isn't changed while we're processing the event so play/pause
         // commands get routed to the correct device
@@ -639,9 +602,10 @@ public class AvrcpControllerService extends ProfileService {
 
     // Browsing related JNI callbacks.
     void handleGetFolderItemsRsp(BluetoothDevice device, int status, AvrcpItem[] items) {
+        Log.d(TAG, "handleGetFolderItemsRsp(device=" + device + ", status=" + status);
         List<AvrcpItem> itemsList = new ArrayList<>();
         for (AvrcpItem item : items) {
-            if (VDBG) Log.d(TAG, item.toString());
+            Log.v(TAG, "handleGetFolderItemsRsp(device=" + device + "): item=" + item.toString());
             if (mCoverArtManager != null) {
                 String handle = item.getCoverArtHandle();
                 if (handle != null) {
@@ -718,9 +682,7 @@ public class AvrcpControllerService extends ProfileService {
      * @return true if disconnect is successful, false otherwise.
      */
     public synchronized boolean disconnect(BluetoothDevice device) {
-        if (DBG) {
-            Log.d(TAG, "disconnect(device=" + device + ")");
-        }
+        Log.d(TAG, "disconnect(device=" + device + ")");
         AvrcpControllerStateMachine stateMachine = mDeviceStateMap.get(device);
         // a map state machine instance doesn't exist. maybe it is already gone?
         if (stateMachine == null) {
@@ -763,7 +725,11 @@ public class AvrcpControllerService extends ProfileService {
 
     protected AvrcpControllerStateMachine getOrCreateStateMachine(BluetoothDevice device) {
         AvrcpControllerStateMachine newStateMachine =
-                new AvrcpControllerStateMachine(device, this, mNativeInterface);
+                new AvrcpControllerStateMachine(
+                        device,
+                        this,
+                        mNativeInterface,
+                        Utils.isAutomotive(getApplicationContext()));
         AvrcpControllerStateMachine existingStateMachine =
                 mDeviceStateMap.putIfAbsent(device, newStateMachine);
         // Given null is not a valid value in our map, ConcurrentHashMap will return null if the
@@ -786,21 +752,20 @@ public class AvrcpControllerService extends ProfileService {
     }
 
     List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
-        if (DBG) Log.d(TAG, "getDevicesMatchingConnectionStates" + Arrays.toString(states));
+        Log.d(TAG, "getDevicesMatchingConnectionStates(states=" + Arrays.toString(states) + ")");
         List<BluetoothDevice> deviceList = new ArrayList<>();
         BluetoothDevice[] bondedDevices = mAdapterService.getBondedDevices();
         int connectionState;
         for (BluetoothDevice device : bondedDevices) {
             connectionState = getConnectionState(device);
-            if (DBG) Log.d(TAG, "Device: " + device + "State: " + connectionState);
             for (int i = 0; i < states.length; i++) {
                 if (connectionState == states[i]) {
                     deviceList.add(device);
                 }
             }
         }
-        if (DBG) Log.d(TAG, deviceList.toString());
-        Log.d(TAG, "GetDevicesDone");
+        Log.d(TAG, "getDevicesMatchingConnectionStates(states=" + Arrays.toString(states)
+                + "): Found " + deviceList.toString());
         return deviceList;
     }
 
