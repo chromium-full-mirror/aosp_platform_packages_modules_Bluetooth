@@ -52,7 +52,7 @@ translateToBtLeAudioCodecConfigChannelCount(uint8_t channel_count);
 bluetooth::le_audio::btle_audio_frame_duration_index_t
 translateToBtLeAudioCodecConfigFrameDuration(int frame_duration);
 void fillStreamParamsToBtLeAudioCodecConfig(
-    types::LeAudioCodecId codec_id, const stream_parameters* stream_params,
+    const std::vector<struct set_configurations::AseConfiguration>& confs,
     bluetooth::le_audio::btle_audio_codec_config_t& out_config);
 
 std::vector<bluetooth::le_audio::btle_audio_codec_config_t>
@@ -64,5 +64,9 @@ GetAudioSessionCodecConfigFromAudioSetConfiguration(
     const ::bluetooth::le_audio::set_configurations::AudioSetConfiguration&
         audio_set_conf,
     uint8_t remote_direction);
+const struct types::acs_ac_record* GetConfigurationSupportedPac(
+    const ::bluetooth::le_audio::types::PublishedAudioCapabilities& pacs,
+    const ::bluetooth::le_audio::set_configurations::CodecConfigSetting&
+        codec_config_setting);
 }  // namespace utils
 }  // namespace bluetooth::le_audio

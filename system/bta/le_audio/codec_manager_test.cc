@@ -19,6 +19,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "audio_hal_interface/le_audio_software.h"
 #include "common/init_flags.h"
 #include "hci/controller_interface_mock.h"
 #include "hci/hci_packets.h"
@@ -107,8 +108,8 @@ const stack_config_t* stack_config_get_interface(void) {
 namespace bluetooth {
 namespace audio {
 namespace le_audio {
-std::vector<AudioSetConfiguration> get_offload_capabilities() {
-  return *offload_capabilities;
+OffloadCapabilities get_offload_capabilities() {
+  return {*offload_capabilities, *offload_capabilities};
 }
 }  // namespace le_audio
 }  // namespace audio
@@ -389,10 +390,15 @@ TEST_F(CodecManagerTestAdsp, test_capabilities_none) {
       offloading_preference(0);
   codec_manager->Start(offloading_preference);
 
+  bool has_null_config = false;
   auto match_first_config =
-      [](const CodecManager::UnicastConfigurationRequirements& requirements,
-         const set_configurations::AudioSetConfigurations* confs)
+      [&](const CodecManager::UnicastConfigurationRequirements& requirements,
+          const set_configurations::AudioSetConfigurations* confs)
       -> const set_configurations::AudioSetConfiguration* {
+    // Don't expect the matcher being called on nullptr
+    if (confs == nullptr) {
+      has_null_config = true;
+    }
     if (confs && confs->size()) {
       // For simplicity return the first element, the real matcher should
       // check the group capabilities.
@@ -404,11 +410,13 @@ TEST_F(CodecManagerTestAdsp, test_capabilities_none) {
   // Verify every context
   for (::bluetooth::le_audio::types::LeAudioContextType ctx_type :
        ::bluetooth::le_audio::types::kLeAudioContextAllTypesArray) {
+    has_null_config = false;
     CodecManager::UnicastConfigurationRequirements requirements = {
         .audio_context_type = ctx_type,
     };
     ASSERT_EQ(nullptr,
               codec_manager->GetCodecConfig(requirements, match_first_config));
+    ASSERT_FALSE(has_null_config);
   }
 }
 

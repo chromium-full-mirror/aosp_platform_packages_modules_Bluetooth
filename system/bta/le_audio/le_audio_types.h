@@ -570,6 +570,10 @@ struct LeAudioCoreCodecConfig {
                : 0;
   }
 
+  uint16_t GetOctectsPerFrame() const {
+    return octets_per_codec_frame.value_or(0);
+  }
+
   /** Returns the sampling frequency representation in Hz */
   uint32_t GetSamplingFrequencyHz() const {
     if (sampling_frequency)
@@ -1133,6 +1137,8 @@ struct CodecConfigSetting {
   /* Channel count per device */
   uint8_t channel_count_per_iso_stream;
 
+  /* Octects per fram for codec */
+  uint16_t GetOctectsPerFrame() const;
   /* Sampling freqency requested for codec */
   uint32_t GetSamplingFrequencyHz() const;
   /* Data fetch/feed interval for codec in microseconds */
@@ -1249,9 +1255,6 @@ bool check_if_may_cover_scenario(
     const AudioSetConfigurations* audio_set_configurations, uint8_t group_size);
 bool check_if_may_cover_scenario(
     const AudioSetConfiguration* audio_set_configuration, uint8_t group_size);
-bool IsCodecConfigSettingSupported(
-    const types::acs_ac_record& pac_record,
-    const CodecConfigSetting& codec_capability_setting);
 uint8_t get_num_of_devices_in_configuration(
     const AudioSetConfiguration* audio_set_configuration);
 }  // namespace set_configurations
