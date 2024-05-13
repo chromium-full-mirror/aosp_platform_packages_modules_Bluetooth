@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-#include <android_bluetooth_flags.h>
 #include <base/functional/bind.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 
 #include <cstdint>
 
@@ -221,11 +221,7 @@ static void bta_ag_sco_disc_cback(uint16_t sco_idx) {
     /* Restore settings */
     if (bta_ag_cb.sco.p_curr_scb->inuse_codec == UUID_CODEC_MSBC ||
         bta_ag_cb.sco.p_curr_scb->inuse_codec == UUID_CODEC_LC3 || aptx_voice ||
-#if TARGET_FLOSS
-        (true &&
-#else
-        (IS_FLAG_ENABLED(fix_hfp_qual_1_9) &&
-#endif
+        (com::android::bluetooth::flags::fix_hfp_qual_1_9() &&
          bta_ag_cb.sco.p_curr_scb->inuse_codec == UUID_CODEC_CVSD &&
          bta_ag_cb.sco.p_curr_scb->codec_cvsd_settings !=
              BTA_AG_SCO_CVSD_SETTINGS_S1)) {
@@ -239,20 +235,12 @@ static void bta_ag_sco_disc_cback(uint16_t sco_idx) {
        * 'Safe setting' first. If T1 also fails, try CVSD
        * same operations for LC3 settings */
       if (bta_ag_sco_is_opening(bta_ag_cb.sco.p_curr_scb) &&
-#if TARGET_FLOSS
-          (false ||
-#else
-          (!IS_FLAG_ENABLED(fix_hfp_qual_1_9) ||
-#endif
+          (!com::android::bluetooth::flags::fix_hfp_qual_1_9() ||
            bta_ag_cb.sco.is_local)) {
         /* Don't bother to edit |p_curr_scb->state| because it is in
          * |BTA_AG_OPEN_ST|, which has the same value as |BTA_AG_SCO_CODEC_ST|
          */
-#if TARGET_FLOSS
-        if (false) {
-#else
-        if (!IS_FLAG_ENABLED(fix_hfp_qual_1_9)) {
-#endif
+        if (!com::android::bluetooth::flags::fix_hfp_qual_1_9()) {
           bta_ag_cb.sco.p_curr_scb->state = BTA_AG_SCO_CODEC_ST;
         }
         if (bta_ag_cb.sco.p_curr_scb->inuse_codec == UUID_CODEC_LC3) {
@@ -283,7 +271,7 @@ static void bta_ag_sco_disc_cback(uint16_t sco_idx) {
           }
         } else {
           // Entering this block implies
-          // - |fix_hfp_qual_1_9| is enabled or is in Floss, AND
+          // - |fix_hfp_qual_1_9| is enabled, AND
           // - we just failed CVSD S2+.
           log::warn(
               "eSCO/SCO failed to open, falling back to CVSD S1 settings");
@@ -293,20 +281,13 @@ static void bta_ag_sco_disc_cback(uint16_t sco_idx) {
         }
       }
     } else if (bta_ag_sco_is_opening(bta_ag_cb.sco.p_curr_scb) &&
-#if TARGET_FLOSS
-               (false ||
-#else
-               (!IS_FLAG_ENABLED(fix_hfp_qual_1_9) ||
-#endif
+               (!com::android::bluetooth::flags::fix_hfp_qual_1_9() ||
                 bta_ag_cb.sco.is_local)) {
-      if (IS_FLAG_ENABLED(retry_esco_with_zero_retransmission_effort) &&
+      if (com::android::bluetooth::flags::
+              retry_esco_with_zero_retransmission_effort() &&
           bta_ag_cb.sco.p_curr_scb->retransmission_effort_retries == 0) {
         bta_ag_cb.sco.p_curr_scb->retransmission_effort_retries++;
-#if TARGET_FLOSS
-        if (false) {
-#else
-        if (!IS_FLAG_ENABLED(fix_hfp_qual_1_9)) {
-#endif
+        if (!com::android::bluetooth::flags::fix_hfp_qual_1_9()) {
           bta_ag_cb.sco.p_curr_scb->state = BTA_AG_SCO_CODEC_ST;
         }
         log::warn("eSCO/SCO failed to open, retry with retransmission_effort");
@@ -416,11 +397,8 @@ static void bta_ag_esco_connreq_cback(tBTM_ESCO_EVT event,
       log::warn(
           "reject incoming SCO connection, remote_bda={}, active_bda={}, "
           "current_bda={}",
-          ADDRESS_TO_LOGGABLE_STR(remote_bda ? *remote_bda
-                                             : RawAddress::kEmpty),
-          ADDRESS_TO_LOGGABLE_STR(active_device_addr),
-          ADDRESS_TO_LOGGABLE_STR(p_scb ? p_scb->peer_addr
-                                        : RawAddress::kEmpty));
+          remote_bda ? *remote_bda : RawAddress::kEmpty, active_device_addr,
+          p_scb ? p_scb->peer_addr : RawAddress::kEmpty);
       BTM_EScoConnRsp(p_data->conn_evt.sco_inx, HCI_ERR_HOST_REJECT_RESOURCES,
                       (enh_esco_params_t*)nullptr);
     }
@@ -461,9 +439,8 @@ void bta_ag_create_sco(tBTA_AG_SCB* p_scb, bool is_orig) {
   tBTA_AG_PEER_CODEC esco_codec = UUID_CODEC_CVSD;
 
   if (!bta_ag_sco_is_active_device(p_scb->peer_addr)) {
-    log::warn("device {} is not active, active_device={}",
-              ADDRESS_TO_LOGGABLE_STR(p_scb->peer_addr),
-              ADDRESS_TO_LOGGABLE_STR(active_device_addr));
+    log::warn("device {} is not active, active_device={}", p_scb->peer_addr,
+              active_device_addr);
     if (bta_ag_cb.sco.p_curr_scb != nullptr &&
         bta_ag_cb.sco.p_curr_scb->in_use && p_scb == bta_ag_cb.sco.p_curr_scb) {
       do_in_main_thread(FROM_HERE, base::BindOnce(&bta_ag_sm_execute, p_scb,
@@ -474,8 +451,8 @@ void bta_ag_create_sco(tBTA_AG_SCB* p_scb, bool is_orig) {
   }
   /* Make sure this SCO handle is not already in use */
   if (p_scb->sco_idx != BTM_INVALID_SCO_INDEX) {
-    log::error("device {}, index 0x{:04x} already in use!",
-               ADDRESS_TO_LOGGABLE_CSTR(p_scb->peer_addr), p_scb->sco_idx);
+    log::error("device {}, index 0x{:04x} already in use!", p_scb->peer_addr,
+               p_scb->sco_idx);
     return;
   }
 
@@ -544,11 +521,7 @@ void bta_ag_create_sco(tBTA_AG_SCB* p_scb, bool is_orig) {
       params = esco_parameters_for_codec(ESCO_CODEC_SWB_Q0, true);
     }
   } else {
-#if TARGET_FLOSS
-    if (true &&
-#else
-    if (IS_FLAG_ENABLED(fix_hfp_qual_1_9) &&
-#endif
+    if (com::android::bluetooth::flags::fix_hfp_qual_1_9() &&
         p_scb->codec_cvsd_settings == BTA_AG_SCO_CVSD_SETTINGS_S1) {
       params = esco_parameters_for_codec(ESCO_CODEC_CVSD_S1, offload);
     } else {
@@ -565,7 +538,8 @@ void bta_ag_create_sco(tBTA_AG_SCB* p_scb, bool is_orig) {
 
   updateCodecParametersFromProviderInfo(esco_codec, params);
 
-  if (IS_FLAG_ENABLED(retry_esco_with_zero_retransmission_effort) &&
+  if (com::android::bluetooth::flags::
+          retry_esco_with_zero_retransmission_effort() &&
       p_scb->retransmission_effort_retries == 1) {
     log::info("change retransmission_effort to 0, retry");
     p_scb->retransmission_effort_retries++;
@@ -678,11 +652,7 @@ void bta_ag_create_pending_sco(tBTA_AG_SCB* p_scb, bool is_local) {
         params = esco_parameters_for_codec(ESCO_CODEC_MSBC_T1, offload);
       }
     } else {
-#if TARGET_FLOSS
-      if (true &&
-#else
-      if (IS_FLAG_ENABLED(fix_hfp_qual_1_9) &&
-#endif
+      if (com::android::bluetooth::flags::fix_hfp_qual_1_9() &&
           p_scb->codec_cvsd_settings == BTA_AG_SCO_CVSD_SETTINGS_S1) {
         params = esco_parameters_for_codec(ESCO_CODEC_CVSD_S1, offload);
       } else {
@@ -856,7 +826,7 @@ static void bta_ag_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
   tBTA_AG_SCO_CB* p_sco = &bta_ag_cb.sco;
   uint8_t previous_state = p_sco->state;
   log::info("device:{} index:0x{:04x} state:{}[{}] event:{}[{}]",
-            ADDRESS_TO_LOGGABLE_CSTR(p_scb->peer_addr), p_scb->sco_idx,
+            p_scb->peer_addr, p_scb->sco_idx,
             bta_ag_sco_state_str(p_sco->state), p_sco->state,
             bta_ag_sco_evt_str(event), event);
 
@@ -1396,7 +1366,7 @@ bool bta_ag_sco_is_opening(tBTA_AG_SCB* p_scb) {
  *
  ******************************************************************************/
 void bta_ag_sco_listen(tBTA_AG_SCB* p_scb, const tBTA_AG_DATA& /* data */) {
-  log::info("{}", ADDRESS_TO_LOGGABLE_STR(p_scb->peer_addr));
+  log::info("{}", p_scb->peer_addr);
   bta_ag_sco_event(p_scb, BTA_AG_SCO_LISTEN_E);
 }
 
@@ -1440,13 +1410,12 @@ void bta_ag_sco_open(tBTA_AG_SCB* p_scb, const tBTA_AG_DATA& data) {
 
   /* if another scb using sco, this is a transfer */
   if (bta_ag_cb.sco.p_curr_scb && bta_ag_cb.sco.p_curr_scb != p_scb) {
-    log::info("transfer {} -> {}",
-              ADDRESS_TO_LOGGABLE_STR(bta_ag_cb.sco.p_curr_scb->peer_addr),
-              ADDRESS_TO_LOGGABLE_STR(p_scb->peer_addr));
+    log::info("transfer {} -> {}", bta_ag_cb.sco.p_curr_scb->peer_addr,
+              p_scb->peer_addr);
     bta_ag_sco_event(p_scb, BTA_AG_SCO_XFER_E);
   } else {
     /* else it is an open */
-    log::info("open {}", ADDRESS_TO_LOGGABLE_STR(p_scb->peer_addr));
+    log::info("open {}", p_scb->peer_addr);
     bta_ag_sco_event(p_scb, BTA_AG_SCO_OPEN_E);
   }
 }
@@ -1486,13 +1455,13 @@ void bta_ag_sco_codec_nego(tBTA_AG_SCB* p_scb, bool result) {
   if (result) {
     /* Subsequent SCO connection will skip codec negotiation */
     log::info("Succeeded for index 0x{:04x}, device {}", p_scb->sco_idx,
-              ADDRESS_TO_LOGGABLE_CSTR(p_scb->peer_addr));
+              p_scb->peer_addr);
     p_scb->codec_updated = false;
     bta_ag_sco_event(p_scb, BTA_AG_SCO_CN_DONE_E);
   } else {
     /* codec negotiation failed */
     log::info("Failed for index 0x{:04x}, device {}", p_scb->sco_idx,
-              ADDRESS_TO_LOGGABLE_CSTR(p_scb->peer_addr));
+              p_scb->peer_addr);
     bta_ag_sco_event(p_scb, BTA_AG_SCO_CLOSE_E);
   }
 }
@@ -1589,14 +1558,11 @@ void bta_ag_sco_conn_close(tBTA_AG_SCB* p_scb, const tBTA_AG_DATA& /* data */) {
         p_scb->codec_msbc_settings == BTA_AG_SCO_MSBC_SETTINGS_T1) ||
        (p_scb->sco_codec == BTM_SCO_CODEC_LC3 &&
         p_scb->codec_lc3_settings == BTA_AG_SCO_LC3_SETTINGS_T1) ||
-       (IS_FLAG_ENABLED(retry_esco_with_zero_retransmission_effort) &&
+       (com::android::bluetooth::flags::
+            retry_esco_with_zero_retransmission_effort() &&
         p_scb->retransmission_effort_retries == 1) ||
        aptx_voice ||
-#if TARGET_FLOSS
-       (true &&
-#else
-       (IS_FLAG_ENABLED(fix_hfp_qual_1_9) &&
-#endif
+       (com::android::bluetooth::flags::fix_hfp_qual_1_9() &&
         p_scb->sco_codec == BTM_SCO_CODEC_CVSD &&
         p_scb->codec_cvsd_settings == BTA_AG_SCO_CVSD_SETTINGS_S1 &&
         p_scb->trying_cvsd_safe_settings))) {
@@ -1673,10 +1639,9 @@ void bta_ag_set_sco_allowed(bool value) {
 
 bool bta_ag_is_sco_managed_by_audio() {
   bool value = false;
-  if (IS_FLAG_ENABLED(is_sco_managed_by_audio)) {
+  if (com::android::bluetooth::flags::is_sco_managed_by_audio()) {
     value = osi_property_get_bool("bluetooth.sco.managed_by_audio", false);
-    log::verbose("is_sco_managed_by_audio enabled={}",
-                 value ? "true" : "false");
+    log::verbose("is_sco_managed_by_audio enabled={}", value);
   }
   return value;
 }

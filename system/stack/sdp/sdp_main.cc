@@ -25,16 +25,15 @@
 #define LOG_TAG "sdp"
 
 #include <bluetooth/log.h>
-#include <string.h>  // memset
 
 #include "common/init_flags.h"
 #include "internal_include/bt_target.h"
-#include "os/logging/log_adapter.h"
 #include "osi/include/allocator.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_psm_types.h"
 #include "stack/include/btm_sec_api_types.h"
 #include "stack/include/l2c_api.h"
+#include "stack/include/l2cdefs.h"
 #include "stack/include/sdp_status.h"
 #include "stack/sdp/sdpint.h"
 #include "types/raw_address.h"
@@ -72,7 +71,7 @@ static void sdp_on_l2cap_error(uint16_t l2cap_cid, uint16_t result);
  ******************************************************************************/
 void sdp_init(void) {
   /* Clears all structures and local SDP database (if Server is enabled) */
-  memset(&sdp_cb, 0, sizeof(tSDP_CB));
+  sdp_cb = {};
 
   for (int i = 0; i < SDP_MAX_CONNECTIONS; i++) {
     sdp_cb.ccb[i].sdp_conn_timer = alarm_new("sdp.sdp_conn_timer");
@@ -102,10 +101,12 @@ void sdp_init(void) {
 }
 
 void sdp_free(void) {
+  L2CA_Deregister(BT_PSM_SDP);
   for (int i = 0; i < SDP_MAX_CONNECTIONS; i++) {
     alarm_free(sdp_cb.ccb[i].sdp_conn_timer);
     sdp_cb.ccb[i].sdp_conn_timer = NULL;
   }
+  sdp_cb = {};
 }
 
 /*******************************************************************************
@@ -323,44 +324,41 @@ static void sdp_data_ind(uint16_t l2cap_cid, BT_HDR* p_msg) {
  * Returns          void
  *
  ******************************************************************************/
-tCONN_CB* sdp_conn_originate(const RawAddress& p_bd_addr) {
+tCONN_CB* sdp_conn_originate(const RawAddress& bd_addr) {
   tCONN_CB* p_ccb;
   uint16_t cid;
 
   /* Allocate a new CCB. Return if none available. */
   p_ccb = sdpu_allocate_ccb();
   if (p_ccb == NULL) {
-    log::warn("no spare CCB for peer {}", ADDRESS_TO_LOGGABLE_CSTR(p_bd_addr));
+    log::warn("no spare CCB for peer {}", bd_addr);
     return (NULL);
   }
 
-  log::verbose("SDP - Originate started for peer {}",
-               ADDRESS_TO_LOGGABLE_CSTR(p_bd_addr));
+  log::verbose("SDP - Originate started for peer {}", bd_addr);
 
   /* Look for any active sdp connection on the remote device */
-  cid = sdpu_get_active_ccb_cid(p_bd_addr);
+  cid = sdpu_get_active_ccb_cid(bd_addr);
 
   /* We are the originator of this connection */
   p_ccb->con_flags |= SDP_FLAGS_IS_ORIG;
 
   /* Save the BD Address */
-  p_ccb->device_address = p_bd_addr;
+  p_ccb->device_address = bd_addr;
 
   /* Transition to the next appropriate state, waiting for connection confirm */
   if (!bluetooth::common::init_flags::sdp_serialization_is_enabled() ||
       cid == 0) {
     p_ccb->con_state = SDP_STATE_CONN_SETUP;
-    cid = L2CA_ConnectReq2(BT_PSM_SDP, p_bd_addr, BTM_SEC_NONE);
+    cid = L2CA_ConnectReq2(BT_PSM_SDP, bd_addr, BTM_SEC_NONE);
   } else {
     p_ccb->con_state = SDP_STATE_CONN_PEND;
-    log::warn("SDP already active for peer {}. cid={:#0x}",
-              ADDRESS_TO_LOGGABLE_CSTR(p_bd_addr), cid);
+    log::warn("SDP already active for peer {}. cid={:#0x}", bd_addr, cid);
   }
 
   /* Check if L2CAP started the connection process */
   if (cid == 0) {
-    log::warn("SDP - Originate failed for peer {}",
-              ADDRESS_TO_LOGGABLE_CSTR(p_bd_addr));
+    log::warn("SDP - Originate failed for peer {}", bd_addr);
     sdpu_release_ccb(*p_ccb);
     return (NULL);
   }

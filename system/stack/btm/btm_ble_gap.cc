@@ -24,11 +24,11 @@
 
 #define LOG_TAG "bt_btm_ble"
 
-#include <android_bluetooth_flags.h>
 #include <android_bluetooth_sysprop.h>
 #include <base/functional/bind.h>
 #include <base/strings/string_number_conversions.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 
 #include <cstdint>
 #include <list>
@@ -43,7 +43,6 @@
 #include "main/shim/acl_api.h"
 #include "main/shim/entry.h"
 #include "osi/include/allocator.h"
-#include "osi/include/osi.h"  // UNUSED_ATTR
 #include "osi/include/properties.h"
 #include "osi/include/stack_power_telemetry.h"
 #include "stack/acl/acl.h"
@@ -662,7 +661,7 @@ static void btm_get_dynamic_audio_buffer_vsc_cmpl_cback(
   // Audio_Codec_Buffer_Time    | 192 octet| Default/Max/Min buffer time
   STREAM_TO_UINT8(status, p_event_param_buf);
   if (status != HCI_SUCCESS) {
-    log::error("Fail to configure DFTB. status: {}", loghex(status));
+    log::error("Fail to configure DFTB. status: 0x{:x}", status);
     return;
   }
 
@@ -673,11 +672,11 @@ static void btm_get_dynamic_audio_buffer_vsc_cmpl_cback(
   }
 
   STREAM_TO_UINT8(opcode, p_event_param_buf);
-  log::info("opcode = {}", loghex(opcode));
+  log::info("opcode = 0x{:x}", opcode);
 
   if (opcode == 0x01) {
     STREAM_TO_UINT32(codec_mask, p_event_param_buf);
-    log::info("codec_mask = {}", loghex(codec_mask));
+    log::info("codec_mask = 0x{:x}", codec_mask);
 
     for (int i = 0; i < BTM_CODEC_TYPE_MAX_RECORDS; i++) {
       STREAM_TO_UINT16(btm_cb.dynamic_audio_buffer_cb[i].default_buffer_time,
@@ -853,7 +852,8 @@ void BTM_BleReadControllerFeatures(tBTM_BLE_CTRL_FEATURES_CBACK* p_vsc_cback) {
 
   log::verbose("BTM_BleReadControllerFeatures");
 
-  if (IS_FLAG_ENABLED(report_vsc_data_from_the_gd_controller)) {
+  if (com::android::bluetooth::flags::
+          report_vsc_data_from_the_gd_controller()) {
     btm_cb.cmn_ble_vsc_cb.values_read = true;
     bluetooth::hci::ControllerInterface::VendorCapabilities
         vendor_capabilities = GetController()->GetVendorCapabilities();
@@ -1059,9 +1059,7 @@ static void sync_queue_cleanup(remove_sync_node_t* p_param) {
     if (sync_request->sid == p_param->sid &&
         sync_request->address == p_param->address) {
       log::info("removing connection request SID={:04X}, bd_addr={}, busy={}",
-                sync_request->sid,
-                ADDRESS_TO_LOGGABLE_CSTR(sync_request->address),
-                sync_request->busy);
+                sync_request->sid, sync_request->address, sync_request->busy);
       list_remove(sync_queue, sync_request);
     }
   }
@@ -1105,7 +1103,7 @@ static void btm_queue_sync_next() {
   sync_node_t* p_head = (sync_node_t*)list_front(sync_queue);
 
   log::info("executing sync request SID={:04X}, bd_addr={}", p_head->sid,
-            ADDRESS_TO_LOGGABLE_CSTR(p_head->address));
+            p_head->address);
   if (p_head->busy) {
     log::debug("BUSY");
     return;
@@ -1340,8 +1338,7 @@ static uint8_t btm_set_conn_mode_adv_init_addr(
         .type = *p_peer_addr_type,
         .bda = p_peer_addr_ptr,
     };
-    log::debug("Received BLE connect event {}",
-               ADDRESS_TO_LOGGABLE_CSTR(ble_bd_addr));
+    log::debug("Received BLE connect event {}", ble_bd_addr);
 
     evt_type = btm_cb.ble_ctr_cb.inq_var.directed_conn;
 
@@ -1553,7 +1550,7 @@ tBTM_STATUS btm_ble_set_discoverability(uint16_t combined_mode) {
   alarm_cancel(btm_cb.ble_ctr_cb.inq_var.fast_adv_timer);
 
   /* update adv params if start advertising */
-  log::verbose("evt_type=0x{:x} p-cb->evt_type=0x{:x} ", evt_type,
+  log::verbose("evt_type=0x{:x} p-cb->evt_type=0x{:x}", evt_type,
                btm_cb.ble_ctr_cb.inq_var.evt_type);
 
   if (new_mode == BTM_BLE_ADV_ENABLE) {
@@ -1695,7 +1692,7 @@ void btm_send_hci_set_scan_params(uint8_t scan_type, uint16_t scan_int,
     phy_cfg.scan_int = scan_int;
     phy_cfg.scan_win = scan_win;
 
-    if (IS_FLAG_ENABLED(phy_to_native)) {
+    if (com::android::bluetooth::flags::phy_to_native()) {
       btsnd_hcic_ble_set_extended_scan_params(addr_type_own, scan_filter_policy,
                                               scan_phy, &phy_cfg);
     } else {
@@ -1775,7 +1772,7 @@ tBTM_STATUS btm_ble_start_inquiry(uint8_t duration) {
   } else if ((btm_cb.ble_ctr_cb.inq_var.scan_interval != scan_interval) ||
              (btm_cb.ble_ctr_cb.inq_var.scan_window != scan_window)) {
     log::verbose("restart LE scan with low latency scan params");
-    if (IS_FLAG_ENABLED(le_scan_parameters_fix)) {
+    if (com::android::bluetooth::flags::le_scan_parameters_fix()) {
       btm_cb.ble_ctr_cb.inq_var.scan_interval = scan_interval;
       btm_cb.ble_ctr_cb.inq_var.scan_window = scan_window;
     }
@@ -1863,6 +1860,7 @@ tBTM_STATUS btm_ble_read_remote_name(const RawAddress& remote_bda,
   btm_cb.btm_inq_vars.p_remname_cmpl_cb = p_cb;
   btm_cb.btm_inq_vars.remname_active = true;
   btm_cb.btm_inq_vars.remname_bda = remote_bda;
+  btm_cb.btm_inq_vars.remname_dev_type = BT_DEVICE_TYPE_BLE;
 
   alarm_set_on_mloop(btm_cb.btm_inq_vars.remote_name_timer,
                      BTM_EXT_BLE_RMT_NAME_TIMEOUT_MS,
@@ -1889,6 +1887,7 @@ bool btm_ble_cancel_remote_name(const RawAddress& remote_bda) {
 
   btm_cb.btm_inq_vars.remname_active = false;
   btm_cb.btm_inq_vars.remname_bda = RawAddress::kEmpty;
+  btm_cb.btm_inq_vars.remname_dev_type = BT_DEVICE_TYPE_UNKNOWN;
   alarm_cancel(btm_cb.btm_inq_vars.remote_name_timer);
 
   return status;
@@ -2217,7 +2216,7 @@ static void btm_ble_update_inq_result(tINQ_DB_ENT* p_i, uint8_t addr_type,
         break;
       }
     }
-    if (IS_FLAG_ENABLED(ensure_valid_adv_flag)) {
+    if (com::android::bluetooth::flags::ensure_valid_adv_flag()) {
       // Non-connectable packets may omit flags entirely, in which case nothing
       // should be assumed about their values (CSSv10, 1.3.1). Thus, do not
       // interpret the device type unless this packet has the flags set or is
@@ -2240,7 +2239,7 @@ static void btm_ble_update_inq_result(tINQ_DB_ENT* p_i, uint8_t addr_type,
     }
   }
 
-  if (!IS_FLAG_ENABLED(ensure_valid_adv_flag)) {
+  if (!com::android::bluetooth::flags::ensure_valid_adv_flag()) {
     // Non-connectable packets may omit flags entirely, in which case nothing
     // should be assumed about their values (CSSv10, 1.3.1). Thus, do not
     // interpret the device type unless this packet has the flags set or is
@@ -2265,7 +2264,7 @@ void btm_ble_process_adv_addr(RawAddress& bda, tBLE_ADDR_TYPE* addr_type) {
   /* map address to security record */
   bool match = btm_identity_addr_to_random_pseudo(&bda, addr_type, false);
 
-  log::verbose("bda={}", ADDRESS_TO_LOGGABLE_STR(bda));
+  log::verbose("bda={}", bda);
   /* always do RRA resolution on host */
   if (!match && BTM_BLE_IS_RESOLVE_BDA(bda)) {
     tBTM_SEC_DEV_REC* match_rec = btm_ble_resolve_random_addr(bda);
@@ -2326,8 +2325,7 @@ void btm_ble_process_adv_pkt_cont(uint16_t evt_type, tBLE_ADDR_TYPE addr_type,
 
   if (!data_complete) {
     // If we didn't receive whole adv data yet, don't report the device.
-    log::verbose("Data not complete yet, waiting for more {}",
-                 ADDRESS_TO_LOGGABLE_STR(bda));
+    log::verbose("Data not complete yet, waiting for more {}", bda);
     return;
   }
 
@@ -2335,7 +2333,7 @@ void btm_ble_process_adv_pkt_cont(uint16_t evt_type, tBLE_ADDR_TYPE addr_type,
       btm_cb.ble_ctr_cb.inq_var.scan_type == BTM_BLE_SCAN_MODE_ACTI;
   if (is_active_scan && is_scannable && !is_scan_resp) {
     // If we didn't receive scan response yet, don't report the device.
-    log::verbose(" Waiting for scan response {}", ADDRESS_TO_LOGGABLE_STR(bda));
+    log::verbose("Waiting for scan response {}", bda);
     return;
   }
 
@@ -2470,7 +2468,8 @@ void btm_ble_process_adv_pkt_cont_for_inquiry(
                 /* scan response to be updated */
                 (!p_i->scan_rsp) ||
                 (!p_i->inq_info.results.include_rsi && include_rsi) ||
-                (IS_FLAG_ENABLED(update_inquiry_result_on_flag_change) &&
+                (com::android::bluetooth::flags::
+                     update_inquiry_result_on_flag_change() &&
                  !p_i->inq_info.results.flag && p_flag && *p_flag))) {
       update = true;
     } else if (btm_cb.ble_ctr_cb.is_ble_observe_active()) {
@@ -2759,7 +2758,7 @@ static tBTM_STATUS btm_ble_stop_adv(void) {
   return BTM_SUCCESS;
 }
 
-static void btm_ble_fast_adv_timer_timeout(UNUSED_ATTR void* data) {
+static void btm_ble_fast_adv_timer_timeout(void* /* data */) {
   /* fast adv is completed, fall back to slow adv interval */
   btm_ble_start_slow_adv();
 }
@@ -2797,18 +2796,18 @@ static void btm_ble_start_slow_adv(void) {
 }
 
 static void btm_ble_inquiry_timer_gap_limited_discovery_timeout(
-    UNUSED_ATTR void* data) {
+    void* /* data */) {
   /* lim_timeout expired, limited discovery should exit now */
   btm_cb.btm_inq_vars.discoverable_mode &= ~BTM_BLE_LIMITED_DISCOVERABLE;
   btm_ble_set_adv_flag(btm_cb.btm_inq_vars.connectable_mode,
                        btm_cb.btm_inq_vars.discoverable_mode);
 }
 
-static void btm_ble_inquiry_timer_timeout(UNUSED_ATTR void* data) {
+static void btm_ble_inquiry_timer_timeout(void* /* data */) {
   btm_ble_stop_inquiry();
 }
 
-static void btm_ble_observer_timer_timeout(UNUSED_ATTR void* data) {
+static void btm_ble_observer_timer_timeout(void* /* data */) {
   btm_ble_stop_observe();
 }
 
@@ -2838,7 +2837,7 @@ void btm_ble_read_remote_features_complete(uint8_t* p, uint8_t length) {
   if (status != HCI_SUCCESS) {
     if (status != HCI_ERR_UNSUPPORTED_REM_FEATURE) {
       log::error("Failed to read remote features status:{}",
-                 hci_error_code_text(static_cast<tHCI_STATUS>(status)).c_str());
+                 hci_error_code_text(static_cast<tHCI_STATUS>(status)));
       return;
     }
     log::warn("Remote does not support reading remote feature");

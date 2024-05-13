@@ -31,11 +31,11 @@
 
 #include "bta/include/bta_sec_api.h"
 #include "internal_include/bt_target.h"
-#include "os/log.h"
 #include "osi/include/allocator.h"
 #include "stack/hid/hidd_int.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_psm_types.h"
+#include "stack/include/l2cdefs.h"
 #include "stack/include/stack_metrics_logging.h"
 #include "types/raw_address.h"
 
@@ -486,7 +486,7 @@ static void hidd_l2cif_data_ind(uint16_t cid, BT_HDR* p_msg) {
         log::verbose("idle_time = {}", hd_cb.device.idle_time);
         if (hd_cb.device.idle_time) {
           log::warn("idle_time of {} ms not supported by HID Device",
-                    (hd_cb.device.idle_time * 4));
+                    hd_cb.device.idle_time * 4);
           err = TRUE;
         }
       }

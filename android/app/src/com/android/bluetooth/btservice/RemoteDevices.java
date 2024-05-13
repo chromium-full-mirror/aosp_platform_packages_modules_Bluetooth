@@ -485,6 +485,7 @@ public class RemoteDevices {
         /**
          * @param deviceType the mDeviceType to set
          */
+        @VisibleForTesting
         void setDeviceType(int deviceType) {
             synchronized (mObject) {
                 this.mDeviceType = deviceType;
@@ -861,7 +862,7 @@ public class RemoteDevices {
         BluetoothDevice bdDevice = getDevice(address);
         DeviceProperties deviceProperties;
         if (bdDevice == null) {
-            debugLog("Added new device property");
+            debugLog("Added new device property, device=" + bdDevice);
             deviceProperties = addDeviceProperties(address);
             bdDevice = getDevice(address);
         } else {
@@ -878,7 +879,7 @@ public class RemoteDevices {
             val = values[j];
             if (val.length > 0) {
                 synchronized (mObject) {
-                    debugLog("Property type: " + type);
+                    debugLog("Update property, device=" + bdDevice + ", type: " + type);
                     switch (type) {
                         case AbstractionLayer.BT_PROPERTY_BDNAME:
                             final String newName = new String(val);
@@ -910,7 +911,11 @@ public class RemoteDevices {
                         case AbstractionLayer.BT_PROPERTY_CLASS_OF_DEVICE:
                             final int newBluetoothClass = Utils.byteArrayToInt(val);
                             if (newBluetoothClass == deviceProperties.getBluetoothClass()) {
-                                debugLog("Skip class update for " + bdDevice);
+                                debugLog(
+                                        "Skip class update, device="
+                                                + bdDevice
+                                                + ", cod=0x"
+                                                + Integer.toHexString(newBluetoothClass));
                                 break;
                             }
                             deviceProperties.setBluetoothClass(newBluetoothClass);
@@ -923,7 +928,11 @@ public class RemoteDevices {
                                     intent,
                                     BLUETOOTH_CONNECT,
                                     Utils.getTempBroadcastOptions().toBundle());
-                            debugLog("Remote class is:" + newBluetoothClass);
+                            debugLog(
+                                    "Remote class update, device="
+                                            + bdDevice
+                                            + ", cod=0x"
+                                            + Integer.toHexString(newBluetoothClass));
                             break;
                         case AbstractionLayer.BT_PROPERTY_UUIDS:
                             final ParcelUuid[] newUuids = Utils.byteArrayToUuid(val);
@@ -1248,7 +1257,7 @@ public class RemoteDevices {
                             + Utils.getRedactedAddressStringFromByte(address));
             return;
         }
-        Log.d(TAG, "keyMissingCallback device: " + bluetoothDevice);
+        Log.i(TAG, "keyMissingCallback device: " + bluetoothDevice);
 
         if (bluetoothDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
             if (!Flags.keyMissingBroadcast()) {

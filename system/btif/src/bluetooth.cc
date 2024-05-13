@@ -27,8 +27,8 @@
 
 #define LOG_TAG "bt_btif"
 
-#include <android_bluetooth_flags.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 #include <hardware/bluetooth.h>
 #include <hardware/bluetooth_headset_interface.h>
 #include <hardware/bt_av.h>
@@ -45,7 +45,6 @@
 #include <hardware/bt_sdp.h>
 #include <hardware/bt_sock.h>
 #include <hardware/bt_vc.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -333,7 +332,7 @@ struct CoreInterfaceImpl : bluetooth::core::CoreInterface {
   }
 
   void onLinkDown(const RawAddress& bd_addr) override {
-    if (IS_FLAG_ENABLED(a2dp_concurrent_source_sink)) {
+    if (com::android::bluetooth::flags::a2dp_concurrent_source_sink()) {
       btif_av_acl_disconnected(bd_addr, A2dpType::kSource);
       btif_av_acl_disconnected(bd_addr, A2dpType::kSink);
     } else {
@@ -654,8 +653,7 @@ static int cancel_bond(const RawAddress* bd_addr) {
 
 static int remove_bond(const RawAddress* bd_addr) {
   if (is_restricted_mode() && !btif_storage_is_restricted_device(bd_addr)) {
-    log::info("{} cannot be removed in restricted mode",
-              ADDRESS_TO_LOGGABLE_CSTR(*bd_addr));
+    log::info("{} cannot be removed in restricted mode", *bd_addr);
     return BT_STATUS_SUCCESS;
   }
 
@@ -676,11 +674,7 @@ static int get_connection_state(const RawAddress* bd_addr) {
 
   if (bd_addr == nullptr) return 0;
 
-  if (IS_FLAG_ENABLED(api_get_connection_state_sync_on_main)) {
-    return btif_dm_get_connection_state_sync(*bd_addr);
-  } else {
-    return btif_dm_get_connection_state(*bd_addr);
-  }
+  return btif_dm_get_connection_state(*bd_addr);
 }
 
 static int pin_reply(const RawAddress* bd_addr, uint8_t accept, uint8_t pin_len,
@@ -856,8 +850,7 @@ static int get_remote_pbap_pce_version(const RawAddress* bd_addr) {
   if (!btif_config_get_bin(bd_addr->ToString(),
                            BTIF_STORAGE_KEY_PBAP_PCE_VERSION,
                            (uint8_t*)&pce_version, &version_value_size)) {
-    log::warn("Failed to read cached peer PCE version for {}",
-              ADDRESS_TO_LOGGABLE_CSTR(*bd_addr));
+    log::warn("Failed to read cached peer PCE version for {}", *bd_addr);
   }
   return pce_version;
 }
@@ -935,12 +928,8 @@ static const void* get_profile_interface(const char* profile_id) {
   if (is_profile(profile_id, BT_PROFILE_CSIS_CLIENT_ID))
     return btif_csis_client_get_interface();
 
-  bool isBqrEnabled =
-      bluetooth::common::InitFlags::IsBluetoothQualityReportCallbackEnabled();
-  if (isBqrEnabled) {
-    if (is_profile(profile_id, BT_BQR_ID))
-      return bluetooth::bqr::getBluetoothQualityReportInterface();
-  }
+  if (is_profile(profile_id, BT_BQR_ID))
+    return bluetooth::bqr::getBluetoothQualityReportInterface();
 
   return NULL;
 }
@@ -1060,7 +1049,15 @@ static int set_dynamic_audio_buffer_size(int codec, int size) {
 static bool allow_low_latency_audio(bool allowed,
                                     const RawAddress& /* address */) {
   log::info("{}", allowed);
-  bluetooth::audio::a2dp::set_audio_low_latency_mode_allowed(allowed);
+  if (com::android::bluetooth::flags::a2dp_async_allow_low_latency()) {
+    do_in_main_thread(
+        FROM_HERE,
+        base::BindOnce(
+            bluetooth::audio::a2dp::set_audio_low_latency_mode_allowed,
+            allowed));
+  } else {
+    bluetooth::audio::a2dp::set_audio_low_latency_mode_allowed(allowed);
+  }
   return true;
 }
 
@@ -1342,17 +1339,16 @@ void invoke_pin_request_cb(RawAddress bd_addr, bt_bdname_t bd_name,
                                   bd_addr, bd_name, cod, min_16_digit));
 }
 
-void invoke_ssp_request_cb(RawAddress bd_addr, bt_bdname_t bd_name,
-                           uint32_t cod, bt_ssp_variant_t pairing_variant,
+void invoke_ssp_request_cb(RawAddress bd_addr, bt_ssp_variant_t pairing_variant,
                            uint32_t pass_key) {
   do_in_jni_thread(FROM_HERE,
                    base::BindOnce(
-                       [](RawAddress bd_addr, bt_bdname_t bd_name, uint32_t cod,
-                          bt_ssp_variant_t pairing_variant, uint32_t pass_key) {
+                       [](RawAddress bd_addr, bt_ssp_variant_t pairing_variant,
+                          uint32_t pass_key) {
                          HAL_CBACK(bt_hal_cbacks, ssp_request_cb, &bd_addr,
-                                   &bd_name, cod, pairing_variant, pass_key);
+                                   pairing_variant, pass_key);
                        },
-                       bd_addr, bd_name, cod, pairing_variant, pass_key));
+                       bd_addr, pairing_variant, pass_key));
 }
 
 void invoke_oob_data_request_cb(tBT_TRANSPORT t, bool valid, Octet16 c,

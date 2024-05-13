@@ -18,8 +18,8 @@
  *
  ******************************************************************************/
 
-#include <android_bluetooth_flags.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 
 #include "audio/asrc/asrc_resampler.h"
 #include "audio_hal_client.h"
@@ -74,7 +74,10 @@ class SourceImpl : public LeAudioSourceAudioHalClient {
   // Internal functionality
   SourceImpl(bool is_broadcaster)
       : le_audio_sink_hal_state_(HAL_UNINITIALIZED),
-        is_broadcaster_(is_broadcaster){};
+        audio_timer_(
+            /* clock_tick_us= */ bluetooth::common::
+                time_get_audio_server_tick_us),
+        is_broadcaster_(is_broadcaster) {}
   ~SourceImpl() override {
     if (le_audio_sink_hal_state_ != HAL_UNINITIALIZED) Release();
   }
@@ -148,6 +151,11 @@ void SourceImpl::Release() {
   worker_thread_->ShutDown();
 
   if (halSinkInterface_) {
+    if (le_audio_sink_hal_state_ == HAL_STARTED) {
+      halSinkInterface_->StopSession();
+      le_audio_sink_hal_state_ = HAL_STOPPED;
+    }
+
     halSinkInterface_->Cleanup();
 
     auto halInterface = audio::le_audio::LeAudioClientInterface::Get();
@@ -204,7 +212,7 @@ void SourceImpl::SendAudioData() {
         bluetooth::common::time_get_os_boottime_us();
   }
 
-  if (IS_FLAG_ENABLED(leaudio_hal_client_asrc)) {
+  if (com::android::bluetooth::flags::leaudio_hal_client_asrc()) {
     auto asrc_buffers = asrc_->Run(data);
 
     std::lock_guard<std::mutex> guard(audioSourceCallbacksMutex_);
@@ -245,10 +253,10 @@ bool SourceImpl::InitAudioSinkThread() {
 
 void SourceImpl::StartAudioTicks() {
   wakelock_acquire();
-  if (IS_FLAG_ENABLED(leaudio_hal_client_asrc)) {
+  if (com::android::bluetooth::flags::leaudio_hal_client_asrc()) {
     asrc_ = std::make_unique<bluetooth::audio::asrc::SourceAudioHalAsrc>(
-        source_codec_config_.num_channels, source_codec_config_.sample_rate,
-        source_codec_config_.bits_per_sample,
+        worker_thread_, source_codec_config_.num_channels,
+        source_codec_config_.sample_rate, source_codec_config_.bits_per_sample,
         source_codec_config_.data_interval_us);
   }
   audio_timer_.SchedulePeriodic(
@@ -267,7 +275,8 @@ bool SourceImpl::OnSuspendReq() {
   std::lock_guard<std::mutex> guard(audioSourceCallbacksMutex_);
   if (CodecManager::GetInstance()->GetCodecLocation() ==
       types::CodecLocation::HOST) {
-    if (IS_FLAG_ENABLED(run_ble_audio_ticks_in_worker_thread)) {
+    if (com::android::bluetooth::flags::
+            run_ble_audio_ticks_in_worker_thread()) {
       worker_thread_->DoInThread(
           FROM_HERE,
           base::BindOnce(&SourceImpl::StopAudioTicks, base::Unretained(this)));
@@ -371,7 +380,8 @@ void SourceImpl::Stop() {
 
   if (CodecManager::GetInstance()->GetCodecLocation() ==
       types::CodecLocation::HOST) {
-    if (IS_FLAG_ENABLED(run_ble_audio_ticks_in_worker_thread)) {
+    if (com::android::bluetooth::flags::
+            run_ble_audio_ticks_in_worker_thread()) {
       worker_thread_->DoInThread(
           FROM_HERE,
           base::BindOnce(&SourceImpl::StopAudioTicks, base::Unretained(this)));
@@ -392,7 +402,7 @@ void SourceImpl::ConfirmStreamingRequest() {
   }
 
   log::info("");
-  if (IS_FLAG_ENABLED(leaudio_start_stream_race_fix)) {
+  if (com::android::bluetooth::flags::leaudio_start_stream_race_fix()) {
     halSinkInterface_->ConfirmStreamingRequestV2();
   } else {
     halSinkInterface_->ConfirmStreamingRequest();
@@ -401,7 +411,7 @@ void SourceImpl::ConfirmStreamingRequest() {
       types::CodecLocation::HOST)
     return;
 
-  if (IS_FLAG_ENABLED(run_ble_audio_ticks_in_worker_thread)) {
+  if (com::android::bluetooth::flags::run_ble_audio_ticks_in_worker_thread()) {
     worker_thread_->DoInThread(
         FROM_HERE,
         base::BindOnce(&SourceImpl::StartAudioTicks, base::Unretained(this)));
@@ -440,7 +450,7 @@ void SourceImpl::CancelStreamingRequest() {
   }
 
   log::info("");
-  if (IS_FLAG_ENABLED(leaudio_start_stream_race_fix)) {
+  if (com::android::bluetooth::flags::leaudio_start_stream_race_fix()) {
     halSinkInterface_->CancelStreamingRequestV2();
   } else {
     halSinkInterface_->CancelStreamingRequest();

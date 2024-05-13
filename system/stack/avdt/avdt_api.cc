@@ -23,6 +23,8 @@
  *
  ******************************************************************************/
 
+#define LOG_TAG "bluetooth-a2dp"
+
 #include "avdt_api.h"
 
 #include <bluetooth/log.h>
@@ -253,7 +255,7 @@ uint16_t AVDT_DiscoverReq(const RawAddress& bd_addr, uint8_t channel_index,
   uint16_t result = AVDT_SUCCESS;
   tAVDT_CCB_EVT evt;
 
-  log::verbose("");
+  log::info("bd_addr={} channel_index={}", bd_addr, channel_index);
 
   /* find channel control block for this bd addr; if none, allocate one */
   p_ccb = avdt_ccb_by_bd(bd_addr);
@@ -280,8 +282,7 @@ uint16_t AVDT_DiscoverReq(const RawAddress& bd_addr, uint8_t channel_index,
   }
 
   if (result != AVDT_SUCCESS) {
-    log::error("result={} address={}", result,
-               ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
+    log::error("result={} address={}", result, bd_addr);
   }
   return result;
 }
@@ -300,8 +301,6 @@ static uint16_t avdt_get_cap_req(const RawAddress& bd_addr,
                                  tAVDT_CCB_API_GETCAP* p_evt) {
   AvdtpCcb* p_ccb = NULL;
   uint16_t result = AVDT_SUCCESS;
-
-  log::verbose("");
 
   /* verify SEID */
   if ((p_evt->single.seid < AVDT_SEID_MIN) ||
@@ -333,8 +332,7 @@ static uint16_t avdt_get_cap_req(const RawAddress& bd_addr,
   }
 
   if (result != AVDT_SUCCESS) {
-    log::error("result={} address={}", result,
-               ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
+    log::error("result={} address={}", result, bd_addr);
   }
   return result;
 }
@@ -369,7 +367,8 @@ uint16_t AVDT_GetCapReq(const RawAddress& bd_addr, uint8_t channel_index,
   tAVDT_CCB_API_GETCAP getcap;
   uint16_t result = AVDT_SUCCESS;
 
-  log::verbose("");
+  log::info("bd_addr={} channel_index={} seid=0x{:x} get_all_capabilities={}",
+            bd_addr, channel_index, seid, get_all_cap);
 
   getcap.single.seid = seid;
   if (get_all_cap) {
@@ -382,8 +381,7 @@ uint16_t AVDT_GetCapReq(const RawAddress& bd_addr, uint8_t channel_index,
   result = avdt_get_cap_req(bd_addr, channel_index, &getcap);
 
   if (result != AVDT_SUCCESS) {
-    log::error("result={} address={}", result,
-               ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
+    log::error("result={} address={}", result, bd_addr);
   }
   return result;
 }
@@ -404,7 +402,7 @@ uint16_t AVDT_DelayReport(uint8_t handle, uint8_t seid, uint16_t delay) {
   uint16_t result = AVDT_SUCCESS;
   tAVDT_SCB_EVT evt;
 
-  log::verbose("avdt_handle={} seid={} delay={}", handle, seid, delay);
+  log::info("avdt_handle={} seid={} delay={}", handle, seid, delay);
 
   /* map handle to scb */
   p_scb = avdt_scb_by_hdl(handle);
@@ -446,8 +444,7 @@ uint16_t AVDT_OpenReq(uint8_t handle, const RawAddress& bd_addr,
   uint16_t result = AVDT_SUCCESS;
   tAVDT_SCB_EVT evt;
 
-  log::verbose("address={} avdt_handle={} seid={}",
-               ADDRESS_TO_LOGGABLE_CSTR(bd_addr), handle, seid);
+  log::info("bd_addr={} avdt_handle={} seid=0x{:x}", bd_addr, handle, seid);
 
   /* verify SEID */
   if ((seid < AVDT_SEID_MIN) || (seid > AVDT_SEID_MAX)) {
@@ -474,7 +471,7 @@ uint16_t AVDT_OpenReq(uint8_t handle, const RawAddress& bd_addr,
 
   /* send event to scb */
   if (result == AVDT_SUCCESS) {
-    log::verbose("codec: {}", A2DP_CodecInfoString(p_cfg->codec_info).c_str());
+    log::verbose("codec: {}", A2DP_CodecInfoString(p_cfg->codec_info));
 
     evt.msg.config_cmd.hdr.seid = seid;
     evt.msg.config_cmd.hdr.ccb_idx = avdt_ccb_to_idx(p_ccb);
@@ -482,8 +479,7 @@ uint16_t AVDT_OpenReq(uint8_t handle, const RawAddress& bd_addr,
     evt.msg.config_cmd.p_cfg = p_cfg;
     avdt_scb_event(p_scb, AVDT_SCB_API_SETCONFIG_REQ_EVT, &evt);
   } else {
-    log::error("result={} address={} avdt_handle={}", result,
-               ADDRESS_TO_LOGGABLE_CSTR(bd_addr), handle);
+    log::error("result={} address={} avdt_handle={}", result, bd_addr, handle);
   }
 
   return result;
@@ -508,8 +504,8 @@ uint16_t AVDT_ConfigRsp(uint8_t handle, uint8_t label, uint8_t error_code,
   uint16_t result = AVDT_SUCCESS;
   uint8_t event_code;
 
-  log::verbose("avdt_handle={} label={} error_code=0x{:x} category={}", handle,
-               label, error_code, category);
+  log::info("avdt_handle={} label={} error_code=0x{:x} category={}", handle,
+            label, error_code, category);
 
   /* map handle to scb */
   p_scb = avdt_scb_by_hdl(handle);
@@ -562,7 +558,7 @@ uint16_t AVDT_StartReq(uint8_t* p_handles, uint8_t num_handles) {
   uint16_t result = AVDT_SUCCESS;
   int i;
 
-  log::verbose("num_handles={}", num_handles);
+  log::info("num_handles={}", num_handles);
 
   if ((num_handles == 0) || (num_handles > AVDT_NUM_SEPS)) {
     result = AVDT_BAD_PARAMS;
@@ -593,7 +589,7 @@ uint16_t AVDT_StartReq(uint8_t* p_handles, uint8_t num_handles) {
       log::error("result={} num_handles={} invalid", result, num_handles);
     } else {
       log::error("result={} avdt_handle={}", result,
-                 (i < num_handles ? p_handles[i] : p_handles[num_handles - 1]));
+                 i < num_handles ? p_handles[i] : p_handles[num_handles - 1]);
     }
   }
   return result;
@@ -620,7 +616,7 @@ uint16_t AVDT_SuspendReq(uint8_t* p_handles, uint8_t num_handles) {
   uint16_t result = AVDT_SUCCESS;
   int i;
 
-  log::verbose("num_handles={}", num_handles);
+  log::info("num_handles={}", num_handles);
 
   if ((num_handles == 0) || (num_handles > AVDT_NUM_SEPS)) {
     result = AVDT_BAD_PARAMS;
@@ -651,7 +647,7 @@ uint16_t AVDT_SuspendReq(uint8_t* p_handles, uint8_t num_handles) {
       log::error("result={} num_handles={} invalid", result, num_handles);
     } else {
       log::error("result={} avdt_handle={}", result,
-                 (i < num_handles ? p_handles[i] : p_handles[num_handles - 1]));
+                 i < num_handles ? p_handles[i] : p_handles[num_handles - 1]);
     }
   }
   return result;
@@ -675,7 +671,7 @@ uint16_t AVDT_CloseReq(uint8_t handle) {
   AvdtpScb* p_scb;
   uint16_t result = AVDT_SUCCESS;
 
-  log::verbose("avdt_handle={}", handle);
+  log::info("avdt_handle={}", handle);
 
   /* map handle to scb */
   p_scb = avdt_scb_by_hdl(handle);
@@ -715,7 +711,7 @@ uint16_t AVDT_ReconfigReq(uint8_t handle, AvdtpSepConfig* p_cfg) {
   uint16_t result = AVDT_SUCCESS;
   tAVDT_SCB_EVT evt;
 
-  log::verbose("avdt_handle={}", handle);
+  log::info("avdt_handle={}", handle);
 
   /* map handle to scb */
   p_scb = avdt_scb_by_hdl(handle);
@@ -755,7 +751,7 @@ uint16_t AVDT_SecurityReq(uint8_t handle, uint8_t* p_data, uint16_t len) {
   uint16_t result = AVDT_SUCCESS;
   tAVDT_SCB_EVT evt;
 
-  log::verbose("avdt_handle={} len={}", handle, len);
+  log::info("avdt_handle={} len={}", handle, len);
 
   /* map handle to scb */
   p_scb = avdt_scb_by_hdl(handle);
@@ -795,8 +791,8 @@ uint16_t AVDT_SecurityRsp(uint8_t handle, uint8_t label, uint8_t error_code,
   uint16_t result = AVDT_SUCCESS;
   tAVDT_SCB_EVT evt;
 
-  log::verbose("avdt_handle={} label={} error_code=0x{:x} len={}", handle,
-               label, error_code, len);
+  log::info("avdt_handle={} label={} error_code=0x{:x} len={}", handle,
+            label, error_code, len);
 
   /* map handle to scb */
   p_scb = avdt_scb_by_hdl(handle);
@@ -901,8 +897,7 @@ uint16_t AVDT_ConnectReq(const RawAddress& bd_addr, uint8_t channel_index,
   uint16_t result = AVDT_SUCCESS;
   tAVDT_CCB_EVT evt;
 
-  log::warn("address={} channel_index={}", ADDRESS_TO_LOGGABLE_CSTR(bd_addr),
-            channel_index);
+  log::info("bd_addr={} channel_index={}", bd_addr, channel_index);
 
   /* find channel control block for this bd addr; if none, allocate one */
   p_ccb = avdt_ccb_by_bd(bd_addr);
@@ -913,7 +908,7 @@ uint16_t AVDT_ConnectReq(const RawAddress& bd_addr, uint8_t channel_index,
       result = AVDT_NO_RESOURCES;
     }
   } else if (!p_ccb->ll_opened) {
-    log::warn("AVDT_ConnectReq: CCB LL is in the middle of opening");
+    log::warn("CCB LL is in the middle of opening");
 
     /* ccb was already allocated for the incoming signalling. */
     result = AVDT_BUSY;
@@ -925,7 +920,7 @@ uint16_t AVDT_ConnectReq(const RawAddress& bd_addr, uint8_t channel_index,
     avdt_ccb_event(p_ccb, AVDT_CCB_API_CONNECT_REQ_EVT, &evt);
   }
 
-  log::warn("address={} result={}", ADDRESS_TO_LOGGABLE_CSTR(bd_addr), result);
+  log::info("completed; bd_addr={} result={}", bd_addr, result);
 
   return result;
 }
@@ -948,15 +943,15 @@ uint16_t AVDT_DisconnectReq(const RawAddress& bd_addr,
   tAVDT_RESULT result = AVDT_SUCCESS;
   tAVDT_CCB_EVT evt;
 
+  log::info("bd_addr={}", bd_addr);
+
   /* find channel control block for this bd addr; if none, error */
   p_ccb = avdt_ccb_by_bd(bd_addr);
   if (p_ccb == NULL) {
-    log::error("Unable to find AVDT stream endpoint peer:{}",
-               ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
+    log::error("Unable to find AVDT stream endpoint peer:{}", bd_addr);
     result = AVDT_BAD_PARAMS;
   } else {
-    log::debug("Sending disconnect request to ccb peer:{}",
-               ADDRESS_TO_LOGGABLE_CSTR(bd_addr));
+    log::debug("Sending disconnect request to ccb peer:{}", bd_addr);
     evt.disconnect.p_cback = p_cback;
     avdt_ccb_event(p_ccb, AVDT_CCB_API_DISCONNECT_REQ_EVT, &evt);
   }

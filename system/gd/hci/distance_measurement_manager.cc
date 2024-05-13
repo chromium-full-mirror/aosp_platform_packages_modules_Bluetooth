@@ -15,8 +15,8 @@
  */
 #include "hci/distance_measurement_manager.h"
 
-#include <android_bluetooth_flags.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 #include <math.h>
 
 #include <complex>
@@ -56,13 +56,13 @@ static constexpr uint8_t kMode0Steps =
     0x03;  // Maximum number of mode-0 steps to increase success subevent rate
 static constexpr uint8_t kChannelMapRepetition = 0x01;  // No repetition
 static constexpr uint8_t kCh3cJump = 0x03;              // Skip 3 Channels
-static constexpr uint16_t kMaxProcedureLen = 0xFFFF;    // 40.959375s
+static constexpr uint16_t kMaxProcedureLen = 0x4E20;    // 12.5s
 static constexpr uint16_t kMinProcedureInterval = 0x01;
 static constexpr uint16_t kMaxProcedureInterval = 0xFF;
 static constexpr uint16_t kMaxProcedureCount = 0x01;
 static constexpr uint32_t kMinSubeventLen = 0x0004E2;         // 1250us
 static constexpr uint32_t kMaxSubeventLen = 0x3d0900;         // 4s
-static constexpr uint8_t kToneAntennaConfigSelection = 0x07;  // 2x2
+static constexpr uint8_t kToneAntennaConfigSelection = 0x00;  // 1x1
 static constexpr uint8_t kTxPwrDelta = 0x00;
 static constexpr uint8_t kProcedureDataBufferSize = 0x10;  // Buffer size of Procedure data
 static constexpr uint16_t kMtuForRasData = 507;            // 512 - 5
@@ -142,7 +142,7 @@ struct DistanceMeasurementManager::impl {
     hci_layer_->RegisterLeEventHandler(
         hci::SubeventCode::TRANSMIT_POWER_REPORTING,
         handler_->BindOn(this, &impl::on_transmit_power_reporting));
-    if (!IS_FLAG_ENABLED(channel_sounding_in_stack)) {
+    if (!com::android::bluetooth::flags::channel_sounding_in_stack()) {
       log::info("IS_FLAG_ENABLED channel_sounding_in_stack: false");
       return;
     }
@@ -163,12 +163,12 @@ struct DistanceMeasurementManager::impl {
 
   void start_distance_measurement(
       const Address& address, uint16_t interval, DistanceMeasurementMethod method) {
-    log::info("Address:{}, method:{}", ADDRESS_TO_LOGGABLE_CSTR(address), method);
+    log::info("Address:{}, method:{}", address, method);
     uint16_t connection_handle = acl_manager_->HACK_GetLeHandle(address);
 
     // Remove this check if we support any connection less method
     if (connection_handle == kIllegalConnectionHandle) {
-      log::warn("Can't find any LE connection for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+      log::warn("Can't find any LE connection for {}", address);
       distance_measurement_callbacks_->OnDistanceMeasurementStartFail(
           address, REASON_NO_LE_CONNECTION, method);
       return;
@@ -200,11 +200,8 @@ struct DistanceMeasurementManager::impl {
 
   void start_distance_measurement_with_cs(
       const Address& cs_remote_address, uint16_t connection_handle, uint16_t interval) {
-    log::info(
-        "connection_handle: {}, address: {}",
-        connection_handle,
-        ADDRESS_TO_LOGGABLE_CSTR(cs_remote_address));
-    if (!IS_FLAG_ENABLED(channel_sounding_in_stack)) {
+    log::info("connection_handle: {}, address: {}", connection_handle, cs_remote_address);
+    if (!com::android::bluetooth::flags::channel_sounding_in_stack()) {
       log::error("Channel Sounding is not enabled");
       distance_measurement_callbacks_->OnDistanceMeasurementStartFail(
           cs_remote_address, REASON_INTERNAL_ERROR, METHOD_CS);
@@ -213,7 +210,7 @@ struct DistanceMeasurementManager::impl {
 
     if (cs_trackers_.find(connection_handle) != cs_trackers_.end() &&
         cs_trackers_[connection_handle].address != cs_remote_address) {
-      log::warn("Remove old tracker for {}", ADDRESS_TO_LOGGABLE_CSTR(cs_remote_address));
+      log::warn("Remove old tracker for {}", cs_remote_address);
       cs_trackers_.erase(connection_handle);
     }
 
@@ -251,12 +248,12 @@ struct DistanceMeasurementManager::impl {
   }
 
   void stop_distance_measurement(const Address& address, DistanceMeasurementMethod method) {
-    log::info("Address:{}, method:{}", ADDRESS_TO_LOGGABLE_CSTR(address), method);
+    log::info("Address:{}, method:{}", address, method);
     switch (method) {
       case METHOD_AUTO:
       case METHOD_RSSI: {
         if (rssi_trackers.find(address) == rssi_trackers.end()) {
-          log::warn("Can't find rssi tracker for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+          log::warn("Can't find rssi tracker for {}", address);
         } else {
           hci_layer_->EnqueueCommand(
               LeSetTransmitPowerReportingEnableBuilder::Create(
@@ -270,7 +267,7 @@ struct DistanceMeasurementManager::impl {
       case METHOD_CS: {
         uint16_t connection_handle = acl_manager_->HACK_GetLeHandle(address);
         if (cs_trackers_.find(connection_handle) == cs_trackers_.end()) {
-          log::warn("Can't find CS tracker for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+          log::warn("Can't find CS tracker for {}", address);
         } else {
           cs_trackers_[connection_handle].repeating_alarm->Cancel();
           cs_trackers_[connection_handle].repeating_alarm.reset();
@@ -283,12 +280,12 @@ struct DistanceMeasurementManager::impl {
 
   void send_read_rssi(const Address& address) {
     if (rssi_trackers.find(address) == rssi_trackers.end()) {
-      log::warn("Can't find rssi tracker for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+      log::warn("Can't find rssi tracker for {}", address);
       return;
     }
     uint16_t connection_handle = acl_manager_->HACK_GetLeHandle(address);
     if (connection_handle == kIllegalConnectionHandle) {
-      log::warn("Can't find connection for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+      log::warn("Can't find connection for {}", address);
       if (rssi_trackers.find(address) != rssi_trackers.end()) {
         distance_measurement_callbacks_->OnDistanceMeasurementStopped(
             address, REASON_NO_LE_CONNECTION, METHOD_RSSI);
@@ -416,7 +413,7 @@ struct DistanceMeasurementManager::impl {
     // Check if the connection still exists
     uint16_t connection_handle_from_acl_manager = acl_manager_->HACK_GetLeHandle(address);
     if (connection_handle_from_acl_manager == kIllegalConnectionHandle) {
-      log::warn("Can't find connection for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+      log::warn("Can't find connection for {}", address);
       distance_measurement_callbacks_->OnDistanceMeasurementStopped(
           address, REASON_NO_LE_CONNECTION, METHOD_CS);
       cs_trackers_[connection_handle].repeating_alarm->Cancel();
@@ -512,7 +509,7 @@ struct DistanceMeasurementManager::impl {
     log::info(
         "Setup phase complete, connection_handle: {}, address: {}",
         connection_handle,
-        ADDRESS_TO_LOGGABLE_CSTR(cs_trackers_[connection_handle].address));
+        cs_trackers_[connection_handle].address);
     if (cs_trackers_[connection_handle].role == CsRole::INITIATOR) {
       send_le_cs_create_config(connection_handle);
     }
@@ -777,11 +774,11 @@ struct DistanceMeasurementManager::impl {
     }
   }
 
-  void handle_remote_data(const Address& address, const std::vector<uint8_t> raw_data) {
+  void handle_remote_data(const Address address, const std::vector<uint8_t> raw_data) {
     uint16_t connection_handle = acl_manager_->HACK_GetLeHandle(address);
     log::debug(
         "address:{}, connection_handle 0x{:04x}, size:{}",
-        address.ToString().c_str(),
+        address.ToString(),
         connection_handle,
         raw_data.size());
 
@@ -835,7 +832,7 @@ struct DistanceMeasurementManager::impl {
       RangingHeader ranging_header,
       PacketViewForRecombination& segment_data,
       uint16_t connection_handle) {
-    log::debug("Data size {}, Ranging_header {}", segment_data.size(), ranging_header.ToString().c_str());
+    log::debug("Data size {}, Ranging_header {}", segment_data.size(), ranging_header.ToString());
     auto procedure_data =
         get_procedure_data_for_ras(connection_handle, ranging_header.ranging_counter_);
     if (procedure_data == nullptr) {
@@ -889,9 +886,7 @@ struct DistanceMeasurementManager::impl {
               after = LeCsMode0InitatorData::Parse(&tone_data, parse_index);
               if (after == parse_index) {
                 log::warn(
-                    "Error invalid mode {} data, role:{}",
-                    step_mode.mode_type_,
-                    CsRoleText(role).c_str());
+                    "Error invalid mode {} data, role:{}", step_mode.mode_type_, CsRoleText(role));
                 return;
               }
               parse_index = after;
@@ -900,9 +895,7 @@ struct DistanceMeasurementManager::impl {
               after = LeCsMode0ReflectorData::Parse(&tone_data, parse_index);
               if (after == parse_index) {
                 log::warn(
-                    "Error invalid mode {} data, role:{}",
-                    step_mode.mode_type_,
-                    CsRoleText(role).c_str());
+                    "Error invalid mode {} data, role:{}", step_mode.mode_type_, CsRoleText(role));
                 return;
               }
             }
@@ -931,9 +924,7 @@ struct DistanceMeasurementManager::impl {
             after = LeCsMode2Data::Parse(&tone_data, packet_bytes_view.begin());
             if (after == packet_bytes_view.begin()) {
               log::warn(
-                  "Error invalid mode {} data, role:{}",
-                  step_mode.mode_type_,
-                  CsRoleText(role).c_str());
+                  "Error invalid mode {} data, role:{}", step_mode.mode_type_, CsRoleText(role));
               return;
             }
             parse_index += data_len;
@@ -947,7 +938,7 @@ struct DistanceMeasurementManager::impl {
               double i_value = get_iq_value(tone_data.tone_data_[k].i_sample_);
               double q_value = get_iq_value(tone_data.tone_data_[k].q_sample_);
               uint8_t tone_quality_indicator = tone_data.tone_data_[k].tone_quality_indicator_;
-              log::debug(
+              log::verbose(
                   "antenna_path {}, {:f}, {:f}", (uint16_t)(antenna_path + 1), i_value, q_value);
               if (role == CsRole::INITIATOR) {
                 procedure_data->tone_pct_initiator[antenna_path].emplace_back(i_value, q_value);
@@ -1299,12 +1290,12 @@ struct DistanceMeasurementManager::impl {
     }
 
     if (rssi_trackers.find(address) == rssi_trackers.end()) {
-      log::warn("Can't find rssi tracker for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+      log::warn("Can't find rssi tracker for {}", address);
       distance_measurement_callbacks_->OnDistanceMeasurementStartFail(
           address, REASON_INTERNAL_ERROR, METHOD_RSSI);
       rssi_trackers.erase(address);
     } else {
-      log::info("Track rssi for address {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+      log::info("Track rssi for address {}", address);
       rssi_trackers[address].started = true;
       distance_measurement_callbacks_->OnDistanceMeasurementStarted(address, METHOD_RSSI);
       rssi_trackers[address].repeating_alarm->Schedule(
@@ -1320,7 +1311,7 @@ struct DistanceMeasurementManager::impl {
       return;
     }
     if (rssi_trackers.find(address) == rssi_trackers.end()) {
-      log::warn("Can't find rssi tracker for {}", ADDRESS_TO_LOGGABLE_CSTR(address));
+      log::warn("Can't find rssi tracker for {}", address);
       return;
     }
     double remote_tx_power = (int8_t)rssi_trackers[address].remote_tx_power;
@@ -1436,7 +1427,7 @@ void DistanceMeasurementManager::StopDistanceMeasurement(
 }
 
 void DistanceMeasurementManager::HandleRemoteData(
-    const Address& address, const std::vector<uint8_t> raw_data) {
+    const Address& address, const std::vector<uint8_t>& raw_data) {
   CallOn(pimpl_.get(), &impl::handle_remote_data, address, raw_data);
 }
 

@@ -21,7 +21,6 @@
 #include <bluetooth/log.h>
 #include <dlfcn.h>
 #include <inttypes.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "a2dp_vendor.h"
@@ -171,7 +170,7 @@ static void a2dp_vendor_aptx_encoder_update(A2dpCodecConfig* a2dp_codec_config,
   *p_config_updated = false;
   if (!a2dp_codec_config->copyOutOtaCodecConfig(codec_info)) {
     log::error("Cannot update the codec encoder for {}: invalid codec config",
-               a2dp_codec_config->name().c_str());
+               a2dp_codec_config->name());
     return;
   }
   const uint8_t* p_codec_info = codec_info;
@@ -354,11 +353,17 @@ void a2dp_vendor_aptx_send_frames(uint64_t timestamp_us) {
 
   // Update the RTP timestamp
   *((uint32_t*)(p_buf + 1)) = a2dp_aptx_encoder_cb.timestamp;
+
   const uint8_t BYTES_PER_FRAME = 2;
   uint32_t rtp_timestamp =
       (pcm_bytes_encoded / a2dp_aptx_encoder_cb.feeding_params.channel_count) /
       BYTES_PER_FRAME;
-  a2dp_aptx_encoder_cb.timestamp += rtp_timestamp;
+
+  // Timestamp will wrap over to 0 if stream continues on long enough
+  // (>25H @ 48KHz). The parameters are promoted to 64bit to ensure that
+  // no unsigned overflow is triggered as ubsan is always enabled.
+  a2dp_aptx_encoder_cb.timestamp =
+      ((uint64_t)a2dp_aptx_encoder_cb.timestamp + rtp_timestamp) & UINT32_MAX;
 
   if (p_buf->len > 0) {
     a2dp_aptx_encoder_cb.enqueue_callback(p_buf, 1, bytes_read);

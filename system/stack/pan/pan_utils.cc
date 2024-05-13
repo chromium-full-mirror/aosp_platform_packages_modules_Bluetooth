@@ -82,8 +82,10 @@ uint32_t pan_register_with_sdp(uint16_t uuid, const char* p_name,
   }
 
   /* Service Class ID List */
-  get_legacy_stack_sdp_api()->handle.SDP_AddServiceClassIdList(sdp_handle, 1,
-                                                               &uuid);
+  if (!get_legacy_stack_sdp_api()->handle.SDP_AddServiceClassIdList(sdp_handle,
+                                                                    1, &uuid)) {
+    log::warn("Unable to add SDP class id list handle:{}", sdp_handle);
+  }
 
   /* Add protocol element sequence from the constant string */
   get_legacy_stack_sdp_api()->handle.SDP_AddAttribute(
@@ -91,13 +93,17 @@ uint32_t pan_register_with_sdp(uint16_t uuid, const char* p_name,
       (uint8_t*)(pan_proto_elem_data + 2));
 
   /* Language base */
-  get_legacy_stack_sdp_api()->handle.SDP_AddLanguageBaseAttrIDList(
-      sdp_handle, LANG_ID_CODE_ENGLISH, LANG_ID_CHAR_ENCODE_UTF8,
-      LANGUAGE_BASE_ID);
+  if (!get_legacy_stack_sdp_api()->handle.SDP_AddLanguageBaseAttrIDList(
+          sdp_handle, LANG_ID_CODE_ENGLISH, LANG_ID_CHAR_ENCODE_UTF8,
+          LANGUAGE_BASE_ID)) {
+    log::warn("Unable to add SDP language base attribute");
+  }
 
   /* Profile descriptor list */
-  get_legacy_stack_sdp_api()->handle.SDP_AddProfileDescriptorList(
-      sdp_handle, uuid, PAN_PROFILE_VERSION);
+  if (!get_legacy_stack_sdp_api()->handle.SDP_AddProfileDescriptorList(
+          sdp_handle, uuid, PAN_PROFILE_VERSION)) {
+    log::warn("Unable to add SDP PAN profile version");
+  }
 
   /* Service Name */
   get_legacy_stack_sdp_api()->handle.SDP_AddAttribute(
@@ -137,8 +143,11 @@ uint32_t pan_register_with_sdp(uint16_t uuid, const char* p_name,
   }
 
   /* Make the service browsable */
-  get_legacy_stack_sdp_api()->handle.SDP_AddUuidSequence(
-      sdp_handle, ATTR_ID_BROWSE_GROUP_LIST, 1, &browse_list);
+  if (!get_legacy_stack_sdp_api()->handle.SDP_AddUuidSequence(
+          sdp_handle, ATTR_ID_BROWSE_GROUP_LIST, 1, &browse_list)) {
+    log::warn("Unable to add SDP uuid sequence browse group list handle:{}",
+              sdp_handle);
+  }
 
   return sdp_handle;
 }
@@ -285,8 +294,7 @@ void pan_dump_status(void) {
 
   for (i = 0, p_pcb = pan_cb.pcb; i < MAX_PAN_CONNS; i++, p_pcb++) {
     log::verbose("{} state:{}, handle:{}, src{}, BD:{}", i, p_pcb->con_state,
-                 p_pcb->handle, p_pcb->src_uuid,
-                 ADDRESS_TO_LOGGABLE_STR(p_pcb->rem_bda));
+                 p_pcb->handle, p_pcb->src_uuid, p_pcb->rem_bda);
   }
 #endif
 }

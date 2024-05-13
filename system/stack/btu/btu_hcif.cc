@@ -213,8 +213,7 @@ static void btu_hcif_log_event_metrics(uint8_t evt_code,
  * Returns          void
  *
  ******************************************************************************/
-void btu_hcif_process_event(UNUSED_ATTR uint8_t controller_id,
-                            const BT_HDR* p_msg) {
+void btu_hcif_process_event(uint8_t /* controller_id */, const BT_HDR* p_msg) {
   uint8_t* p = (uint8_t*)(p_msg + 1) + p_msg->offset;
   uint8_t hci_evt_code, hci_evt_len;
   uint8_t ble_sub_code;
@@ -579,7 +578,7 @@ static void btu_hcif_log_command_metrics(uint16_t opcode, const uint8_t* p_cmd,
  * Returns          void
  *
  ******************************************************************************/
-void btu_hcif_send_cmd(UNUSED_ATTR uint8_t controller_id, const BT_HDR* p_buf) {
+void btu_hcif_send_cmd(uint8_t /* controller_id */, const BT_HDR* p_buf) {
   if (!p_buf) return;
 
   uint16_t opcode;
@@ -856,13 +855,12 @@ static void btu_hcif_esco_connection_comp_evt(const uint8_t* p) {
   STREAM_SKIP_UINT8(p);   // air_mode
 
   handle = HCID_GET_HANDLE(handle);
-  log::assert_that(handle <= HCI_HANDLE_MAX,
-                   "Received eSCO connection complete event with invalid "
-                   "handle: 0x{:X} that should be <= 0x{:X}",
-                   handle, HCI_HANDLE_MAX);
-
   data.bd_addr = bda;
   if (status == HCI_SUCCESS) {
+    log::assert_that(handle <= HCI_HANDLE_MAX,
+                     "Received eSCO connection complete event with invalid "
+                     "handle: 0x{:X} that should be <= 0x{:X}",
+                     handle, HCI_HANDLE_MAX);
     btm_sco_connected(bda, handle, &data);
   } else {
     btm_sco_connection_failed(static_cast<tHCI_STATUS>(status), bda, handle,
@@ -919,10 +917,6 @@ static void btu_hcif_hdl_command_complete(uint16_t opcode, uint8_t* p,
 
     case HCI_READ_LOCAL_NAME:
       btm_read_local_name_complete(p, evt_len);
-      break;
-
-    case HCI_GET_LINK_QUALITY:
-      btm_read_link_quality_complete(p, evt_len);
       break;
 
     case HCI_READ_RSSI:

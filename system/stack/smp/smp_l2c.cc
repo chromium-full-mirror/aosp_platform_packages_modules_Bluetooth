@@ -24,18 +24,17 @@
 
 #define LOG_TAG "smp"
 
-#include <android_bluetooth_flags.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 
 #include "internal_include/bt_target.h"
-#include "os/log.h"
 #include "osi/include/allocator.h"
-#include "osi/include/osi.h"  // UNUSED_ATTR
 #include "smp_int.h"
 #include "stack/btm/btm_dev.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/l2c_api.h"
+#include "stack/include/l2cdefs.h"
 #include "types/raw_address.h"
 
 using namespace bluetooth;
@@ -92,16 +91,15 @@ void smp_l2cap_if_init(void) {
  *                      connected (conn = true)/disconnected (conn = false).
  *
  ******************************************************************************/
-static void smp_connect_callback(UNUSED_ATTR uint16_t channel,
+static void smp_connect_callback(uint16_t /* channel */,
                                  const RawAddress& bd_addr, bool connected,
-                                 UNUSED_ATTR uint16_t reason,
+                                 uint16_t /* reason */,
                                  tBT_TRANSPORT transport) {
   tSMP_CB* p_cb = &smp_cb;
   tSMP_INT_DATA int_data;
 
-  log::debug("bd_addr:{} transport:{}, connected:{}",
-             ADDRESS_TO_LOGGABLE_CSTR(bd_addr), bt_transport_text(transport),
-             connected);
+  log::debug("bd_addr:{} transport:{}, connected:{}", bd_addr,
+             bt_transport_text(transport), connected);
 
   if (bd_addr.IsEmpty()) {
     log::warn("empty address");
@@ -226,12 +224,10 @@ static void smp_data_received(uint16_t channel, const RawAddress& bd_addr,
 static void smp_tx_complete_callback(uint16_t cid, uint16_t num_pkt) {
   tSMP_CB* p_cb = &smp_cb;
 
-#ifndef TARGET_FLOSS
-  if (!IS_FLAG_ENABLED(l2cap_tx_complete_cb_info)) {
+  if (!com::android::bluetooth::flags::l2cap_tx_complete_cb_info()) {
     log::verbose("Exit since l2cap_tx_complete_cb_info is disabled");
     return;
   }
-#endif
 
   log::verbose("l2cap_tx_complete_cb_info is enabled, continue");
   if (p_cb->total_tx_unacked >= num_pkt) {
@@ -271,9 +267,8 @@ static void smp_br_connect_callback(uint16_t channel, const RawAddress& bd_addr,
     return;
   }
 
-  log::info("BDA:{} pairing_bda:{}, connected:{}",
-            ADDRESS_TO_LOGGABLE_CSTR(bd_addr),
-            ADDRESS_TO_LOGGABLE_CSTR(p_cb->pairing_bda), connected);
+  log::info("BDA:{} pairing_bda:{}, connected:{}", bd_addr, p_cb->pairing_bda,
+            connected);
 
   if (bd_addr != p_cb->pairing_bda) return;
 

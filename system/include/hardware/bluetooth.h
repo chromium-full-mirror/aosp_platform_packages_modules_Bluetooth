@@ -373,7 +373,6 @@ typedef enum {
    * Data Type - bt_vendor_product_info_t.
    */
   BT_PROPERTY_VENDOR_PRODUCT_INFO,
-  BT_PROPERTY_WL_MEDIA_PLAYERS_LIST,
 
   /**
    * Description - ASHA capability.
@@ -518,7 +517,6 @@ typedef void (*pin_request_callback)(RawAddress* remote_bd_addr,
 /* TODO: Passkey request callback shall not be needed for devices with display
  * capability. We still need support this in the stack for completeness */
 typedef void (*ssp_request_callback)(RawAddress* remote_bd_addr,
-                                     bt_bdname_t* bd_name, uint32_t cod,
                                      bt_ssp_variant_t pairing_variant,
                                      uint32_t pass_key);
 

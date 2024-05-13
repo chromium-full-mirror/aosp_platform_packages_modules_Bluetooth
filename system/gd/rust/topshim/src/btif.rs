@@ -166,7 +166,6 @@ pub enum BtPropertyType {
     Appearance,
     VendorProductInfo,
     // Unimplemented:
-    //  BT_PROPERTY_WL_MEDIA_PLAYERS_LIST,
     //  BT_PROPERTY_REMOTE_ASHA_CAPABILITY,
     //  BT_PROPERTY_REMOTE_ASHA_TRUNCATED_HISYNCID,
     //  BT_PROPERTY_REMOTE_MODEL_NUM,
@@ -421,6 +420,11 @@ pub type BtRemoteVersion = bindings::bt_remote_version_t;
 pub type BtVendorProductInfo = bindings::bt_vendor_product_info_t;
 pub type Uuid = bindings::bluetooth::Uuid;
 pub type Uuid128Bit = bindings::bluetooth::Uuid_UUID128Bit;
+
+unsafe impl ExternType for Uuid {
+    type Id = type_id!("bluetooth::topshim::rust::Uuid");
+    type Kind = cxx::kind::Trivial;
+}
 
 impl TryFrom<Uuid> for Vec<u8> {
     type Error = &'static str;
@@ -958,7 +962,7 @@ pub enum BaseCallbacks {
     DeviceFound(i32, Vec<BluetoothProperty>),
     DiscoveryState(BtDiscoveryState),
     PinRequest(RawAddress, String, u32, bool),
-    SspRequest(RawAddress, String, u32, BtSspVariant, u32),
+    SspRequest(RawAddress, BtSspVariant, u32),
     BondState(BtStatus, RawAddress, BtBondState, i32),
     AddressConsolidate(RawAddress, RawAddress),
     LeAddressAssociate(RawAddress, RawAddress),
@@ -1012,9 +1016,8 @@ cb_variant!(BaseCb, pin_request_cb -> BaseCallbacks::PinRequest,
     let _1 = String::from(unsafe{*_1});
 });
 cb_variant!(BaseCb, ssp_request_cb -> BaseCallbacks::SspRequest,
-*mut RawAddress, *mut bindings::bt_bdname_t, u32, bindings::bt_ssp_variant_t -> BtSspVariant, u32, {
+*mut RawAddress, bindings::bt_ssp_variant_t -> BtSspVariant, u32, {
     let _0 = unsafe { *(_0 as *const RawAddress) };
-    let _1 = String::from(unsafe{*_1});
 });
 cb_variant!(BaseCb, bond_state_cb -> BaseCallbacks::BondState,
 u32 -> BtStatus, *mut RawAddress, bindings::bt_bond_state_t -> BtBondState, i32, {

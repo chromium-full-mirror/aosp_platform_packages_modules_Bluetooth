@@ -204,7 +204,7 @@ struct codec_manager_impl {
     }
   }
 
-  const AudioSetConfigurations* GetSupportedCodecConfigurations(
+  AudioSetConfigurations GetSupportedCodecConfigurations(
       const CodecManager::UnicastConfigurationRequirements& requirements)
       const {
     if (GetCodecLocation() == le_audio::types::CodecLocation::ADSP) {
@@ -215,14 +215,14 @@ struct codec_manager_impl {
       // doesn't support.
       return context_type_offload_config_map_.count(
                  requirements.audio_context_type)
-                 ? &context_type_offload_config_map_.at(
+                 ? context_type_offload_config_map_.at(
                        requirements.audio_context_type)
-                 : nullptr;
+                 : AudioSetConfigurations();
     }
 
     log::verbose("Get software config for the context type: {}",
                  (int)requirements.audio_context_type);
-    return AudioSetConfigurationProvider::Get()->GetConfigurations(
+    return *AudioSetConfigurationProvider::Get()->GetConfigurations(
         requirements.audio_context_type);
   }
 
@@ -248,18 +248,31 @@ struct codec_manager_impl {
       const CodecManager::UnicastConfigurationRequirements& requirements,
       CodecManager::UnicastConfigurationVerifier verifier) {
     auto configs = GetSupportedCodecConfigurations(requirements);
-    if (configs == nullptr) {
+    if (configs.empty()) {
       log::error("No valid configuration matching the requirements: {}",
                  requirements);
       PrintDebugState();
       return nullptr;
     }
+
+    // Remove the dual bidir SWB config if not supported
+    if (!IsDualBiDirSwbSupported()) {
+      configs.erase(
+          std::remove_if(configs.begin(), configs.end(),
+                         [](auto const& el) {
+                           if (el->confs.source.empty()) return false;
+                           return AudioSetConfigurationProvider::Get()
+                               ->CheckConfigurationIsDualBiDirSwb(*el);
+                         }),
+          configs.end());
+    }
+
     // Note: For the only supported right now legacy software configuration
     //       provider, we use the device group logic to match the proper
     //       configuration with group capabilities. Note that this path only
     //       supports the LC3 codec format. For the multicodec support we should
     //       rely on the configuration matcher behind the AIDL interface.
-    auto conf = verifier(requirements, configs);
+    auto conf = verifier(requirements, &configs);
     return conf ? std::make_unique<AudioSetConfiguration>(*conf) : nullptr;
   }
 
@@ -268,32 +281,35 @@ struct codec_manager_impl {
         config);
   }
 
+  bool CheckCodecConfigIsDualBiDirSwb(const AudioSetConfiguration& config) {
+    return AudioSetConfigurationProvider::Get()
+        ->CheckConfigurationIsDualBiDirSwb(config);
+  }
+
   void UpdateSupportedBroadcastConfig(
       const std::vector<AudioSetConfiguration>& adsp_capabilities) {
     log::info("UpdateSupportedBroadcastConfig");
 
     for (const auto& adsp_audio_set_conf : adsp_capabilities) {
-      log::assert_that(
-          adsp_audio_set_conf.topology_info.has_value(),
-          "No topology info, which is required to properly configure the ASEs");
-      if (adsp_audio_set_conf.confs.sink.size() != 1 ||
-          adsp_audio_set_conf.topology_info->device_count.sink != 0 ||
-          adsp_audio_set_conf.topology_info->device_count.source != 0) {
+      if (adsp_audio_set_conf.confs.sink.empty() ||
+          !adsp_audio_set_conf.confs.source.empty()) {
         continue;
       }
+
       auto& adsp_config = adsp_audio_set_conf.confs.sink[0];
 
       const types::LeAudioCoreCodecConfig core_config =
           adsp_config.codec.params.GetAsCoreCodecConfig();
       bluetooth::le_audio::broadcast_offload_config broadcast_config;
-      broadcast_config.stream_map.resize(
-          core_config.GetChannelCountPerIsoStream());
+      broadcast_config.stream_map.resize(adsp_audio_set_conf.confs.sink.size());
 
       // Enable the individual channels per BIS in the stream map
+      auto all_channels = adsp_config.codec.channel_count_per_iso_stream;
+      uint8_t channel_alloc_idx = 0;
       for (auto& [_, channels] : broadcast_config.stream_map) {
-        for (uint8_t i = 0; i < adsp_config.codec.channel_count_per_iso_stream;
-             ++i) {
-          channels |= (0b1 << i);
+        if (all_channels) {
+          channels |= (0b1 << channel_alloc_idx++);
+          --all_channels;
         }
       }
 
@@ -704,17 +720,8 @@ struct codec_manager_impl {
       size_t match_cnt = 0;
       size_t expected_match_cnt = 0;
 
-      log::assert_that(adsp_audio_set_conf.topology_info.has_value(),
-                       "ADSP capability is missing the topology information.");
-
       for (auto direction : {le_audio::types::kLeAudioDirectionSink,
                              le_audio::types::kLeAudioDirectionSource}) {
-        if (software_audio_set_conf->topology_info->device_count.get(
-                direction) !=
-            adsp_audio_set_conf.topology_info->device_count.get(direction)) {
-          continue;
-        }
-
         auto const& software_set_ase_confs =
             software_audio_set_conf->confs.get(direction);
         auto const& adsp_set_ase_confs =
@@ -807,12 +814,12 @@ struct codec_manager_impl {
     log::debug("Print adsp_capabilities:");
 
     for (auto& adsp : adsp_capabilities) {
-      log::debug("'{}':", adsp.name.c_str());
+      log::debug("'{}':", adsp.name);
       for (auto direction : {le_audio::types::kLeAudioDirectionSink,
                              le_audio::types::kLeAudioDirectionSource}) {
         log::debug(
             "dir: {}: number of confs {}:",
-            (direction == types::kLeAudioDirectionSink ? "sink" : "source"),
+            direction == types::kLeAudioDirectionSink ? "sink" : "source",
             (int)(adsp.confs.get(direction).size()));
         for (auto conf : adsp.confs.sink) {
           log::debug(
@@ -1041,7 +1048,14 @@ bool CodecManager::CheckCodecConfigIsBiDirSwb(
   if (pimpl_->IsRunning()) {
     return pimpl_->codec_manager_impl_->CheckCodecConfigIsBiDirSwb(config);
   }
+  return false;
+}
 
+bool CodecManager::CheckCodecConfigIsDualBiDirSwb(
+    const set_configurations::AudioSetConfiguration& config) const {
+  if (pimpl_->IsRunning()) {
+    return pimpl_->codec_manager_impl_->CheckCodecConfigIsDualBiDirSwb(config);
+  }
   return false;
 }
 

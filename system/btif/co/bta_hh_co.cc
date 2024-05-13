@@ -18,13 +18,12 @@
 
 #include "bta_hh_co.h"
 
-#include <android_bluetooth_flags.h>
+#include <com_android_bluetooth_flags.h>
 #include <fcntl.h>
 #include <linux/uhid.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -271,8 +270,7 @@ static void uhid_fd_close(btif_hh_device_t* p_dev) {
     struct uhid_event ev = {};
     ev.type = UHID_DESTROY;
     uhid_write(p_dev->fd, &ev);
-    log::debug("Closing fd={}, addr:{}", p_dev->fd,
-               ADDRESS_TO_LOGGABLE_CSTR(p_dev->link_spec));
+    log::debug("Closing fd={}, addr:{}", p_dev->fd, p_dev->link_spec);
     close(p_dev->fd);
     p_dev->fd = -1;
   }
@@ -301,7 +299,8 @@ static int uhid_fd_poll(btif_hh_device_t* p_dev,
   int counter = 0;
 
   do {
-    if (IS_FLAG_ENABLED(break_uhid_polling_early) && !p_dev->hh_keep_polling) {
+    if (com::android::bluetooth::flags::break_uhid_polling_early() &&
+        !p_dev->hh_keep_polling) {
       log::debug("Polling stopped");
       return -1;
     }
@@ -315,7 +314,7 @@ static int uhid_fd_poll(btif_hh_device_t* p_dev,
     ret = poll(pfds.data(), pfds.size(), BTA_HH_UHID_POLL_PERIOD_MS);
   } while (ret == -1 && errno == EINTR);
 
-  if (!IS_FLAG_ENABLED(break_uhid_polling_early)) {
+  if (!com::android::bluetooth::flags::break_uhid_polling_early()) {
     if (ret == 0) {
       log::debug("Polling timed out, attempt to read (old behavior)");
       return 1;
@@ -396,8 +395,7 @@ static void* btif_hh_poll_event_thread(void* arg) {
   }
 
   /* Todo: Disconnect if loop exited due to a failure */
-  log::info("Polling thread stopped for device {}",
-            ADDRESS_TO_LOGGABLE_CSTR(p_dev->link_spec));
+  log::info("Polling thread stopped for device {}", p_dev->link_spec);
   p_dev->hh_poll_thread_id = -1;
   p_dev->hh_keep_polling = 0;
   uhid_fd_close(p_dev);
@@ -445,8 +443,8 @@ bool bta_hh_co_open(uint8_t dev_handle, uint8_t sub_class,
         "Found an existing device with the same handle dev_status={}, "
         "device={}, attr_mask=0x{:04x}, sub_class=0x{:02x}, app_id={}, "
         "dev_handle={}",
-        p_dev->dev_status, ADDRESS_TO_LOGGABLE_CSTR(p_dev->link_spec),
-        p_dev->attr_mask, p_dev->sub_class, p_dev->app_id, dev_handle);
+        p_dev->dev_status, p_dev->link_spec, p_dev->attr_mask, p_dev->sub_class,
+        p_dev->app_id, dev_handle);
   } else {  // Use an empty slot
     p_dev = btif_hh_find_empty_dev();
     if (p_dev == nullptr) {
@@ -501,8 +499,7 @@ bool bta_hh_co_open(uint8_t dev_handle, uint8_t sub_class,
  ******************************************************************************/
 void bta_hh_co_close(btif_hh_device_t* p_dev) {
   log::info("Closing device handle={}, status={}, address={}",
-            p_dev->dev_handle, p_dev->dev_status,
-            ADDRESS_TO_LOGGABLE_CSTR(p_dev->link_spec));
+            p_dev->dev_handle, p_dev->dev_status, p_dev->link_spec);
 
   /* Clear the queues */
   fixed_queue_flush(p_dev->get_rpt_id_queue, osi_free);
@@ -541,8 +538,8 @@ void bta_hh_co_close(btif_hh_device_t* p_dev) {
  ******************************************************************************/
 void bta_hh_co_data(uint8_t dev_handle, uint8_t* p_rpt, uint16_t len,
                     tBTA_HH_PROTO_MODE mode, uint8_t sub_class,
-                    uint8_t ctry_code,
-                    UNUSED_ATTR const tAclLinkSpec& link_spec, uint8_t app_id) {
+                    uint8_t ctry_code, const tAclLinkSpec& /* link_spec */,
+                    uint8_t app_id) {
   btif_hh_device_t* p_dev;
 
   log::verbose(
@@ -777,28 +774,27 @@ void bta_hh_co_get_rpt_rsp(uint8_t dev_handle, uint8_t status,
  ******************************************************************************/
 void bta_hh_le_co_rpt_info(const tAclLinkSpec& link_spec,
                            tBTA_HH_RPT_CACHE_ENTRY* p_entry,
-                           UNUSED_ATTR uint8_t app_id) {
+                           uint8_t /* app_id */) {
   unsigned idx = 0;
 
   std::string addrstr = link_spec.addrt.bda.ToString();
   const char* bdstr = addrstr.c_str();
 
-  size_t len = btif_config_get_bin_length(bdstr, BTIF_STORAGE_KEY_HID_REPORT);
+  size_t len = btif_config_get_bin_length(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT);
   if (len >= sizeof(tBTA_HH_RPT_CACHE_ENTRY) && len <= sizeof(sReportCache)) {
-    btif_config_get_bin(bdstr, BTIF_STORAGE_KEY_HID_REPORT,
+    btif_config_get_bin(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT,
                         (uint8_t*)sReportCache, &len);
     idx = len / sizeof(tBTA_HH_RPT_CACHE_ENTRY);
   }
 
   if (idx < BTA_HH_NV_LOAD_MAX) {
     memcpy(&sReportCache[idx++], p_entry, sizeof(tBTA_HH_RPT_CACHE_ENTRY));
-    btif_config_set_bin(bdstr, BTIF_STORAGE_KEY_HID_REPORT,
+    btif_config_set_bin(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT,
                         (const uint8_t*)sReportCache,
                         idx * sizeof(tBTA_HH_RPT_CACHE_ENTRY));
-    btif_config_set_int(bdstr, BTIF_STORAGE_KEY_HID_REPORT_VERSION,
+    btif_config_set_int(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT_VERSION,
                         BTA_HH_CACHE_REPORT_VERSION);
-    log::verbose("Saving report; dev={}, idx={}",
-                 ADDRESS_TO_LOGGABLE_CSTR(link_spec), idx);
+    log::verbose("Saving report; dev={}, idx={}", link_spec, idx);
   }
 }
 
@@ -820,19 +816,19 @@ void bta_hh_le_co_rpt_info(const tAclLinkSpec& link_spec,
  ******************************************************************************/
 tBTA_HH_RPT_CACHE_ENTRY* bta_hh_le_co_cache_load(const tAclLinkSpec& link_spec,
                                                  uint8_t* p_num_rpt,
-                                                 UNUSED_ATTR uint8_t app_id) {
+                                                 uint8_t app_id) {
   std::string addrstr = link_spec.addrt.bda.ToString();
   const char* bdstr = addrstr.c_str();
 
-  size_t len = btif_config_get_bin_length(bdstr, BTIF_STORAGE_KEY_HID_REPORT);
+  size_t len = btif_config_get_bin_length(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT);
   if (!p_num_rpt || len < sizeof(tBTA_HH_RPT_CACHE_ENTRY)) return NULL;
 
   if (len > sizeof(sReportCache)) len = sizeof(sReportCache);
-  btif_config_get_bin(bdstr, BTIF_STORAGE_KEY_HID_REPORT,
+  btif_config_get_bin(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT,
                       (uint8_t*)sReportCache, &len);
 
   int cache_version = -1;
-  btif_config_get_int(bdstr, BTIF_STORAGE_KEY_HID_REPORT_VERSION,
+  btif_config_get_int(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT_VERSION,
                       &cache_version);
 
   if (cache_version != BTA_HH_CACHE_REPORT_VERSION) {
@@ -842,8 +838,7 @@ tBTA_HH_RPT_CACHE_ENTRY* bta_hh_le_co_cache_load(const tAclLinkSpec& link_spec,
 
   *p_num_rpt = len / sizeof(tBTA_HH_RPT_CACHE_ENTRY);
 
-  log::verbose("Loaded {} reports; dev={}", *p_num_rpt,
-               ADDRESS_TO_LOGGABLE_CSTR(link_spec));
+  log::verbose("Loaded {} reports; dev={}", *p_num_rpt, link_spec);
 
   return sReportCache;
 }
@@ -860,11 +855,11 @@ tBTA_HH_RPT_CACHE_ENTRY* bta_hh_le_co_cache_load(const tAclLinkSpec& link_spec,
  *
  ******************************************************************************/
 void bta_hh_le_co_reset_rpt_cache(const tAclLinkSpec& link_spec,
-                                  UNUSED_ATTR uint8_t app_id) {
+                                  uint8_t /* app_id */) {
   std::string addrstr = link_spec.addrt.bda.ToString();
   const char* bdstr = addrstr.c_str();
 
-  btif_config_remove(bdstr, BTIF_STORAGE_KEY_HID_REPORT);
-  btif_config_remove(bdstr, BTIF_STORAGE_KEY_HID_REPORT_VERSION);
-  log::verbose("Reset cache for bda {}", ADDRESS_TO_LOGGABLE_CSTR(link_spec));
+  btif_config_remove(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT);
+  btif_config_remove(bdstr, BTIF_STORAGE_KEY_HOGP_REPORT_VERSION);
+  log::verbose("Reset cache for bda {}", link_spec);
 }

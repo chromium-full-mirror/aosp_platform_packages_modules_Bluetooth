@@ -25,10 +25,9 @@
  *
  ******************************************************************************/
 
-#include <android_bluetooth_flags.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -589,7 +588,7 @@ void BTM_CancelInquiry(void) {
   }
 }
 
-static void btm_classic_inquiry_timeout(UNUSED_ATTR void* data) {
+static void btm_classic_inquiry_timeout(void* /* data */) {
   // When the Inquiry Complete event is received, the classic inquiry
   // will be marked as completed. Therefore, we only need to mark
   // the BLE inquiry as completed here to stop processing BLE results
@@ -781,7 +780,7 @@ tBTM_STATUS BTM_StartInquiry(tBTM_INQ_RESULTS_CB* p_results_cb,
                   tBTM_INQUIRY_STATE::BTM_INQUIRY_STARTED);
             } else {
               log::info("Inquiry failed to start status: {}",
-                        bluetooth::hci::ErrorCodeText(status).c_str());
+                        bluetooth::hci::ErrorCodeText(status));
             }
           }));
 
@@ -826,7 +825,7 @@ tBTM_STATUS BTM_StartInquiry(tBTM_INQ_RESULTS_CB* p_results_cb,
 tBTM_STATUS BTM_ReadRemoteDeviceName(const RawAddress& remote_bda,
                                      tBTM_NAME_CMPL_CB* p_cb,
                                      tBT_TRANSPORT transport) {
-  log::verbose("bd addr {}", ADDRESS_TO_LOGGABLE_STR(remote_bda));
+  log::verbose("bd addr {}", remote_bda);
   /* Use LE transport when LE is the only available option */
   if (transport == BT_TRANSPORT_LE) {
     return btm_ble_read_remote_name(remote_bda, p_cb);
@@ -856,17 +855,24 @@ tBTM_STATUS BTM_ReadRemoteDeviceName(const RawAddress& remote_bda,
  ******************************************************************************/
 tBTM_STATUS BTM_CancelRemoteDeviceName(void) {
   log::verbose("");
+  bool is_le;
 
   /* Make sure there is not already one in progress */
   if (btm_cb.btm_inq_vars.remname_active) {
-    if (BTM_UseLeLink(btm_cb.btm_inq_vars.remname_bda)) {
+    if (com::android::bluetooth::flags::rnr_store_device_type()) {
+      is_le = (btm_cb.btm_inq_vars.remname_dev_type == BT_DEVICE_TYPE_BLE);
+    } else {
+      is_le = BTM_UseLeLink(btm_cb.btm_inq_vars.remname_bda);
+    }
+
+    if (is_le) {
       /* Cancel remote name request for LE device, and process remote name
        * callback. */
       btm_inq_rmt_name_failed_cancelled();
     } else {
       bluetooth::shim::ACL_CancelRemoteNameRequest(
           btm_cb.btm_inq_vars.remname_bda);
-      if (IS_FLAG_ENABLED(rnr_reset_state_at_cancel)) {
+      if (com::android::bluetooth::flags::rnr_reset_state_at_cancel()) {
         btm_process_remote_name(&btm_cb.btm_inq_vars.remname_bda, nullptr, 0,
                                 HCI_ERR_UNSPECIFIED);
       }
@@ -1045,6 +1051,7 @@ void btm_inq_db_reset(void) {
     alarm_cancel(btm_cb.btm_inq_vars.remote_name_timer);
     btm_cb.btm_inq_vars.remname_active = false;
     btm_cb.btm_inq_vars.remname_bda = RawAddress::kEmpty;
+    btm_cb.btm_inq_vars.remname_dev_type = BT_DEVICE_TYPE_UNKNOWN;
 
     if (btm_cb.btm_inq_vars.p_remname_cmpl_cb) {
       rem_name.status = BTM_DEV_RESET;
@@ -1761,8 +1768,7 @@ void btm_process_inq_complete(tHCI_STATUS status, uint8_t mode) {
       tBTM_INQUIRY_STATE::BTM_INQUIRY_COMPLETE);
 
   if (status != HCI_SUCCESS) {
-    log::warn("Received unexpected hci status:{}",
-              hci_error_code_text(status).c_str());
+    log::warn("Received unexpected hci status:{}", hci_error_code_text(status));
   }
 
   /* Ignore any stray or late complete messages if the inquiry is not active */
@@ -1890,6 +1896,7 @@ tBTM_STATUS btm_initiate_rem_name(const RawAddress& remote_bda, uint8_t origin,
        * and start timer */
       btm_cb.btm_inq_vars.p_remname_cmpl_cb = p_cb;
       btm_cb.btm_inq_vars.remname_bda = remote_bda;
+      btm_cb.btm_inq_vars.remname_dev_type = BT_DEVICE_TYPE_BREDR;
 
       alarm_set_on_mloop(btm_cb.btm_inq_vars.remote_name_timer, timeout_ms,
                          btm_inq_remote_name_timer_timeout, NULL);
@@ -1948,7 +1955,12 @@ void btm_process_remote_name(const RawAddress* bda, const BD_NAME bdn,
       .hci_status = hci_status,
   };
 
-  const bool on_le_link = BTM_UseLeLink(btm_cb.btm_inq_vars.remname_bda);
+  bool on_le_link;
+  if (com::android::bluetooth::flags::rnr_store_device_type()) {
+    on_le_link = (btm_cb.btm_inq_vars.remname_dev_type == BT_DEVICE_TYPE_BLE);
+  } else {
+    on_le_link = BTM_UseLeLink(btm_cb.btm_inq_vars.remname_bda);
+  }
 
   /* If the inquire BDA and remote DBA are the same, then stop the timer and set
    * the active to false */
@@ -1983,6 +1995,7 @@ void btm_process_remote_name(const RawAddress* bda, const BD_NAME bdn,
       /* Reset the remote BDA and call callback if possible */
       btm_cb.btm_inq_vars.remname_active = false;
       btm_cb.btm_inq_vars.remname_bda = RawAddress::kEmpty;
+      btm_cb.btm_inq_vars.remname_dev_type = BT_DEVICE_TYPE_UNKNOWN;
 
       tBTM_NAME_CMPL_CB* p_cb = btm_cb.btm_inq_vars.p_remname_cmpl_cb;
       btm_cb.btm_inq_vars.p_remname_cmpl_cb = nullptr;
@@ -2003,7 +2016,7 @@ void btm_process_remote_name(const RawAddress* bda, const BD_NAME bdn,
   }
 }
 
-void btm_inq_remote_name_timer_timeout(UNUSED_ATTR void* data) {
+void btm_inq_remote_name_timer_timeout(void* /* data */) {
   btm_inq_rmt_name_failed_cancelled();
 }
 
@@ -2230,12 +2243,12 @@ uint8_t BTM_GetEirUuidList(const uint8_t* p_eir, size_t eir_len,
   if (uuid_size == Uuid::kNumBytes16) {
     for (yy = 0; yy < *p_num_uuid; yy++) {
       STREAM_TO_UINT16(*(p_uuid16 + yy), p_uuid_data);
-      log::verbose("                     0x{:04X}", *(p_uuid16 + yy));
+      log::verbose("0x{:04X}", *(p_uuid16 + yy));
     }
   } else if (uuid_size == Uuid::kNumBytes32) {
     for (yy = 0; yy < *p_num_uuid; yy++) {
       STREAM_TO_UINT32(*(p_uuid32 + yy), p_uuid_data);
-      log::verbose("                     0x{:08X}", *(p_uuid32 + yy));
+      log::verbose("0x{:08X}", *(p_uuid32 + yy));
     }
   } else if (uuid_size == Uuid::kNumBytes128) {
     for (yy = 0; yy < *p_num_uuid; yy++) {
@@ -2243,7 +2256,7 @@ uint8_t BTM_GetEirUuidList(const uint8_t* p_eir, size_t eir_len,
       for (xx = 0; xx < Uuid::kNumBytes128; xx++)
         snprintf(buff + xx * 2, sizeof(buff) - xx * 2, "%02X",
                  *(p_uuid_list + yy * Uuid::kNumBytes128 + xx));
-      log::verbose("                     0x{}", buff);
+      log::verbose("0x{}", buff);
     }
   }
 

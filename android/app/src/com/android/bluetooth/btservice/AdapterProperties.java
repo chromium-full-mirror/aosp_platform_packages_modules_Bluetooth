@@ -104,8 +104,6 @@ class AdapterProperties {
 
     private static final int SCAN_MODE_CHANGES_MAX_SIZE = 10;
     private EvictingQueue<String> mScanModeChanges;
-    private CopyOnWriteArrayList<String> mAllowlistedPlayers =
-            new CopyOnWriteArrayList<String>();
 
     private int mProfilesConnecting, mProfilesConnected, mProfilesDisconnecting;
     private final HashMap<Integer, Pair<Integer, Integer>> mProfileConnectionState =
@@ -290,7 +288,6 @@ class AdapterProperties {
         mBondedDevices.clear();
         mScanModeChanges.clear();
         invalidateBluetoothCaches();
-        mAllowlistedPlayers.clear();
     }
 
     private static void invalidateGetProfileConnectionStateCache() {
@@ -674,8 +671,13 @@ class AdapterProperties {
                 Flags.identityAddressNullIfUnknown()
                         ? Utils.getBrEdrAddress(device, mService)
                         : mService.getIdentityAddress(address);
-        debugLog("cleanupPrevBondRecordsFor: " + device);
+        int deviceType = mRemoteDevices.getDeviceProperties(device).getDeviceType();
+        debugLog("cleanupPrevBondRecordsFor: " + device + ", device type: " + deviceType);
         if (identityAddress == null) {
+            return;
+        }
+
+        if (Flags.cleanupLeOnlyDeviceType() && deviceType != BluetoothDevice.DEVICE_TYPE_LE) {
             return;
         }
 
@@ -685,29 +687,40 @@ class AdapterProperties {
                     Flags.identityAddressNullIfUnknown()
                             ? Utils.getBrEdrAddress(existingDevice, mService)
                             : mService.getIdentityAddress(existingAddress);
+            int existingDeviceType =
+                    mRemoteDevices.getDeviceProperties(existingDevice).getDeviceType();
 
-            if (!identityAddress.equals(existingIdentityAddress) || address.equals(
-                existingAddress)) {
-                continue;
+            boolean removeExisting = false;
+            if (identityAddress.equals(existingIdentityAddress)
+                    && !address.equals(existingAddress)) {
+                if (Flags.cleanupLeOnlyDeviceType()) {
+                    // Existing device record should be removed only if the device type is LE-only
+                    removeExisting = (existingDeviceType == BluetoothDevice.DEVICE_TYPE_LE);
+                } else {
+                    removeExisting = true;
+                }
             }
 
-            // Found an existing device with same identity address but different pseudo address
-            if (mService.getNative().removeBond(Utils.getBytesFromAddress(existingAddress))) {
-                mBondedDevices.remove(existingDevice);
-                infoLog(
-                    "Removing old bond record: "
-                        + existingDevice
-                        + " for the device: "
-                        + device);
-            } else {
-                Log.e(
-                    TAG,
-                    "Unexpected error while removing old bond record:"
-                        + existingDevice
-                        + " for the device: "
-                        + device);
+            if (removeExisting) {
+                // Found an existing LE-only device with the same identity address but different
+                // pseudo address
+                if (mService.getNative().removeBond(Utils.getBytesFromAddress(existingAddress))) {
+                    mBondedDevices.remove(existingDevice);
+                    infoLog(
+                            "Removing old bond record: "
+                                    + existingDevice
+                                    + " for the device: "
+                                    + device);
+                } else {
+                    Log.e(
+                            TAG,
+                            "Unexpected error while removing old bond record:"
+                                    + existingDevice
+                                    + " for the device: "
+                                    + device);
+                }
+                break;
             }
-            break;
         }
     }
 
@@ -732,24 +745,6 @@ class AdapterProperties {
             }
             return BluetoothProfile.STATE_DISCONNECTED;
         }
-    }
-
-     /**
-     * @return the mAllowlistedPlayers
-     */
-    String[] getAllowlistedMediaPlayers() {
-        String[] AllowlistedPlayersList = new String[0];
-        try {
-            AllowlistedPlayersList = mAllowlistedPlayers.toArray(AllowlistedPlayersList);
-        } catch (ArrayStoreException ee) {
-            errorLog("Error retrieving Allowlisted Players array");
-        }
-        Log.d(TAG, "getAllowlistedMediaPlayers: numAllowlistedPlayers = "
-                                        + AllowlistedPlayersList.length);
-        for (int i = 0; i < AllowlistedPlayersList.length; i++) {
-            Log.d(TAG, "players :" + AllowlistedPlayersList[i]);
-        }
-        return AllowlistedPlayersList;
     }
 
     long discoveryEndMillis() {
@@ -987,15 +982,6 @@ class AdapterProperties {
         }
     }
 
-    void updateAllowlistedMediaPlayers(String playername) {
-        Log.d(TAG, "updateAllowlistedMediaPlayers ");
-
-        if (!mAllowlistedPlayers.contains(playername)) {
-            Log.d(TAG, "Adding to Allowlisted Players list:" + playername);
-            mAllowlistedPlayers.add(playername);
-        }
-    }
-
     @RequiresPermission(android.Manifest.permission.INTERACT_ACROSS_USERS)
     void adapterPropertyChangedCallback(int[] types, byte[][] values) {
         Intent intent;
@@ -1083,23 +1069,6 @@ class AdapterProperties {
                     case AbstractionLayer.BT_PROPERTY_LOCAL_IO_CAPS:
                         mLocalIOCapability = Utils.byteArrayToInt(val);
                         debugLog("mLocalIOCapability set to " + mLocalIOCapability);
-                        break;
-
-                    case AbstractionLayer.BT_PROPERTY_WL_MEDIA_PLAYERS_LIST:
-                        int pos = 0;
-                        for (int j = 0; j < val.length; j++) {
-                            if (val[j] != 0) {
-                                continue;
-                            }
-                            int name_len = j - pos;
-
-                            byte[] buf = new byte[name_len];
-                            System.arraycopy(val, pos, buf, 0, name_len);
-                            String player_name = new String(buf, 0, name_len);
-                            Log.d(TAG, "player_name: "  +  player_name);
-                            updateAllowlistedMediaPlayers(player_name);
-                            pos += (name_len + 1);
-                        }
                         break;
 
                     default:
@@ -1266,14 +1235,22 @@ class AdapterProperties {
         StringBuilder sb = new StringBuilder();
         for (BluetoothDevice device : mBondedDevices) {
             String address = device.getAddress();
+            BluetoothClass cod = device.getBluetoothClass();
+            int codInt = cod != null ? cod.getClassOfDevice() : 0;
             String brEdrAddress =
                     Flags.identityAddressNullIfUnknown()
                             ? Utils.getBrEdrAddress(device)
                             : mService.getIdentityAddress(address);
             if (brEdrAddress.equals(address)) {
-                writer.println("    " + address
-                            + " [" + dumpDeviceType(device.getType()) + "] "
-                            + Utils.getName(device));
+                writer.println(
+                        "    "
+                                + address
+                                + " ["
+                                + dumpDeviceType(device.getType())
+                                + "][ 0x"
+                                + String.format("%06X", codInt)
+                                + " ] "
+                                + Utils.getName(device));
             } else {
                 sb.append(
                         "    "
@@ -1282,7 +1259,9 @@ class AdapterProperties {
                                 + brEdrAddress
                                 + " ["
                                 + dumpDeviceType(device.getType())
-                                + "] "
+                                + "][ 0x"
+                                + String.format("%06X", codInt)
+                                + " ] "
                                 + Utils.getName(device)
                                 + "\n");
             }

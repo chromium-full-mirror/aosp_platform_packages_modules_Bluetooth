@@ -318,6 +318,8 @@ public class AdapterService extends Service {
 
     private volatile boolean mTestModeEnabled = false;
 
+    private MetricsLogger mMetricsLogger;
+
     /** Handlers for incoming service calls */
     private AdapterServiceBinder mBinder;
 
@@ -636,6 +638,7 @@ public class AdapterService extends Service {
     private void init() {
         Log.d(TAG, "init()");
         Config.init(this);
+        initMetricsLogger();
         mDeviceConfigListener.start();
 
         if (!Flags.fastBindToApp()) {
@@ -806,6 +809,23 @@ public class AdapterService extends Service {
         return mSilenceDeviceManager;
     }
 
+    private boolean initMetricsLogger() {
+        if (mMetricsLogger != null) {
+            return false;
+        }
+        mMetricsLogger = MetricsLogger.getInstance();
+        return mMetricsLogger.init(this);
+    }
+
+    private boolean closeMetricsLogger() {
+        if (mMetricsLogger == null) {
+            return false;
+        }
+        boolean result = mMetricsLogger.close();
+        mMetricsLogger = null;
+        return result;
+    }
+
     /**
      * Log L2CAP CoC Server Connection Metrics
      *
@@ -856,6 +876,10 @@ public class AdapterService extends Service {
                 appUid,
                 socketCreationLatencyMillis,
                 socketAcceptanceLatencyMillis);
+    }
+
+    public void setMetricsLogger(MetricsLogger metricsLogger) {
+        mMetricsLogger = metricsLogger;
     }
 
     /**
@@ -1317,6 +1341,8 @@ public class AdapterService extends Service {
             return;
         }
 
+        closeMetricsLogger();
+
         clearAdapterService(this);
 
         mCleaningUp = true;
@@ -1607,7 +1633,10 @@ public class AdapterService extends Service {
         }
         if (profile == BluetoothProfile.HID_HOST) {
             return Utils.arrayContains(remoteDeviceUuids, BluetoothUuid.HID)
-                    || Utils.arrayContains(remoteDeviceUuids, BluetoothUuid.HOGP);
+                    || Utils.arrayContains(remoteDeviceUuids, BluetoothUuid.HOGP)
+                    || (Flags.androidHeadtrackerService()
+                            && Utils.arrayContains(
+                                    remoteDeviceUuids, HidHostService.ANDROID_HEADTRACKER_UUID));
         }
         if (profile == BluetoothProfile.HID_DEVICE) {
             return mHidDeviceService.getConnectionState(device)
@@ -2425,6 +2454,7 @@ public class AdapterService extends Service {
                 return false;
             }
 
+            Log.i(TAG, "startDiscovery: from " + Utils.getUidPidString());
             return service.startDiscovery(attributionSource);
         }
 
@@ -2438,7 +2468,7 @@ public class AdapterService extends Service {
                 return false;
             }
 
-            Log.d(TAG, "cancelDiscovery");
+            Log.i(TAG, "cancelDiscovery: from " + Utils.getUidPidString());
             return service.mNativeInterface.cancelDiscovery();
         }
 
@@ -2558,6 +2588,14 @@ public class AdapterService extends Service {
             // BluetoothDevice#createBond requires BLUETOOTH_ADMIN only.
             service.enforceBluetoothPrivilegedPermissionIfNeeded(remoteP192Data, remoteP256Data);
 
+            Log.i(
+                    TAG,
+                    "createBond: device="
+                            + device
+                            + ", transport="
+                            + transport
+                            + ", from "
+                            + Utils.getUidPidString());
             return service.createBond(
                     device,
                     transport,
@@ -2579,6 +2617,8 @@ public class AdapterService extends Service {
 
             enforceBluetoothPrivilegedPermission(service);
 
+            Log.i(TAG, "cancelBondProcess: device=" + device + ", from " + Utils.getUidPidString());
+
             DeviceProperties deviceProp = service.mRemoteDevices.getDeviceProperties(device);
             if (deviceProp != null) {
                 deviceProp.setBondingInitiatedLocally(false);
@@ -2596,6 +2636,8 @@ public class AdapterService extends Service {
                             service, attributionSource, "AdapterService removeBond")) {
                 return false;
             }
+
+            Log.i(TAG, "removeBond: device=" + device + ", from " + Utils.getUidPidString());
 
             DeviceProperties deviceProp = service.mRemoteDevices.getDeviceProperties(device);
             if (deviceProp == null || deviceProp.getBondState() != BluetoothDevice.BOND_BONDED) {
@@ -2734,6 +2776,12 @@ public class AdapterService extends Service {
                     || !Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
                 return false;
             }
+            Log.i(
+                    TAG,
+                    "removeActiveDevice: profiles="
+                            + profiles
+                            + ", from "
+                            + Utils.getUidPidString());
             return service.setActiveDevice(null, profiles);
         }
 
@@ -2748,6 +2796,15 @@ public class AdapterService extends Service {
             }
 
             enforceBluetoothPrivilegedPermission(service);
+
+            Log.i(
+                    TAG,
+                    "setActiveDevice: device="
+                            + device
+                            + ", profiles="
+                            + profiles
+                            + ", from "
+                            + Utils.getUidPidString());
 
             return service.setActiveDevice(device, profiles);
         }
@@ -2788,6 +2845,13 @@ public class AdapterService extends Service {
 
             enforceBluetoothPrivilegedPermission(service);
 
+            Log.i(
+                    TAG,
+                    "connectAllEnabledProfiles: device="
+                            + device
+                            + ", from "
+                            + Utils.getUidPidString());
+
             try {
                 return service.connectAllEnabledProfiles(device);
             } catch (Exception e) {
@@ -2818,6 +2882,13 @@ public class AdapterService extends Service {
             }
 
             enforceBluetoothPrivilegedPermission(service);
+
+            Log.i(
+                    TAG,
+                    "disconnectAllEnabledProfiles: device="
+                            + device
+                            + ", from "
+                            + Utils.getUidPidString());
 
             try {
                 return service.disconnectAllEnabledProfiles(device);
@@ -2948,6 +3019,15 @@ public class AdapterService extends Service {
             if (transport != TRANSPORT_AUTO) {
                 enforceBluetoothPrivilegedPermission(service);
             }
+
+            Log.i(
+                    TAG,
+                    "fetchRemoteUuids: device="
+                            + device
+                            + ", transport="
+                            + transport
+                            + ", from "
+                            + Utils.getUidPidString());
 
             service.mRemoteDevices.fetchUuids(device, transport);
             MetricsLogger.getInstance().cacheCount(BluetoothProtoEnums.SDP_FETCH_UUID_REQUEST, 1);
@@ -3317,32 +3397,31 @@ public class AdapterService extends Service {
         }
 
         @Override
-        public boolean registerBluetoothConnectionCallback(
+        public void registerBluetoothConnectionCallback(
                 IBluetoothConnectionCallback callback, AttributionSource source) {
             AdapterService service = getService();
             if (service == null
                     || !callerIsSystemOrActiveOrManagedUser(
                             service, TAG, "registerBluetoothConnectionCallback")
                     || !Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
-                return false;
+                return;
             }
             enforceBluetoothPrivilegedPermission(service);
             service.mBluetoothConnectionCallbacks.add(callback);
-            return true;
         }
 
         @Override
-        public boolean unregisterBluetoothConnectionCallback(
+        public void unregisterBluetoothConnectionCallback(
                 IBluetoothConnectionCallback callback, AttributionSource source) {
             AdapterService service = getService();
             if (service == null
                     || !callerIsSystemOrActiveOrManagedUser(
                             service, TAG, "unregisterBluetoothConnectionCallback")
                     || !Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
-                return false;
+                return;
             }
             enforceBluetoothPrivilegedPermission(service);
-            return service.mBluetoothConnectionCallbacks.remove(callback);
+            service.mBluetoothConnectionCallbacks.remove(callback);
         }
 
         @Override
@@ -5403,7 +5482,6 @@ public class AdapterService extends Service {
      * @param device the remote device that we want to get UUIDs from
      * @return the uuids of the remote device
      */
-    @VisibleForTesting
     public ParcelUuid[] getRemoteUuids(BluetoothDevice device) {
         DeviceProperties deviceProp = mRemoteDevices.getDeviceProperties(device);
         if (deviceProp == null) {
@@ -5676,10 +5754,6 @@ public class AdapterService extends Service {
     @VisibleForTesting
     int getScanMode() {
         return mAdapterProperties.getScanMode();
-    }
-
-    public String[] getAllowlistedMediaPlayers() {
-        return mAdapterProperties.getAllowlistedMediaPlayers();
     }
 
     @VisibleForTesting

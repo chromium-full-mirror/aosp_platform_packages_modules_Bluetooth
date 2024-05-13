@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 #include <bluetooth/log.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "gatt_int.h"
@@ -77,7 +76,7 @@ Uuid* gatts_get_service_uuid(tGATT_SVC_DB* p_db) {
 
 /** Check attribute readability. Returns status of operation. */
 static tGATT_STATUS gatts_check_attr_readability(const tGATT_ATTR& attr,
-                                                 UNUSED_ATTR uint16_t offset,
+                                                 uint16_t /* offset */,
                                                  bool read_long,
                                                  tGATT_SEC_FLAG sec_flag,
                                                  uint8_t key_size) {
