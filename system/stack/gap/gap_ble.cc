@@ -29,6 +29,7 @@
 #include "os/log.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/bt_uuid16.h"
+#include "stack/include/btm_client_interface.h"
 #include "types/bluetooth/uuid.h"
 #include "types/bt_transport.h"
 #include "types/raw_address.h"
@@ -139,7 +140,10 @@ tGATT_STATUS read_attr_value(uint16_t handle, tGATT_VALUE* p_value,
 
       switch (db_attr.uuid) {
         case GATT_UUID_GAP_DEVICE_NAME:
-          BTM_ReadLocalDeviceName((const char**)&p_dev_name);
+          if (get_btm_client_interface().local.BTM_ReadLocalDeviceName(
+                  (const char**)&p_dev_name) != BTM_SUCCESS) {
+            log::warn("Unable to read local device name");
+          };
           if (strlen((char*)p_dev_name) > GATT_MAX_ATTR_LEN)
             p_value->len = GATT_MAX_ATTR_LEN;
           else
@@ -234,7 +238,11 @@ void server_attr_request_cback(uint16_t conn_id, uint32_t trans_id,
       break;
   }
 
-  if (!ignore) GATTS_SendRsp(conn_id, trans_id, status, &rsp_msg);
+  if (!ignore) {
+    if (GATTS_SendRsp(conn_id, trans_id, status, &rsp_msg) != GATT_SUCCESS) {
+      log::warn("Unable to send GATT ervier response conn_id:{}", conn_id);
+    }
+  }
 }
 
 /**
@@ -281,7 +289,9 @@ void cl_op_cmpl(tGAP_CLCB& clcb, bool status, uint16_t len, uint8_t* p_name) {
   /* if no further activity is requested in callback, drop the link */
   if (clcb.connected) {
     if (!send_cl_read_request(clcb)) {
-      GATT_Disconnect(clcb.conn_id);
+      if (GATT_Disconnect(clcb.conn_id) != GATT_SUCCESS) {
+        log::warn("Unable to disconnect GATT conn_id:{}", clcb.conn_id);
+      }
       clcb_dealloc(clcb);
     }
   }
@@ -289,7 +299,7 @@ void cl_op_cmpl(tGAP_CLCB& clcb, bool status, uint16_t len, uint8_t* p_name) {
 
 /** Client connection callback */
 void client_connect_cback(tGATT_IF, const RawAddress& bda, uint16_t conn_id,
-                          bool connected, tGATT_DISCONN_REASON reason,
+                          bool connected, tGATT_DISCONN_REASON /* reason */,
                           tBT_TRANSPORT) {
   tGAP_CLCB* p_clcb = find_clcb_by_bd_addr(bda);
   if (p_clcb == NULL) {
@@ -440,8 +450,11 @@ void gap_attr_db_init(void) {
   };
 
   /* Add a GAP service */
-  GATTS_AddService(gatt_if, service,
-                   sizeof(service) / sizeof(btgatt_db_element_t));
+  if (GATTS_AddService(gatt_if, service,
+                       sizeof(service) / sizeof(btgatt_db_element_t)) !=
+      GATT_SERVICE_STARTED) {
+    log::warn("Unable to add GATT services gatt_if:{}", gatt_if);
+  }
 
   gatt_attr[0].uuid = GATT_UUID_GAP_DEVICE_NAME;
   gatt_attr[0].handle = service[1].attribute_handle;
@@ -487,7 +500,10 @@ void GAP_BleAttrDBUpdate(uint16_t attr_uuid, tGAP_BLE_ATTR_VALUE* p_value) {
           break;
 
         case GATT_UUID_GAP_DEVICE_NAME:
-          BTM_SetLocalDeviceName((const char*)p_value->p_dev_name);
+          if (get_btm_client_interface().local.BTM_SetLocalDeviceName(
+                  (const char*)p_value->p_dev_name) != BTM_SUCCESS) {
+            log::warn("Unable to set local name");
+          }
           break;
 
         case GATT_UUID_GAP_CENTRAL_ADDR_RESOL:

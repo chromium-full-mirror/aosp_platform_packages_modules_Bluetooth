@@ -226,8 +226,10 @@ cc_test {
     ],
     shared_libs: [
         "libPlatformProperties",
+        "libbinder_ndk",
         "libcrypto",
         "server_configurable_flags",
+        "libaconfig_storage_read_api_cc",
     ],
     sanitize: {
         address: true,
@@ -310,6 +312,7 @@ cc_test {
         "libPlatformProperties",
         "libcrypto",
         "server_configurable_flags",
+        "libaconfig_storage_read_api_cc",
     ],
     target: {
         linux: {

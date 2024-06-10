@@ -165,7 +165,7 @@ void gap_conn_init(void) {
  *                            GAP_INVALID_HANDLE
  *
  ******************************************************************************/
-uint16_t GAP_ConnOpen(const char* p_serv_name, uint8_t service_id,
+uint16_t GAP_ConnOpen(const char* /* p_serv_name */, uint8_t service_id,
                       bool is_server, const RawAddress* p_rem_bda, uint16_t psm,
                       uint16_t le_mps, tL2CAP_CFG_INFO* p_cfg,
                       tL2CAP_ERTM_INFO* ertm_info, uint16_t security,
@@ -240,9 +240,9 @@ uint16_t GAP_ConnOpen(const char* p_serv_name, uint8_t service_id,
 
   /* Register the PSM with L2CAP */
   if (transport == BT_TRANSPORT_BR_EDR) {
-    p_ccb->psm =
-        L2CA_Register2(psm, conn.reg_info, false /* enable_snoop */,
-                       &p_ccb->ertm_info, L2CAP_SDU_LENGTH_MAX, 0, security);
+    p_ccb->psm = L2CA_RegisterWithSecurity(
+        psm, conn.reg_info, false /* enable_snoop */, &p_ccb->ertm_info,
+        L2CAP_SDU_LENGTH_MAX, 0, security);
     if (p_ccb->psm == 0) {
       log::error("Failure registering PSM 0x{:04x}", psm);
       gap_release_ccb(p_ccb);
@@ -279,7 +279,7 @@ uint16_t GAP_ConnOpen(const char* p_serv_name, uint8_t service_id,
 
     /* Check if L2CAP started the connection process */
     if (p_rem_bda && (transport == BT_TRANSPORT_BR_EDR)) {
-      cid = L2CA_ConnectReq2(p_ccb->psm, *p_rem_bda, security);
+      cid = L2CA_ConnectReqWithSecurity(p_ccb->psm, *p_rem_bda, security);
       if (cid != 0) {
         p_ccb->connection_id = cid;
         return (p_ccb->gap_handle);
@@ -324,7 +324,10 @@ uint16_t GAP_ConnClose(uint16_t gap_handle) {
                     p_ccb->rem_dev_address, p_ccb->connection_id);
         }
       } else {
-        L2CA_DisconnectReq(p_ccb->connection_id);
+        if (!L2CA_DisconnectReq(p_ccb->connection_id)) {
+          log::warn("Unable to request L2CAP disconnect le_coc peer:{} cid:{}",
+                    p_ccb->rem_dev_address, p_ccb->connection_id);
+        }
       }
     }
 
@@ -585,7 +588,7 @@ void gap_tx_complete_ind(uint16_t l2cap_cid, uint16_t sdu_sent) {
  *
  ******************************************************************************/
 static void gap_connect_ind(const RawAddress& bd_addr, uint16_t l2cap_cid,
-                            uint16_t psm, uint8_t l2cap_id) {
+                            uint16_t psm, uint8_t /* l2cap_id */) {
   uint16_t xx;
   tGAP_CCB* p_ccb;
 
@@ -609,7 +612,10 @@ static void gap_connect_ind(const RawAddress& bd_addr, uint16_t l2cap_cid,
                   bd_addr, l2cap_cid);
       }
     } else {
-      L2CA_DisconnectReq(l2cap_cid);
+      if (!L2CA_DisconnectReq(l2cap_cid)) {
+        log::warn("Unable to request L2CAP disconnect le_coc peer:{} cid:{}",
+                  bd_addr, l2cap_cid);
+      }
     }
     return;
   }
@@ -624,7 +630,10 @@ static void gap_connect_ind(const RawAddress& bd_addr, uint16_t l2cap_cid,
 
   if (p_ccb->transport == BT_TRANSPORT_LE) {
     /* get the remote coc configuration */
-    L2CA_GetPeerLECocConfig(l2cap_cid, &p_ccb->peer_coc_cfg);
+    if (!L2CA_GetPeerLECocConfig(l2cap_cid, &p_ccb->peer_coc_cfg)) {
+      log::warn("Unable to get L2CAP peer le_coc config peer:{} cid:{}",
+                p_ccb->rem_dev_address, l2cap_cid);
+    }
     p_ccb->rem_mtu_size = p_ccb->peer_coc_cfg.mtu;
 
     /* configuration is not required for LE COC */
@@ -728,7 +737,10 @@ static void gap_connect_cfm(uint16_t l2cap_cid, uint16_t result) {
 
     if (p_ccb->transport == BT_TRANSPORT_LE) {
       /* get the remote coc configuration */
-      L2CA_GetPeerLECocConfig(l2cap_cid, &p_ccb->peer_coc_cfg);
+      if (!L2CA_GetPeerLECocConfig(l2cap_cid, &p_ccb->peer_coc_cfg)) {
+        log::warn("Unable to get L2CAP peer le_coc config peer:{} cid:{}",
+                  p_ccb->rem_dev_address, l2cap_cid);
+      }
       p_ccb->rem_mtu_size = p_ccb->peer_coc_cfg.mtu;
 
       /* configuration is not required for LE COC */
@@ -786,7 +798,7 @@ static void gap_config_ind(uint16_t l2cap_cid, tL2CAP_CFG_INFO* p_cfg) {
  * Returns          void
  *
  ******************************************************************************/
-static void gap_config_cfm(uint16_t l2cap_cid, uint16_t initiator,
+static void gap_config_cfm(uint16_t l2cap_cid, uint16_t /* initiator */,
                            tL2CAP_CFG_INFO* p_cfg) {
   gap_config_ind(l2cap_cid, p_cfg);
 
@@ -811,7 +823,7 @@ static void gap_config_cfm(uint16_t l2cap_cid, uint16_t initiator,
  * Returns          void
  *
  ******************************************************************************/
-static void gap_disconnect_ind(uint16_t l2cap_cid, bool ack_needed) {
+static void gap_disconnect_ind(uint16_t l2cap_cid, bool /* ack_needed */) {
   tGAP_CCB* p_ccb;
 
   /* Find CCB based on CID */

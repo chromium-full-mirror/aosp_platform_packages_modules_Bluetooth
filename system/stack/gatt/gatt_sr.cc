@@ -854,7 +854,7 @@ static void gatts_process_mtu_req(tGATT_TCB& tcb, uint16_t cid, uint16_t len,
   gatt_sr_msg.mtu = gatt_get_local_mtu();
 
   log::info("MTU {} request from remote ({}), resulted MTU {}", mtu,
-            tcb.peer_bda.ToString(), tcb.payload_size);
+            tcb.peer_bda, tcb.payload_size);
 
   BTM_SetBleDataLength(tcb.peer_bda, tcb.payload_size + L2CAP_PKT_OVERHEAD);
 
@@ -1225,8 +1225,11 @@ static void gatts_chk_pending_ind(tGATT_TCB& tcb) {
   tGATT_VALUE* p_buf =
       (tGATT_VALUE*)fixed_queue_try_peek_first(tcb.pending_ind_q);
   if (p_buf != NULL) {
-    GATTS_HandleValueIndication(p_buf->conn_id, p_buf->handle, p_buf->len,
-                                p_buf->value);
+    if (GATTS_HandleValueIndication(p_buf->conn_id, p_buf->handle, p_buf->len,
+                                    p_buf->value) != GATT_SUCCESS) {
+      log::warn("Unable to send GATT server handle value conn_id:{}",
+                p_buf->conn_id);
+    }
     osi_free(fixed_queue_try_remove_from_queue(tcb.pending_ind_q, p_buf));
   }
 }
