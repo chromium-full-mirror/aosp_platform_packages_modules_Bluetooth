@@ -219,6 +219,9 @@ pub enum BtStatus {
     JniThreadAttachError,
     WakeLockError,
     Timeout,
+    DeviceNotFound,
+    UnexpectedState,
+    SocketError,
 
     // Any statuses that couldn't be cleanly converted
     Unknown = 0xff,

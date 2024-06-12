@@ -599,7 +599,7 @@ impl BluetoothSocketManager {
                 .any(|(_, v)| v.iter().any(|s| s.uuid.map_or(false, |u| u == uuid)))
             {
                 log::warn!("Service {} already exists", uuid);
-                return SocketResult::new(BtStatus::Fail, INVALID_SOCKET_ID);
+                return SocketResult::new(BtStatus::SocketError, INVALID_SOCKET_ID);
             }
         }
 
@@ -641,7 +641,7 @@ impl BluetoothSocketManager {
                     Some(v) => v,
                     None => {
                         log::debug!("Converting from file to unixstream failed");
-                        return SocketResult::new(BtStatus::Fail, INVALID_SOCKET_ID);
+                        return SocketResult::new(BtStatus::SocketError, INVALID_SOCKET_ID);
                     }
                 };
 
@@ -789,7 +789,7 @@ impl BluetoothSocketManager {
             Self::wait_and_read_stream(connection_timeout, &stream, &mut channel_bytes).await;
         let channel = i32::from_ne_bytes(channel_bytes);
         if channel <= 0 {
-            status = BtStatus::Fail;
+            status = BtStatus::SocketError;
         }
 
         // If we don't get a valid channel, consider the socket as closed.
@@ -987,7 +987,7 @@ impl BluetoothSocketManager {
                                             SocketActions::OnIncomingSocketReady(
                                                 cbid,
                                                 cloned_socket_info,
-                                                BtStatus::Fail,
+                                                BtStatus::SocketError,
                                             ),
                                         ))
                                         .await;
@@ -1038,7 +1038,7 @@ impl BluetoothSocketManager {
                 Ok(()) => {}
                 Err(_e) => {
                     // Stream was not readable. This is usually due to some polling error.
-                    return BtStatus::Fail;
+                    return BtStatus::SocketError;
                 }
             },
             Err(_) => {
@@ -1050,12 +1050,12 @@ impl BluetoothSocketManager {
         match stream.try_read(buf) {
             Ok(n) => {
                 if n != buf.len() {
-                    return BtStatus::Fail;
+                    return BtStatus::SocketError;
                 }
                 return BtStatus::Success;
             }
             _ => {
-                return BtStatus::Fail;
+                return BtStatus::SocketError;
             }
         }
     }
@@ -1081,7 +1081,7 @@ impl BluetoothSocketManager {
                     .send(Message::SocketManagerActions(SocketActions::OnOutgoingConnectionResult(
                         cbid,
                         socket_id,
-                        BtStatus::Fail,
+                        BtStatus::SocketError,
                         None,
                     )))
                     .await;
@@ -1094,7 +1094,7 @@ impl BluetoothSocketManager {
         let mut status =
             Self::wait_and_read_stream(connection_timeout, &stream, &mut channel_bytes).await;
         if i32::from_ne_bytes(channel_bytes) <= 0 {
-            status = BtStatus::Fail;
+            status = BtStatus::SocketError;
         }
         if status != BtStatus::Success {
             log::info!(
@@ -1163,7 +1163,7 @@ impl BluetoothSocketManager {
                     .send(Message::SocketManagerActions(SocketActions::OnOutgoingConnectionResult(
                         cbid,
                         socket_id,
-                        BtStatus::Fail,
+                        BtStatus::SocketError,
                         None,
                     )))
                     .await;
