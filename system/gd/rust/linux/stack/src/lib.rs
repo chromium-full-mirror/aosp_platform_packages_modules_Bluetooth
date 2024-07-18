@@ -45,7 +45,7 @@ use crate::dis::{DeviceInformation, ServiceCallbacks};
 use crate::socket_manager::{BluetoothSocketManager, SocketActions};
 use crate::suspend::Suspend;
 use bt_topshim::{
-    btif::{BaseCallbacks, BtTransport},
+    btif::{BaseCallbacks, BtTransport, RawAddress},
     profiles::{
         a2dp::A2dpCallbacks,
         avrcp::AvrcpCallbacks,
@@ -160,6 +160,9 @@ pub enum Message {
     // UHid callbacks
     UHidHfpOutputCallback(String, u8, u8),
     UHidTelephonyUseCallback(String, bool),
+
+    // GATT Callbacks
+    GattClientDisconnected(RawAddress),
 }
 
 pub enum BluetoothAPI {
@@ -491,6 +494,13 @@ impl Stack {
                         .lock()
                         .unwrap()
                         .dispatch_uhid_telephony_use_callback(addr, state);
+                }
+
+                Message::GattClientDisconnected(address) => {
+                    bluetooth
+                        .lock()
+                        .unwrap()
+                        .disconnect_if_no_media_or_hid_profiles_connected(address);
                 }
             }
         }

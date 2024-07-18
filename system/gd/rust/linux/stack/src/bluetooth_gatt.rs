@@ -1459,6 +1459,9 @@ pub struct BluetoothGatt {
 
     gatt_async: Arc<tokio::sync::Mutex<GattAsyncIntf>>,
     enabled: bool,
+
+    // For sending messages to the main event loop.
+    tx: Sender<Message>,
 }
 
 impl BluetoothGatt {
@@ -1491,6 +1494,7 @@ impl BluetoothGatt {
                 async_helper_msft_adv_monitor_enable,
             })),
             enabled: false,
+            tx: tx.clone(),
         }
     }
 
@@ -2493,9 +2497,17 @@ impl IBluetoothGatt for BluetoothGatt {
 
         self.gatt.as_ref().unwrap().lock().unwrap().client.disconnect(
             client_id,
-            &RawAddress::from_string(address).unwrap(),
+            &RawAddress::from_string(address.clone()).unwrap(),
             conn_id.unwrap(),
         );
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let _ = tx
+                .send(Message::GattClientDisconnected(
+                    RawAddress::from_string(address.clone()).unwrap(),
+                ))
+                .await;
+        });
     }
 
     fn refresh_device(&self, client_id: i32, addr: String) {
