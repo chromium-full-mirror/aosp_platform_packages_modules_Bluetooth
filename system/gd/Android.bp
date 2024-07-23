@@ -125,7 +125,13 @@ cc_defaults {
                 "libcutils",
                 "libhidlbase",
                 "libstatslog_bt",
+                "libstatssocket",
                 "libutils",
+            ],
+            static_libs: [
+                "libexpresslog",
+                "libstatslog_express",
+                "libtextclassifier_hash_static",
             ],
             whole_static_libs: [
                 "android.hardware.bluetooth-V1-ndk",
@@ -139,7 +145,6 @@ cc_defaults {
         ":BluetoothHalSources",
         ":BluetoothHciSources",
         ":BluetoothL2capSources",
-        ":BluetoothLogRedactionSources",
         ":BluetoothMetricsSources",
         ":BluetoothNeighborSources",
         ":BluetoothOsSources",
@@ -170,6 +175,7 @@ cc_defaults {
         "libbluetooth_smp_pdl",
     ],
     static_libs: [
+        "libaconfig_storage_read_api_cc",
         "libbase",
         "libbluetooth-dumpsys",
         "libbluetooth-protos",
@@ -184,7 +190,6 @@ cc_defaults {
         "libcom.android.sysprop.bluetooth.wrapped",
         "libosi",
         "server_configurable_flags",
-        "libaconfig_storage_read_api_cc",
     ],
     include_dirs: [
         "packages/modules/Bluetooth/system/include",
@@ -289,7 +294,6 @@ cc_binary {
         ":BluetoothFacade_hci_layer",
         ":BluetoothFacade_l2cap_layer",
         ":BluetoothFacade_neighbor",
-        ":BluetoothFacade_security_layer",
         ":TestMockMainShimStack",
         "facade/facade_main.cc",
         "facade/grpc_root_server.cc",
@@ -331,6 +335,7 @@ cc_binary {
         "libosi",
     ],
     shared_libs: [
+        "libaconfig_storage_read_api_cc",
         "libbase",
         "libcrypto",
         "libgrpc++",
@@ -339,7 +344,6 @@ cc_binary {
         "libprotobuf-cpp-full",
         "libunwindstack",
         "server_configurable_flags",
-        "libaconfig_storage_read_api_cc",
     ],
     target: {
         android: {
@@ -506,9 +510,9 @@ cc_test {
     ],
     shared_libs: [
         "libPlatformProperties",
+        "libaconfig_storage_read_api_cc",
         "libcrypto",
         "server_configurable_flags",
-        "libaconfig_storage_read_api_cc",
     ],
     sanitize: {
         address: true,
@@ -520,6 +524,7 @@ cc_test {
     name: "bluetooth_test_gdx_unit",
     test_suites: ["device-tests"],
     defaults: [
+        "aconfig_lib_cc_shared_link.defaults",
         "gd_defaults",
         "mts_defaults",
     ],
@@ -568,7 +573,6 @@ cc_test {
         "liblog",
         "libosi",
         "server_configurable_flags",
-        "libaconfig_storage_read_api_cc",
     ],
     shared_libs: [
         "libcrypto",
@@ -658,13 +662,13 @@ cc_defaults {
     ],
     shared_libs: [
         "libPlatformProperties",
+        "libaconfig_storage_read_api_cc",
         "libbase",
         "libcrypto",
         "libgrpc++",
         "libgrpc_wrap",
         "liblog",
         "server_configurable_flags",
-        "libaconfig_storage_read_api_cc",
     ],
     cflags: [
         "-DFUZZ_TARGET",

@@ -44,6 +44,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
@@ -233,7 +234,7 @@ public class TbsGeneric {
      *
      * @param device device for which authorization is changed
      */
-    public void onDeviceAuthorizationSet(BluetoothDevice device) {
+    public synchronized void onDeviceAuthorizationSet(BluetoothDevice device) {
         // Notify TBS GATT service instance in case of pending operations
         if (mTbsGatt != null) {
             mTbsGatt.onDeviceAuthorizationSet(device);
@@ -1058,8 +1059,7 @@ public class TbsGeneric {
         return null;
     }
 
-    private synchronized Map.Entry<Integer, TbsCall> getCallByStates(
-            LinkedHashSet<Integer> states) {
+    private synchronized Map.Entry<Integer, TbsCall> getCallByStates(Set<Integer> states) {
         for (Map.Entry<Integer, TbsCall> entry : mCurrentCallsList.entrySet()) {
             if (states.contains(entry.getValue().getState())) {
                 return entry;

@@ -31,16 +31,11 @@ import io.grpc.stub.StreamObserver
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -166,56 +161,28 @@ class RfcommTest {
 
     @Test
     fun clientConnectToOpenServerSocketBondedInsecure() {
-        startServer {
-            val serverId = it
+        startServer { serverId ->
             runBlocking { withTimeout(BOND_TIMEOUT.toMillis()) { bondDevice(mBumbleDevice) } }
 
-            // Insecure connection to RFCOMM Server
-            val insecureSocket =
-                mBumbleDevice.createInsecureRfcommSocketToServiceRecord(UUID.fromString(TEST_UUID))
-            insecureSocket.connect()
-
-            val connectionResponse =
-                mBumble
-                    .rfcommBlocking()
-                    .withDeadlineAfter(GRPC_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
-                    .acceptConnection(
-                        RfcommProto.AcceptConnectionRequest.newBuilder().setServer(serverId).build()
-                    )
-            Truth.assertThat(connectionResponse.connection.id).isEqualTo(mConnectionCounter)
-            Truth.assertThat(insecureSocket.isConnected).isTrue()
+            createConnectAcceptSocket(isSecure = false, serverId)
         }
     }
 
     @Test
     fun clientConnectToOpenServerSocketBondedSecure() {
-        startServer {
-            val serverId = it
+        startServer { serverId ->
             runBlocking { withTimeout(BOND_TIMEOUT.toMillis()) { bondDevice(mBumbleDevice) } }
-            // Secure connection to RFCOMM Server
-            val secureSocket =
-                mBumbleDevice.createRfcommSocketToServiceRecord(UUID.fromString(TEST_UUID))
-            secureSocket.connect()
 
-            val connectionResponse =
-                mBumble
-                    .rfcommBlocking()
-                    .withDeadlineAfter(GRPC_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
-                    .acceptConnection(
-                        RfcommProto.AcceptConnectionRequest.newBuilder().setServer(serverId).build()
-                    )
-            Truth.assertThat(connectionResponse.connection.id).isEqualTo(mConnectionCounter)
-            Truth.assertThat(secureSocket.isConnected).isTrue()
+            createConnectAcceptSocket(isSecure = true, serverId)
         }
     }
 
     @Test
     fun clientSendDataOverInsecureSocket() {
-        startServer {
-            val serverId = it
+        startServer { serverId ->
             runBlocking { withTimeout(BOND_TIMEOUT.toMillis()) { bondDevice(mBumbleDevice) } }
 
-            val (insecureSocket, connection) = createAndConnectSocket(isSecure = false, serverId)
+            val (insecureSocket, connection) = createConnectAcceptSocket(isSecure = false, serverId)
             val data: ByteArray = "Test data for clientSendDataOverInsecureSocket".toByteArray()
             val socketOs = insecureSocket.outputStream
 
@@ -231,11 +198,10 @@ class RfcommTest {
 
     @Test
     fun clientSendDataOverSecureSocket() {
-        startServer {
-            val serverId = it
+        startServer { serverId ->
             runBlocking { withTimeout(BOND_TIMEOUT.toMillis()) { bondDevice(mBumbleDevice) } }
 
-            val (secureSocket, connection) = createAndConnectSocket(isSecure = true, serverId)
+            val (secureSocket, connection) = createConnectAcceptSocket(isSecure = true, serverId)
             val data: ByteArray = "Test data for clientSendDataOverSecureSocket".toByteArray()
             val socketOs = secureSocket.outputStream
 
@@ -251,11 +217,10 @@ class RfcommTest {
 
     @Test
     fun clientReceiveDataOverInsecureSocket() {
-        startServer {
-            val serverId = it
+        startServer { serverId ->
             runBlocking { withTimeout(BOND_TIMEOUT.toMillis()) { bondDevice(mBumbleDevice) } }
 
-            val (insecureSocket, connection) = createAndConnectSocket(isSecure = false, serverId)
+            val (insecureSocket, connection) = createConnectAcceptSocket(isSecure = false, serverId)
             val buffer = ByteArray(64)
             val socketIs = insecureSocket.inputStream
             val data: ByteString =
@@ -272,11 +237,10 @@ class RfcommTest {
 
     @Test
     fun clientReceiveDataOverSecureSocket() {
-        startServer {
-            val serverId = it
+        startServer { serverId ->
             runBlocking { withTimeout(BOND_TIMEOUT.toMillis()) { bondDevice(mBumbleDevice) } }
 
-            val (secureSocket, connection) = createAndConnectSocket(isSecure = true, serverId)
+            val (secureSocket, connection) = createConnectAcceptSocket(isSecure = true, serverId)
             val buffer = ByteArray(64)
             val socketIs = secureSocket.inputStream
             val data: ByteString =
@@ -291,18 +255,35 @@ class RfcommTest {
         }
     }
 
-    private fun createAndConnectSocket(
+    private fun createConnectAcceptSocket(
         isSecure: Boolean,
-        server: ServerId
+        server: ServerId,
+        uuid: String = TEST_UUID
     ): Pair<BluetoothSocket, RfcommProto.RfcommConnection> {
+        val socket = createSocket(mBumbleDevice, isSecure, uuid)
+
+        val connection = acceptSocket(server)
+        Truth.assertThat(socket.isConnected).isTrue()
+
+        return Pair(socket, connection)
+    }
+
+    private fun createSocket(
+        device: BluetoothDevice,
+        isSecure: Boolean,
+        uuid: String
+    ): BluetoothSocket {
         val socket =
             if (isSecure) {
-                mBumbleDevice.createRfcommSocketToServiceRecord(UUID.fromString(TEST_UUID))
+                device.createRfcommSocketToServiceRecord(UUID.fromString(uuid))
             } else {
-                mBumbleDevice.createInsecureRfcommSocketToServiceRecord(UUID.fromString(TEST_UUID))
+                device.createInsecureRfcommSocketToServiceRecord(UUID.fromString(uuid))
             }
         socket.connect()
+        return socket
+    }
 
+    private fun acceptSocket(server: ServerId): RfcommProto.RfcommConnection {
         val connectionResponse =
             mBumble
                 .rfcommBlocking()
@@ -311,19 +292,13 @@ class RfcommTest {
                     RfcommProto.AcceptConnectionRequest.newBuilder().setServer(server).build()
                 )
         Truth.assertThat(connectionResponse.connection.id).isEqualTo(mConnectionCounter)
-        Truth.assertThat(socket.isConnected).isTrue()
 
         mConnectionCounter += 1
-        val connection = connectionResponse.connection
-        return Pair(socket, connection)
+        return connectionResponse.connection
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun bondDevice(remoteDevice: BluetoothDevice) {
-        // TODO: b/345842833
-        // HFP will try to connect, and bumble doesn't support HFP yet
-        disableHfp()
-
         if (mAdapter.bondedDevices.contains(remoteDevice)) {
             Log.d(TAG, "bondDevice(): The device is already bonded")
             return
@@ -349,9 +324,12 @@ class RfcommTest {
         flow.first()
     }
 
-    private fun startServer(block: (ServerId) -> Unit) {
-        val request =
-            StartServerRequest.newBuilder().setName(TEST_SERVER_NAME).setUuid(TEST_UUID).build()
+    private fun startServer(
+        name: String = TEST_SERVER_NAME,
+        uuid: String = TEST_UUID,
+        block: (ServerId) -> Unit
+    ) {
+        val request = StartServerRequest.newBuilder().setName(name).setUuid(uuid).build()
         val response = mBumble.rfcommBlocking().startServer(request)
 
         try {
@@ -367,39 +345,12 @@ class RfcommTest {
         }
     }
 
-    private fun disableHfp() =
-        runBlocking<Unit> {
-            val proxy = headsetFlow().first()
-            proxy.setConnectionPolicy(mBumbleDevice, BluetoothProfile.CONNECTION_POLICY_FORBIDDEN)
-        }
-
-    private suspend fun headsetFlow(): Flow<BluetoothHeadset> {
-        return callbackFlow {
-            val listener =
-                object : BluetoothProfile.ServiceListener {
-                    lateinit var mBluetoothHeadset: BluetoothHeadset
-
-                    override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
-                        mBluetoothHeadset = proxy as BluetoothHeadset
-                        trySend(mBluetoothHeadset)
-                    }
-
-                    override fun onServiceDisconnected(profile: Int) {}
-                }
-
-            mAdapter.getProfileProxy(mContext, listener, BluetoothProfile.HEADSET)
-
-            awaitClose {
-                mAdapter.closeProfileProxy(BluetoothProfile.HEADSET, listener.mBluetoothHeadset)
-            }
-        }
-    }
-
     companion object {
         private val TAG = RfcommTest::class.java.getSimpleName()
         private val GRPC_TIMEOUT = Duration.ofSeconds(10)
         private val BOND_TIMEOUT = Duration.ofSeconds(20)
-        private const val TEST_UUID = "00001101-0000-1000-8000-00805F9B34FB"
+        private const val TEST_UUID = "2ac5d8f1-f58d-48ac-a16b-cdeba0892d65"
+        private const val SERIAL_PORT_UUID = "00001101-0000-1000-8000-00805F9B34FB"
         private const val TEST_SERVER_NAME = "RFCOMM Server"
     }
 }
