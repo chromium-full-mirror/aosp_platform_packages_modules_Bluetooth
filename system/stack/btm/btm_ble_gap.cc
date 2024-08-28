@@ -1026,7 +1026,7 @@ void btm_ble_periodic_adv_sync_established(uint8_t status, uint16_t sync_handle,
   int index = btm_ble_get_psync_index(adv_sid, bda);
   if (index == MAX_SYNC_TRANSACTION) {
     log::warn("[PSync]: Invalid index for sync established");
-    if (status == BTM_SUCCESS) {
+    if (status == 0) {
       log::warn("Terminate sync");
       if (BleScanningManager::IsInitialized()) {
         BleScanningManager::Get()->PeriodicScanTerminate(sync_handle);
@@ -1604,7 +1604,7 @@ void btm_ble_read_remote_name_cmpl(bool status, const RawAddress& bda, uint16_t 
     hci_status = HCI_ERR_HOST_TIMEOUT;
   }
 
-  btm_process_remote_name(&bda, bd_name, length + 1, hci_status);
+  get_stack_rnr_interface().btm_process_remote_name(&bda, bd_name, length + 1, hci_status);
   btm_sec_rmt_name_request_complete(&bda, (const uint8_t*)p_name, hci_status);
 }
 
