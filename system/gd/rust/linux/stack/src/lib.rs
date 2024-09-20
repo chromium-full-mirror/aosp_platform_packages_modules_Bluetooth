@@ -3,7 +3,6 @@
 //! This crate provides the API implementation of the Fluoride/GD Bluetooth
 //! stack, independent of any RPC projection.
 
-pub mod async_helper;
 pub mod battery_manager;
 pub mod battery_provider_manager;
 pub mod battery_service;
@@ -35,13 +34,13 @@ use crate::bluetooth::{
     dispatch_base_callbacks, dispatch_hid_host_callbacks, dispatch_sdp_callbacks, Bluetooth,
     BluetoothDevice, DelayedActions, IBluetooth,
 };
-use crate::bluetooth_admin::{BluetoothAdmin, IBluetoothAdmin};
+use crate::bluetooth_admin::{AdminActions, BluetoothAdmin, IBluetoothAdmin};
 use crate::bluetooth_adv::{dispatch_le_adv_callbacks, AdvertiserActions};
 use crate::bluetooth_gatt::{
     dispatch_gatt_client_callbacks, dispatch_gatt_server_callbacks, dispatch_le_scanner_callbacks,
     dispatch_le_scanner_inband_callbacks, BluetoothGatt, GattActions,
 };
-use crate::bluetooth_media::{BluetoothMedia, MediaActions};
+use crate::bluetooth_media::{BluetoothMedia, IBluetoothMedia, MediaActions};
 use crate::dis::{DeviceInformation, ServiceCallbacks};
 use crate::socket_manager::{BluetoothSocketManager, SocketActions};
 use crate::suspend::Suspend;
@@ -107,7 +106,6 @@ pub enum Message {
     ConnectionCallbackDisconnected(u32),
 
     // Some delayed actions for the adapter.
-    TriggerUpdateConnectableMode,
     DelayedAdapterActions(DelayedActions),
 
     // Follows IBluetooth's on_device_(dis)connected and bond_state callbacks
@@ -146,8 +144,8 @@ pub enum Message {
 
     // Admin policy related
     AdminCallbackDisconnected(u32),
+    AdminActions(AdminActions),
     HidHostEnable,
-    AdminPolicyChanged,
 
     // Dis callbacks
     Dis(ServiceCallbacks),
@@ -170,9 +168,6 @@ pub enum Message {
     // UHid callbacks
     UHidHfpOutputCallback(RawAddress, u8, u8),
     UHidTelephonyUseCallback(RawAddress, bool),
-
-    // GATT Callbacks
-    GattClientDisconnected(RawAddress),
 }
 
 /// Returns a callable object that dispatches a BTIF callback to Message
@@ -220,6 +215,7 @@ where
 
 pub enum BluetoothAPI {
     Adapter,
+    Admin,
     Battery,
     Media,
     Gatt,
@@ -288,6 +284,7 @@ impl Stack {
                 }
 
                 Message::AdapterShutdown => {
+                    bluetooth_gatt.lock().unwrap().enable(false);
                     bluetooth.lock().unwrap().disable();
                 }
 
@@ -303,8 +300,22 @@ impl Stack {
                     // Initialize objects that need the adapter to be fully
                     // enabled before running.
 
-                    // Register device information service.
+                    // Init Media and pass it to Bluetooth.
+                    bluetooth_media.lock().unwrap().initialize();
+                    bluetooth.lock().unwrap().set_media(bluetooth_media.clone());
+                    // Init Gatt and pass it to Bluetooth.
+                    bluetooth_gatt.lock().unwrap().init_profiles(tx.clone(), api_tx.clone());
+                    bluetooth_gatt.lock().unwrap().enable(true);
+                    bluetooth.lock().unwrap().set_gatt_and_init_scanner(bluetooth_gatt.clone());
+                    // Init AdvertiseManager. It selects the stack per is_le_ext_adv_supported
+                    // so it can only be done after Adapter is ready.
+                    bluetooth_gatt.lock().unwrap().init_adv_manager(bluetooth.clone());
+                    // Battery service and device information service are on top of Gatt.
+                    // Only initialize them after GATT is ready.
                     bluetooth_dis.lock().unwrap().initialize();
+                    battery_service.lock().unwrap().init();
+                    // Initialize Admin. This toggles the enabled profiles.
+                    bluetooth_admin.lock().unwrap().initialize(api_tx.clone());
                 }
 
                 Message::A2dp(a) => {
@@ -418,13 +429,6 @@ impl Stack {
                     bluetooth.lock().unwrap().connection_callback_disconnected(id);
                 }
 
-                Message::TriggerUpdateConnectableMode => {
-                    let is_listening = bluetooth_socketmgr.lock().unwrap().is_listening();
-                    bluetooth.lock().unwrap().handle_delayed_actions(
-                        DelayedActions::UpdateConnectableMode(is_listening),
-                    );
-                }
-
                 Message::DelayedAdapterActions(action) => {
                     bluetooth.lock().unwrap().handle_delayed_actions(action);
                 }
@@ -523,11 +527,11 @@ impl Stack {
                 Message::AdminCallbackDisconnected(id) => {
                     bluetooth_admin.lock().unwrap().unregister_admin_policy_callback(id);
                 }
+                Message::AdminActions(action) => {
+                    bluetooth_admin.lock().unwrap().handle_action(action);
+                }
                 Message::HidHostEnable => {
                     bluetooth.lock().unwrap().enable_hidhost();
-                }
-                Message::AdminPolicyChanged => {
-                    bluetooth_socketmgr.lock().unwrap().handle_admin_policy_changed();
                 }
                 Message::Dis(callback) => {
                     bluetooth_dis.lock().unwrap().handle_callbacks(&callback);
@@ -595,13 +599,6 @@ impl Stack {
                         .lock()
                         .unwrap()
                         .dispatch_uhid_telephony_use_callback(addr, state);
-                }
-
-                Message::GattClientDisconnected(address) => {
-                    bluetooth
-                        .lock()
-                        .unwrap()
-                        .disconnect_if_no_media_or_hid_profiles_connected(address);
                 }
             }
         }
