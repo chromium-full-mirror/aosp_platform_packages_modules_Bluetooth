@@ -265,7 +265,7 @@ public class GattServiceTest {
 
         verify(mNativeInterface)
                 .gattClientConnect(
-                        clientIf, address, addressType, isDirect, transport, opportunistic, phy);
+                        clientIf, address, addressType, isDirect, transport, opportunistic, phy, 0);
     }
 
     @Test
@@ -374,7 +374,7 @@ public class GattServiceTest {
         IBluetoothGattCallback callback = mock(IBluetoothGattCallback.class);
 
         mService.registerClient(uuid, callback, /* eattSupport= */ true, mAttributionSource);
-        verify(mClientMap, never()).add(any(), any(), any());
+        verify(mClientMap, never()).add(any(), any(), any(), any());
         verify(mNativeInterface, never()).gattClientRegisterApp(anyLong(), anyLong(), anyBoolean());
     }
 

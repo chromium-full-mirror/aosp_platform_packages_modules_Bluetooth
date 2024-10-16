@@ -35,7 +35,6 @@
 #include "internal_include/stack_config.h"
 #include "os/system_properties.h"
 #include "osi/include/allocator.h"
-#include "rust/src/connection/ffi/connection_shim.h"
 #include "stack/arbiter/acl_arbiter.h"
 #include "stack/btm/btm_dev.h"
 #include "stack/gatt/connection_manager.h"
@@ -1378,11 +1377,7 @@ void GATT_Deregister(tGATT_IF gatt_if) {
     }
   }
 
-  if (com::android::bluetooth::flags::unified_connection_manager()) {
-    bluetooth::connection::GetConnectionManager().remove_client(gatt_if);
-  } else {
-    connection_manager::on_app_deregistered(gatt_if);
-  }
+  connection_manager::on_app_deregistered(gatt_if);
 
   if (com::android::bluetooth::flags::gatt_client_dynamic_allocation()) {
     gatt_cb.cl_rcb_map.erase(gatt_if);
@@ -1448,16 +1443,9 @@ void GATT_StartIf(tGATT_IF gatt_if) {
  *                  failure.
  *
  ******************************************************************************/
-bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr, tBTM_BLE_CONN_TYPE connection_type,
-                  tBT_TRANSPORT transport, bool opportunistic) {
-  constexpr uint8_t kPhyLe1M = 0x01;  // From the old controller shim.
-  uint8_t phy = kPhyLe1M;
-  return GATT_Connect(gatt_if, bd_addr, connection_type, transport, opportunistic, phy);
-}
-
 bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr, tBLE_ADDR_TYPE addr_type,
                   tBTM_BLE_CONN_TYPE connection_type, tBT_TRANSPORT transport, bool opportunistic,
-                  uint8_t initiating_phys) {
+                  uint8_t initiating_phys, uint16_t preferred_mtu) {
   /* Make sure app is registered */
   tGATT_REG* p_reg = gatt_get_regcb(gatt_if);
   if (!p_reg) {
@@ -1500,7 +1488,7 @@ bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr, tBLE_ADDR_TYPE ad
         log::warn("{} already added to gatt_if {} direct conn list", bd_addr, gatt_if);
       }
 
-      ret = acl_create_le_connection_with_id(gatt_if, bd_addr, addr_type);
+      ret = connection_manager::create_le_connection(gatt_if, bd_addr, addr_type);
     }
 
   } else {
@@ -1513,20 +1501,10 @@ bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr, tBLE_ADDR_TYPE ad
       ret = false;
     } else {
       log::debug("Adding to background connect to device:{}", bd_addr);
-      if (com::android::bluetooth::flags::unified_connection_manager()) {
-        if (connection_type == BTM_BLE_BKG_CONNECT_ALLOW_LIST) {
-          bluetooth::connection::GetConnectionManager().add_background_connection(
-                  gatt_if, bluetooth::connection::ResolveRawAddress(bd_addr));
-          ret = true;  // TODO(aryarahul): error handling
-        } else {
-          log::fatal("unimplemented, TODO(aryarahul)");
-        }
+      if (connection_type == BTM_BLE_BKG_CONNECT_ALLOW_LIST) {
+        ret = connection_manager::background_connect_add(gatt_if, bd_addr);
       } else {
-        if (connection_type == BTM_BLE_BKG_CONNECT_ALLOW_LIST) {
-          ret = connection_manager::background_connect_add(gatt_if, bd_addr);
-        } else {
-          ret = connection_manager::background_connect_targeted_announcement_add(gatt_if, bd_addr);
-        }
+        ret = connection_manager::background_connect_targeted_announcement_add(gatt_if, bd_addr);
       }
     }
   }
@@ -1544,20 +1522,22 @@ bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr, tBLE_ADDR_TYPE ad
     }
   }
 
+  if (ret) {
+    // Save the current MTU preference for this app
+    p_reg->mtu_prefs.erase(bd_addr);
+    if (preferred_mtu > GATT_DEF_BLE_MTU_SIZE) {
+      log::verbose("Saving MTU preference from app {} for {}", gatt_if, bd_addr);
+      p_reg->mtu_prefs.insert({bd_addr, preferred_mtu});
+    }
+  }
+
   return ret;
 }
 
-bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr, tBLE_ADDR_TYPE addr_type,
-                  tBTM_BLE_CONN_TYPE connection_type, tBT_TRANSPORT transport, bool opportunistic) {
-  constexpr uint8_t kPhyLe1M = 0x01;  // From the old controller shim.
-  uint8_t phy = kPhyLe1M;
-  return GATT_Connect(gatt_if, bd_addr, addr_type, connection_type, transport, opportunistic, phy);
-}
-
 bool GATT_Connect(tGATT_IF gatt_if, const RawAddress& bd_addr, tBTM_BLE_CONN_TYPE connection_type,
-                  tBT_TRANSPORT transport, bool opportunistic, uint8_t initiating_phys) {
+                  tBT_TRANSPORT transport, bool opportunistic) {
   return GATT_Connect(gatt_if, bd_addr, BLE_ADDR_PUBLIC, connection_type, transport, opportunistic,
-                      initiating_phys);
+                      LE_PHY_1M, 0);
 }
 
 /*******************************************************************************
@@ -1607,14 +1587,9 @@ bool GATT_CancelConnect(tGATT_IF gatt_if, const RawAddress& bd_addr, bool is_dir
     }
   }
 
-  if (com::android::bluetooth::flags::unified_connection_manager()) {
-    bluetooth::connection::GetConnectionManager().stop_all_connections_to_device(
-            bluetooth::connection::ResolveRawAddress(bd_addr));
-  } else {
-    if (!connection_manager::remove_unconditional(bd_addr)) {
-      log::error("no app associated with the bg device for unconditional removal");
-      return false;
-    }
+  if (!connection_manager::remove_unconditional(bd_addr)) {
+    log::error("no app associated with the bg device for unconditional removal");
+    return false;
   }
 
   return true;

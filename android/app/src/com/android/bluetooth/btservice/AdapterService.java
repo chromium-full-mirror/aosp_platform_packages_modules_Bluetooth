@@ -335,8 +335,6 @@ public class AdapterService extends Service {
 
     private volatile boolean mTestModeEnabled = false;
 
-    private MetricsLogger mMetricsLogger;
-
     /** Handlers for incoming service calls */
     private AdapterServiceBinder mBinder;
 
@@ -631,7 +629,7 @@ public class AdapterService extends Service {
         }
         // OnCreate must perform the minimum of infaillible and mandatory initialization
         mRemoteDevices = new RemoteDevices(this, mLooper);
-        mAdapterProperties = new AdapterProperties(this);
+        mAdapterProperties = new AdapterProperties(this, mRemoteDevices, mLooper);
         mAdapterStateMachine = new AdapterState(this, mLooper);
         mBinder = new AdapterServiceBinder(this);
         mUserManager = getNonNullSystemService(UserManager.class);
@@ -646,7 +644,6 @@ public class AdapterService extends Service {
     private void init() {
         Log.d(TAG, "init()");
         Config.init(this);
-        initMetricsLogger();
         mDeviceConfigListener.start();
 
         if (!Flags.fastBindToApp()) {
@@ -658,6 +655,7 @@ public class AdapterService extends Service {
             mCompanionDeviceManager = getNonNullSystemService(CompanionDeviceManager.class);
             mRemoteDevices = new RemoteDevices(this, mLooper);
         }
+        MetricsLogger.getInstance().init(this, mRemoteDevices);
 
         clearDiscoveringPackages();
         if (!Flags.fastBindToApp()) {
@@ -666,7 +664,7 @@ public class AdapterService extends Service {
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         if (!Flags.fastBindToApp()) {
             // Moved to OnCreate
-            mAdapterProperties = new AdapterProperties(this);
+            mAdapterProperties = new AdapterProperties(this, mRemoteDevices, mLooper);
             mAdapterStateMachine = new AdapterState(this, mLooper);
         }
         boolean isCommonCriteriaMode =
@@ -700,9 +698,7 @@ public class AdapterService extends Service {
                 mUserManager.isGuestUser(),
                 isCommonCriteriaMode,
                 configCompareResult,
-                getInitFlags(),
-                isAtvDevice,
-                getApplicationInfo().dataDir);
+                isAtvDevice);
         mNativeAvailable = true;
         // Load the name and address
         mNativeInterface.getAdapterProperty(AbstractionLayer.BT_PROPERTY_BDADDR);
@@ -824,23 +820,6 @@ public class AdapterService extends Service {
         return mSilenceDeviceManager;
     }
 
-    private boolean initMetricsLogger() {
-        if (mMetricsLogger != null) {
-            return false;
-        }
-        mMetricsLogger = MetricsLogger.getInstance();
-        return mMetricsLogger.init(this);
-    }
-
-    private boolean closeMetricsLogger() {
-        if (mMetricsLogger == null) {
-            return false;
-        }
-        boolean result = mMetricsLogger.close();
-        mMetricsLogger = null;
-        return result;
-    }
-
     /**
      * Log L2CAP CoC Server Connection Metrics
      *
@@ -891,10 +870,6 @@ public class AdapterService extends Service {
                 appUid,
                 socketCreationLatencyMillis,
                 socketAcceptanceLatencyMillis);
-    }
-
-    public void setMetricsLogger(MetricsLogger metricsLogger) {
-        mMetricsLogger = metricsLogger;
     }
 
     /**
@@ -1003,7 +978,7 @@ public class AdapterService extends Service {
         // calling cleanup but this may not be necessary at all
         // We should figure out why this is needed later
         mRemoteDevices.reset();
-        mAdapterProperties.init(mRemoteDevices);
+        mAdapterProperties.init();
 
         Log.d(TAG, "bleOnProcessStart() - Make Bond State Machine");
         mBondStateMachine = BondStateMachine.make(this, mAdapterProperties, mRemoteDevices);
@@ -1202,6 +1177,14 @@ public class AdapterService extends Service {
     }
 
     void updateAdapterName(String name) {
+        if (Flags.adapterPropertiesLooper()) {
+            updateAdapterNameInternal(name);
+        } else {
+            mHandler.post(() -> updateAdapterNameInternal(name));
+        }
+    }
+
+    private void updateAdapterNameInternal(String name) {
         int n = mRemoteCallbacks.beginBroadcast();
         Log.d(TAG, "updateAdapterName(" + name + ")");
         for (int i = 0; i < n; i++) {
@@ -1215,6 +1198,14 @@ public class AdapterService extends Service {
     }
 
     void updateAdapterAddress(String address) {
+        if (Flags.adapterPropertiesLooper()) {
+            updateAdapterAddressInternal(address);
+        } else {
+            mHandler.post(() -> updateAdapterAddressInternal(address));
+        }
+    }
+
+    private void updateAdapterAddressInternal(String address) {
         int n = mRemoteCallbacks.beginBroadcast();
         Log.d(TAG, "updateAdapterAddress(" + BluetoothUtils.toAnonymizedAddress(address) + ")");
         for (int i = 0; i < n; i++) {
@@ -1443,7 +1434,7 @@ public class AdapterService extends Service {
             return;
         }
 
-        closeMetricsLogger();
+        MetricsLogger.getInstance().close();
 
         clearAdapterService(this);
 
@@ -5711,6 +5702,14 @@ public class AdapterService extends Service {
     }
 
     public void setPhonebookAccessPermission(BluetoothDevice device, int value) {
+        Log.d(
+                TAG,
+                "setPhonebookAccessPermission device="
+                        + ((device == null) ? "null" : device.getAnonymizedAddress())
+                        + ", value="
+                        + value
+                        + ", callingUid="
+                        + Binder.getCallingUid());
         setDeviceAccessFromPrefs(device, value, PHONEBOOK_ACCESS_PERMISSION_PREFERENCE_FILE);
     }
 
@@ -6439,18 +6438,6 @@ public class AdapterService extends Service {
         if (remoteP192Data != null || remoteP256Data != null) {
             this.enforceCallingOrSelfPermission(BLUETOOTH_PRIVILEGED, null);
         }
-    }
-
-    private String[] getInitFlags() {
-        final DeviceConfig.Properties properties =
-                DeviceConfig.getProperties(DeviceConfig.NAMESPACE_BLUETOOTH);
-        ArrayList<String> initFlags = new ArrayList<>();
-        for (String property : properties.getKeyset()) {
-            if (property.startsWith("INIT_")) {
-                initFlags.add(property + "=" + properties.getString(property, null));
-            }
-        }
-        return initFlags.toArray(new String[0]);
     }
 
     private final Object mDeviceConfigLock = new Object();

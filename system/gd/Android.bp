@@ -89,10 +89,44 @@ cc_defaults {
     ],
 }
 
+soong_config_module_type {
+    name: "mgmt_cc_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "mgmt",
+    variables: ["vertical"],
+    properties: ["srcs"],
+}
+
+soong_config_string_variable {
+    name: "vertical",
+    values: [
+        "android_default",
+        "android_desktop",
+    ],
+}
+
+mgmt_cc_defaults {
+    name: "mgmt_defaults",
+    soong_config_variables: {
+        vertical: {
+            android_desktop: {
+                srcs: [":BluetoothHalSources_mgmt"],
+            },
+            android_default: {
+                srcs: [":BluetoothHalSources_mgmt_stub"],
+            },
+            conditions_default: {
+                srcs: [":BluetoothHalSources_mgmt_stub"],
+            },
+        },
+    },
+}
+
 cc_defaults {
     name: "libbluetooth_gd_defaults",
     defaults: [
         "gd_defaults",
+        "mgmt_defaults",
     ],
     host_supported: true,
     target: {
@@ -178,11 +212,8 @@ cc_defaults {
         "libbluetooth-types",
         "libbluetooth_crypto_toolbox",
         "libbluetooth_log",
-        "libbluetooth_rust_interop",
         "libbt-common",
         "libbt-platform-protos-lite",
-        "libbt_shim_bridge",
-        "libbt_shim_ffi",
         "libcom.android.sysprop.bluetooth.wrapped",
         "libosi",
         "server_configurable_flags",
@@ -192,7 +223,6 @@ cc_defaults {
         "packages/modules/Bluetooth/system/stack/include",
         "packages/modules/Bluetooth/system/types",
     ],
-    export_static_lib_headers: ["libbluetooth_rust_interop"],
 }
 
 cc_library {
@@ -248,7 +278,6 @@ cc_library {
     cflags: [
         "-DFUZZ_TARGET",
         "-DUSE_FAKE_TIMERS",
-        "-Wno-unused-parameter",
     ],
     static_libs: [
         "bluetooth_flags_c_lib",
@@ -329,11 +358,8 @@ cc_binary {
         "libbluetooth_l2cap_pdl",
         "libbluetooth_log",
         "libbluetooth_ras_pdl",
-        "libbluetooth_rust_interop",
         "libbluetooth_smp_pdl",
         "libbt-common",
-        "libbt_shim_bridge",
-        "libbt_shim_ffi",
         "libchrome",
         "libcom.android.sysprop.bluetooth.wrapped",
         "libflatbuffers-cpp",
@@ -501,12 +527,9 @@ cc_test {
         "libbluetooth_l2cap_pdl",
         "libbluetooth_log",
         "libbluetooth_ras_pdl",
-        "libbluetooth_rust_interop",
         "libbluetooth_smp_pdl",
         "libbt-common",
         "libbt-platform-protos-lite",
-        "libbt_shim_bridge",
-        "libbt_shim_ffi",
         "libchrome",
         "libcom.android.sysprop.bluetooth.wrapped",
         "libflagtest",
@@ -569,8 +592,6 @@ cc_test {
         "libbt-btu-main-thread",
         "libbt-common",
         "libbt-jni-thread",
-        "libbt_shim_bridge",
-        "libbt_shim_ffi",
         "libchrome",
         "libevent",
         "libflatbuffers-cpp",
@@ -611,9 +632,6 @@ cc_test {
     static_libs: [
         "libbase",
         "libbluetooth_log",
-        "libbluetooth_rust_interop",
-        "libbt_shim_bridge",
-        "libbt_shim_ffi",
         "liblog",
     ],
     target: {
@@ -649,10 +667,7 @@ cc_defaults {
         "libbluetooth_crypto_toolbox",
         "libbluetooth_gd_fuzzing",
         "libbluetooth_log",
-        "libbluetooth_rust_interop",
         "libbt-common",
-        "libbt_shim_bridge",
-        "libbt_shim_ffi",
         "libchrome",
         "libcom.android.sysprop.bluetooth.wrapped",
         "libgmock",
@@ -704,7 +719,6 @@ cc_fuzz {
         cc: ["android-bluetooth-security@google.com"],
         componentid: 27441,
     },
-    cflags: ["-Wno-unused-parameter"],
 }
 
 cc_fuzz {
@@ -714,7 +728,6 @@ cc_fuzz {
         ":BluetoothHalFuzzSources",
         "hci/fuzz/hci_layer_fuzz_test.cc",
     ],
-    cflags: ["-Wno-unused-parameter"],
 }
 
 cc_fuzz {
@@ -727,7 +740,6 @@ cc_fuzz {
         cc: ["android-bluetooth-security@google.com"],
         componentid: 27441,
     },
-    cflags: ["-Wno-unused-parameter"],
 }
 
 cc_benchmark {
@@ -746,7 +758,6 @@ cc_benchmark {
         "libbase",
         "libbluetooth_gd",
         "libbluetooth_log",
-        "libbt_shim_bridge",
         "libchrome",
         "liblog",
         "server_configurable_flags",
@@ -761,7 +772,6 @@ genrule {
     ],
     cmd: "$(location flatc) -I packages/modules/Bluetooth/system/gd -b --schema -o $(genDir) $(in) ",
     srcs: [
-        "common/init_flags.fbs",
         "dumpsys_data.fbs",
         "hci/hci_acl_manager.fbs",
         "hci/hci_controller.fbs",
@@ -774,7 +784,6 @@ genrule {
         "dumpsys_data.bfbs",
         "hci_acl_manager.bfbs",
         "hci_controller.bfbs",
-        "init_flags.bfbs",
         "wakelock_manager.bfbs",
     ],
 }
@@ -786,7 +795,6 @@ genrule {
     ],
     cmd: "$(location flatc) -I packages/modules/Bluetooth/system/gd -o $(genDir) --cpp $(in) ",
     srcs: [
-        "common/init_flags.fbs",
         "dumpsys_data.fbs",
         "hci/hci_acl_manager.fbs",
         "hci/hci_controller.fbs",
@@ -799,7 +807,6 @@ genrule {
         "dumpsys_generated.h",
         "hci_acl_manager_generated.h",
         "hci_controller_generated.h",
-        "init_flags_generated.h",
         "wakelock_manager_generated.h",
     ],
 }

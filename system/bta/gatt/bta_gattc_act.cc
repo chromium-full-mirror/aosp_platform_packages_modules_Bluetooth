@@ -297,7 +297,7 @@ void bta_gattc_deregister(tBTA_GATTC_RCB* p_clreg) {
   /* close all CLCB related to this app */
   if (com::android::bluetooth::flags::gatt_client_dynamic_allocation()) {
     for (auto& p_clcb : bta_gattc_cb.clcb_set) {
-      if (p_clcb->p_rcb != p_clreg) {
+      if (!p_clcb->in_use || p_clcb->p_rcb != p_clreg) {
         continue;
       }
       p_clreg->dereg_pending = true;
@@ -422,8 +422,7 @@ void bta_gattc_open_error(tBTA_GATTC_CLCB* p_clcb, const tBTA_GATTC_DATA* /* p_d
 }
 
 void bta_gattc_open_fail(tBTA_GATTC_CLCB* p_clcb, const tBTA_GATTC_DATA* p_data) {
-  if (com::android::bluetooth::flags::enumerate_gatt_errors() &&
-      p_data->int_conn.reason == GATT_CONN_TIMEOUT) {
+  if (p_data->int_conn.reason == GATT_CONN_TIMEOUT) {
     log::warn(
             "Connection timed out after 30 seconds. conn_id=0x{:x}. Return "
             "GATT_CONNECTION_TIMEOUT({})",
@@ -449,7 +448,7 @@ void bta_gattc_open(tBTA_GATTC_CLCB* p_clcb, const tBTA_GATTC_DATA* p_data) {
   if (!GATT_Connect(p_clcb->p_rcb->client_if, p_data->api_conn.remote_bda,
                     p_data->api_conn.remote_addr_type, BTM_BLE_DIRECT_CONNECTION,
                     p_data->api_conn.transport, p_data->api_conn.opportunistic,
-                    p_data->api_conn.initiating_phys)) {
+                    p_data->api_conn.initiating_phys, p_data->api_conn.preferred_mtu)) {
     log::error("Connection open failure");
     bta_gattc_sm_execute(p_clcb, BTA_GATTC_INT_OPEN_FAIL_EVT, p_data);
     return;
@@ -484,8 +483,8 @@ static void bta_gattc_init_bk_conn(const tBTA_GATTC_API_OPEN* p_data, tBTA_GATTC
   }
 
   /* always call open to hold a connection */
-  if (!GATT_Connect(p_data->client_if, p_data->remote_bda, p_data->connection_type,
-                    p_data->transport, false)) {
+  if (!GATT_Connect(p_data->client_if, p_data->remote_bda, BLE_ADDR_PUBLIC, p_data->connection_type,
+                    p_data->transport, false, LE_PHY_1M, p_data->preferred_mtu)) {
     log::error("Unable to connect to remote bd_addr={}", p_data->remote_bda);
     bta_gattc_send_open_cback(p_clreg, GATT_ILLEGAL_PARAMETER, p_data->remote_bda,
                               GATT_INVALID_CONN_ID, BT_TRANSPORT_LE, 0);
@@ -1504,7 +1503,8 @@ void bta_gattc_process_api_refresh(const RawAddress& remote_bda) {
       tBTA_GATTC_CLCB* p_clcb = &bta_gattc_cb.clcb[0];
       if (com::android::bluetooth::flags::gatt_client_dynamic_allocation()) {
         for (auto& p_clcb_i : bta_gattc_cb.clcb_set) {
-          if (p_clcb_i->p_srcb == p_srvc_cb) {
+          if (p_clcb_i->in_use && p_clcb_i->p_srcb == p_srvc_cb) {
+            p_clcb = p_clcb_i.get();
             found = true;
             break;
           }
@@ -1576,7 +1576,7 @@ static bool bta_gattc_process_srvc_chg_ind(tCONN_ID conn_id, tBTA_GATTC_RCB* p_c
     if (p_clcb == NULL || (p_clcb && p_clcb->p_q_cmd != NULL)) {
       if (com::android::bluetooth::flags::gatt_client_dynamic_allocation()) {
         for (auto& p_clcb_i : bta_gattc_cb.clcb_set) {
-          if (p_clcb_i->p_srcb == p_srcb && p_clcb_i->p_q_cmd == NULL) {
+          if (p_clcb_i->in_use && p_clcb_i->p_srcb == p_srcb && p_clcb_i->p_q_cmd == NULL) {
             p_clcb = p_clcb_i.get();
             break;
           }

@@ -39,6 +39,7 @@
 
 #include <cstdint>
 
+#include "btif/include/btif_api.h"
 #include "btif/include/btif_common.h"
 #include "btif/include/btif_config.h"
 #include "btif/include/btif_dm.h"
@@ -63,9 +64,6 @@
 #include "storage/config_keys.h"
 #include "types/bluetooth/uuid.h"
 #include "types/raw_address.h"
-
-// TODO(b/369381361) Enfore -Wmissing-prototypes
-#pragma GCC diagnostic ignored "-Wmissing-prototypes"
 
 using base::PlatformThread;
 using bluetooth::Uuid;
@@ -108,12 +106,6 @@ static uint8_t btif_dut_mode = 0;
 
 static base::AtExitManager* exit_manager;
 static uid_set_t* uid_set;
-
-/*******************************************************************************
- *  Externs
- ******************************************************************************/
-void btif_dm_enable_service(tBTA_SERVICE_ID service_id, bool enable);
-void btif_dm_load_local_oob(void);
 
 /*******************************************************************************
  *

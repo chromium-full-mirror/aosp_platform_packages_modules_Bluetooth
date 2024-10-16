@@ -31,8 +31,8 @@ use crate::battery_manager::{BatteryManager, BatterySet};
 use crate::battery_provider_manager::BatteryProviderManager;
 use crate::battery_service::{BatteryService, BatteryServiceActions};
 use crate::bluetooth::{
-    dispatch_base_callbacks, dispatch_hid_host_callbacks, dispatch_sdp_callbacks, Bluetooth,
-    BluetoothDevice, DelayedActions, IBluetooth,
+    dispatch_base_callbacks, dispatch_hid_host_callbacks, dispatch_sdp_callbacks, AdapterActions,
+    Bluetooth, BluetoothDevice, IBluetooth,
 };
 use crate::bluetooth_admin::{AdminActions, BluetoothAdmin, IBluetoothAdmin};
 use crate::bluetooth_adv::{dispatch_le_adv_callbacks, AdvertiserActions};
@@ -105,8 +105,7 @@ pub enum Message {
     AdapterCallbackDisconnected(u32),
     ConnectionCallbackDisconnected(u32),
 
-    // Some delayed actions for the adapter.
-    DelayedAdapterActions(DelayedActions),
+    AdapterActions(AdapterActions),
 
     // Follows IBluetooth's on_device_(dis)connected and bond_state callbacks
     // but doesn't require depending on Bluetooth.
@@ -304,7 +303,7 @@ impl Stack {
                     bluetooth_media.lock().unwrap().initialize();
                     bluetooth.lock().unwrap().set_media(bluetooth_media.clone());
                     // Init Gatt and pass it to Bluetooth.
-                    bluetooth_gatt.lock().unwrap().init_profiles(tx.clone(), api_tx.clone());
+                    bluetooth_gatt.lock().unwrap().init_profiles(api_tx.clone());
                     bluetooth_gatt.lock().unwrap().enable(true);
                     bluetooth.lock().unwrap().set_gatt_and_init_scanner(bluetooth_gatt.clone());
                     // Init AdvertiseManager. It selects the stack per is_le_ext_adv_supported
@@ -429,8 +428,8 @@ impl Stack {
                     bluetooth.lock().unwrap().connection_callback_disconnected(id);
                 }
 
-                Message::DelayedAdapterActions(action) => {
-                    bluetooth.lock().unwrap().handle_delayed_actions(action);
+                Message::AdapterActions(action) => {
+                    bluetooth.lock().unwrap().handle_actions(action);
                 }
 
                 // Any service needing an updated list of devices can have an

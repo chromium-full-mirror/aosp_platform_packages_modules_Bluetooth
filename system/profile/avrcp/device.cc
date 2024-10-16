@@ -725,6 +725,7 @@ void Device::AddressedPlayerNotificationResponse(uint8_t label, bool interim,
   if (curr_browsed_player_id_ == -1) {
     curr_browsed_player_id_ = curr_player;
   }
+  curr_addressed_player_id_ = curr_player;
 
   auto response = RegisterNotificationResponseBuilder::MakeAddressedPlayerBuilder(
           interim, curr_player, 0x0000);
@@ -937,6 +938,8 @@ void Device::HandleSetAddressedPlayer(uint8_t label, std::shared_ptr<SetAddresse
     return;
   }
 
+  curr_addressed_player_id_ = curr_player;
+
   auto response = SetAddressedPlayerResponseBuilder::MakeBuilder(Status::NO_ERROR);
   send_message(label, false, std::move(response));
 }
@@ -1114,7 +1117,7 @@ void Device::HandleGetTotalNumberOfItems(uint8_t label,
   }
 }
 
-void Device::GetTotalNumberOfItemsMediaPlayersResponse(uint8_t label, uint16_t curr_player,
+void Device::GetTotalNumberOfItemsMediaPlayersResponse(uint8_t label, uint16_t /*curr_player*/,
                                                        std::vector<MediaPlayerInfo> list) {
   log::verbose("num_items={}", list.size());
 
@@ -1126,14 +1129,28 @@ void Device::GetTotalNumberOfItemsMediaPlayersResponse(uint8_t label, uint16_t c
 void Device::GetTotalNumberOfItemsVFSResponse(uint8_t label, std::vector<ListItem> list) {
   log::verbose("num_items={}", list.size());
 
+  if (curr_browsed_player_id_ == -1) {
+    auto response = GetTotalNumberOfItemsResponseBuilder::MakeBuilder(Status::NO_AVAILABLE_PLAYERS,
+                                                                      0x0000, 0);
+    send_message(label, true, std::move(response));
+    return;
+  }
+
   auto builder =
           GetTotalNumberOfItemsResponseBuilder::MakeBuilder(Status::NO_ERROR, 0x0000, list.size());
   send_message(label, true, std::move(builder));
 }
 
-void Device::GetTotalNumberOfItemsNowPlayingResponse(uint8_t label, std::string curr_song_id,
+void Device::GetTotalNumberOfItemsNowPlayingResponse(uint8_t label, std::string /*curr_song_id*/,
                                                      std::vector<SongInfo> list) {
   log::verbose("num_items={}", list.size());
+
+  if (curr_addressed_player_id_ == -1) {
+    auto response = GetTotalNumberOfItemsResponseBuilder::MakeBuilder(Status::NO_AVAILABLE_PLAYERS,
+                                                                      0x0000, 0);
+    send_message(label, true, std::move(response));
+    return;
+  }
 
   auto builder =
           GetTotalNumberOfItemsResponseBuilder::MakeBuilder(Status::NO_ERROR, 0x0000, list.size());
@@ -1179,7 +1196,7 @@ void Device::HandleChangePath(uint8_t label, std::shared_ptr<ChangePathRequest> 
           base::Bind(&Device::ChangePathResponse, weak_ptr_factory_.GetWeakPtr(), label, pkt));
 }
 
-void Device::ChangePathResponse(uint8_t label, std::shared_ptr<ChangePathRequest> pkt,
+void Device::ChangePathResponse(uint8_t label, std::shared_ptr<ChangePathRequest> /*pkt*/,
                                 std::vector<ListItem> list) {
   // TODO (apanicke): Reconstruct the VFS ID's here. Right now it gets
   // reconstructed in GetFolderItemsVFS
@@ -1557,7 +1574,7 @@ void Device::SendMediaUpdate(bool metadata, bool play_status, bool queue) {
   }
 }
 
-void Device::SendFolderUpdate(bool available_players, bool addressed_player, bool uids) {
+void Device::SendFolderUpdate(bool available_players, bool addressed_player, bool /*uids*/) {
   log::assert_that(media_interface_ != nullptr, "assert failed: media_interface_ != nullptr");
   log::verbose("");
 
@@ -1664,7 +1681,7 @@ void Device::PlayerSettingChangedNotificationResponse(uint8_t label, bool interi
 }
 
 void Device::HandleNowPlayingNotificationResponse(uint8_t label, bool interim,
-                                                  std::string curr_song_id,
+                                                  std::string /*curr_song_id*/,
                                                   std::vector<SongInfo> song_list) {
   if (interim) {
     now_playing_changed_ = Notification(true, label);
@@ -1755,7 +1772,7 @@ static std::string volumeToStr(int8_t volume) {
 
 std::ostream& operator<<(std::ostream& out, const Device& d) {
   // TODO: whether this should be turned into LOGGABLE STRING?
-  out << "  " << ADDRESS_TO_LOGGABLE_STR(d.address_);
+  out << "  " << d.address_.ToRedactedStringForLogging();
   if (d.IsActive()) {
     out << " <Active>";
   }

@@ -35,7 +35,6 @@
 #include "main/shim/acl_api.h"
 #include "osi/include/allocator.h"
 #include "osi/include/properties.h"
-#include "rust/src/connection/ffi/connection_shim.h"
 #include "stack/arbiter/acl_arbiter.h"
 #include "stack/btm/btm_dev.h"
 #include "stack/btm/btm_sec.h"
@@ -238,7 +237,7 @@ bool gatt_connect(const RawAddress& rem_bda, tBLE_ADDR_TYPE addr_type, tGATT_TCB
   }
 
   p_tcb->att_lcid = L2CAP_ATT_CID;
-  return acl_create_le_connection_with_id(gatt_if, rem_bda, addr_type);
+  return connection_manager::create_le_connection(gatt_if, rem_bda, addr_type);
 }
 
 bool gatt_connect(const RawAddress& rem_bda, tGATT_TCB* p_tcb, tBT_TRANSPORT transport,
@@ -261,20 +260,14 @@ void gatt_cancel_connect(const RawAddress& bd_addr, tBT_TRANSPORT transport) {
   /* This shall be call only when device is not connected */
   log::debug("{}, transport {}", bd_addr, transport);
 
-  if (com::android::bluetooth::flags::unified_connection_manager()) {
-    // TODO(aryarahul): this might not be necessary now that the connection
-    // manager handles GATT client closure correctly in GATT_Deregister
-    bluetooth::connection::GetConnectionManager().stop_all_connections_to_device(
-            bluetooth::connection::ResolveRawAddress(bd_addr));
-  } else {
-    if (!connection_manager::direct_connect_remove(CONN_MGR_ID_L2CAP, bd_addr)) {
-      BTM_AcceptlistRemove(bd_addr);
-      log::info(
-              "GATT connection manager has no record but removed filter "
-              "acceptlist gatt_if:{} peer:{}",
-              static_cast<uint8_t>(CONN_MGR_ID_L2CAP), bd_addr);
-    }
+  if (!connection_manager::direct_connect_remove(CONN_MGR_ID_L2CAP, bd_addr)) {
+    bluetooth::shim::ACL_IgnoreLeConnectionFrom(BTM_Sec_GetAddressWithType(bd_addr));
+    log::info(
+            "GATT connection manager has no record but removed filter "
+            "acceptlist gatt_if:{} peer:{}",
+            static_cast<uint8_t>(CONN_MGR_ID_L2CAP), bd_addr);
   }
+
   gatt_cleanup_upon_disc(bd_addr, GATT_CONN_TERMINATE_LOCAL_HOST, transport);
 }
 
@@ -496,11 +489,7 @@ bool gatt_act_connect(tGATT_REG* p_reg, const RawAddress& bd_addr, tBT_TRANSPORT
 
 namespace connection_manager {
 void on_connection_timed_out(uint8_t /* app_id */, const RawAddress& address) {
-  if (com::android::bluetooth::flags::enumerate_gatt_errors()) {
-    gatt_le_connect_cback(L2CAP_ATT_CID, address, false, 0x08, BT_TRANSPORT_LE);
-  } else {
-    gatt_le_connect_cback(L2CAP_ATT_CID, address, false, 0xff, BT_TRANSPORT_LE);
-  }
+  gatt_le_connect_cback(L2CAP_ATT_CID, address, false, 0x08, BT_TRANSPORT_LE);
 }
 }  // namespace connection_manager
 
@@ -597,6 +586,15 @@ static void gatt_le_connect_cback(uint16_t /* chan */, const RawAddress& bd_addr
   if (stack_config_get_interface()->get_pts_connect_eatt_before_encryption()) {
     log::info("Start EATT before encryption");
     EattExtension::GetInstance()->Connect(bd_addr);
+  }
+
+  /* TODO: This preference should be used to exchange MTU with the peer device before the apps are
+   * notified of the connection. */
+  uint16_t app_mtu_pref = gatt_get_apps_preferred_mtu(bd_addr);
+  gatt_remove_apps_mtu_prefs(bd_addr);
+  p_tcb->app_mtu_pref = app_mtu_pref;
+  if (app_mtu_pref > GATT_DEF_BLE_MTU_SIZE) {
+    log::verbose("Combined app MTU prefs for {}: {}", bd_addr, app_mtu_pref);
   }
 }
 
@@ -1001,14 +999,7 @@ static void gatt_send_conn_cback(tGATT_TCB* p_tcb) {
   tGATT_REG* p_reg;
   tCONN_ID conn_id;
 
-  std::set<tGATT_IF> apps = {};
-  if (com::android::bluetooth::flags::unified_connection_manager()) {
-    // TODO(aryarahul): this should be done via callbacks passed into the
-    // connection manager
-    apps = {};
-  } else {
-    apps = connection_manager::get_apps_connecting_to(p_tcb->peer_bda);
-  }
+  std::set<tGATT_IF> apps = connection_manager::get_apps_connecting_to(p_tcb->peer_bda);
 
   /* notifying all applications for the connection up event */
 
@@ -1061,9 +1052,7 @@ static void gatt_send_conn_cback(tGATT_TCB* p_tcb) {
   }
 
   /* Remove the direct connection */
-  if (!com::android::bluetooth::flags::unified_connection_manager()) {
-    connection_manager::on_connection_complete(p_tcb->peer_bda);
-  }
+  connection_manager::on_connection_complete(p_tcb->peer_bda);
 
   if (p_tcb->att_lcid == L2CAP_ATT_CID) {
     if (!p_tcb->app_hold_link.empty()) {

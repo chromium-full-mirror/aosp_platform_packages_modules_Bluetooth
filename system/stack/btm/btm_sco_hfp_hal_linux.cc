@@ -294,6 +294,13 @@ void init() {
     bluetooth::log::info("Successfully queried SCO codec capabilities.");
   }
 
+#ifndef TARGET_FLOSS
+  // If hfp software path is not enabled, fallback to offload path.
+  if (!osi_property_get_bool("bluetooth.hfp.software_datapath.enabled", false)) {
+    enable_offload(true);
+  }
+#endif
+
   close(fd);
 }
 
@@ -324,8 +331,13 @@ bool get_wbs_supported() {
 
 // Check if super-wideband speech is supported on local device
 bool get_swb_supported() {
+#ifdef TARGET_FLOSS
   // We only support SWB via transparent mode.
   return is_coding_format_supported(ESCO_CODING_FORMAT_TRANSPNT);
+#else
+  return is_coding_format_supported(ESCO_CODING_FORMAT_TRANSPNT) &&
+         osi_property_get_bool("bluetooth.hfp.swb.supported", true);  // TODO: add SWB for desktop
+#endif
 }
 
 // Checks the supported codecs

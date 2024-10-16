@@ -73,8 +73,8 @@ bluetooth::common::PostableContext* get_main() { return nullptr; }
 
 namespace bluetooth {
 namespace os {
-uint32_t GetSystemPropertyUint32Base(const std::string& property, uint32_t default_value,
-                                     int base) {
+uint32_t GetSystemPropertyUint32Base(const std::string& /*property*/, uint32_t default_value,
+                                     int /*base*/) {
   return default_value;
 }
 }  // namespace os
@@ -95,20 +95,24 @@ void SnoopLogger::SetL2capChannelOpen(uint16_t, uint16_t, uint16_t, uint16_t, bo
 }  // namespace hal
 }  // namespace bluetooth
 
+namespace connection_manager {
+bool create_le_connection(uint8_t /* id */, const RawAddress& /* bd_addr */,
+                          tBLE_ADDR_TYPE /* addr_type */) {
+  return true;
+}
+}  // namespace connection_manager
+
 namespace {
 
 class FakeBtStack {
 public:
   FakeBtStack() {
-    test::mock::stack_acl::acl_create_le_connection.body = [](const RawAddress& bd_addr) {
-      return true;
-    };
-    test::mock::stack_acl::acl_send_data_packet_br_edr.body = [](const RawAddress& bd_addr,
+    test::mock::stack_acl::acl_send_data_packet_br_edr.body = [](const RawAddress& /*bd_addr*/,
                                                                  BT_HDR* hdr) {
       ConsumeData((const uint8_t*)hdr, hdr->offset + hdr->len);
       osi_free(hdr);
     };
-    test::mock::stack_acl::acl_send_data_packet_ble.body = [](const RawAddress& bd_addr,
+    test::mock::stack_acl::acl_send_data_packet_ble.body = [](const RawAddress& /*bd_addr*/,
                                                               BT_HDR* hdr) {
       ConsumeData((const uint8_t*)hdr, hdr->offset + hdr->len);
       osi_free(hdr);
@@ -131,7 +135,6 @@ public:
   }
 
   ~FakeBtStack() {
-    test::mock::stack_acl::acl_create_le_connection = {};
     test::mock::stack_acl::acl_send_data_packet_br_edr = {};
     test::mock::stack_acl::acl_send_data_packet_ble = {};
     bluetooth::hci::testing::mock_controller_ = nullptr;

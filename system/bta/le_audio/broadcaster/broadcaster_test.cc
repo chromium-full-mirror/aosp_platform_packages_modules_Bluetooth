@@ -91,7 +91,7 @@ void btsnd_hcic_ble_rand(base::Callback<void(BT_OCTET8)> cb) { generator_cb = cb
 std::atomic<int> num_async_tasks;
 bluetooth::common::MessageLoopThread message_loop_thread("test message loop");
 bluetooth::common::MessageLoopThread* get_main_thread() { return &message_loop_thread; }
-void invoke_switch_buffer_size_cb(bool is_low_latency_buffer_size) {}
+void invoke_switch_buffer_size_cb(bool /*is_low_latency_buffer_size*/) {}
 
 bt_status_t do_in_main_thread(base::OnceClosure task) {
   // Wrap the task with task counter so we could later know if there are
@@ -282,7 +282,7 @@ protected:
       }
     };
 
-    test::mock::osi_alarm::alarm_set_on_mloop.body = [](alarm_t* alarm, uint64_t interval_ms,
+    test::mock::osi_alarm::alarm_set_on_mloop.body = [](alarm_t* alarm, uint64_t /*interval_ms*/,
                                                         alarm_callback_t cb, void* data) {
       alarm->cb = cb;
       alarm->data = data;
@@ -549,6 +549,14 @@ TEST_F(BroadcasterTest, SuspendAudioBroadcast) {
 }
 
 TEST_F(BroadcasterTest, StartAudioBroadcast) {
+  com::android::bluetooth::flags::provider_->leaudio_big_depends_on_audio_state(true);
+
+  // Add Audio Actie State while broadcast created
+  LeAudioSourceAudioHalClient::Callbacks* audio_receiver;
+  EXPECT_CALL(*mock_audio_source_, Start)
+          .WillOnce(DoAll(SaveArg<1>(&audio_receiver), Return(true)))
+          .WillRepeatedly(Return(false));
+
   EXPECT_CALL(*mock_codec_manager_, UpdateActiveBroadcastAudioHalClient(mock_audio_source_, true))
           .Times(1);
   auto broadcast_id = InstantiateBroadcast();
@@ -563,10 +571,9 @@ TEST_F(BroadcasterTest, StartAudioBroadcast) {
   EXPECT_CALL(mock_broadcaster_callbacks_,
               OnBroadcastStateChanged(broadcast_id, BroadcastState::STREAMING))
           .Times(1);
-
-  LeAudioSourceAudioHalClient::Callbacks* audio_receiver;
-  EXPECT_CALL(*mock_audio_source_, Start)
-          .WillOnce(DoAll(SaveArg<1>(&audio_receiver), Return(true)));
+  // Timers not started
+  ASSERT_TRUE(big_terminate_timer_->cb == nullptr);
+  ASSERT_TRUE(broadcast_stop_timer_->cb == nullptr);
 
   LeAudioBroadcaster::Get()->StartAudioBroadcast(broadcast_id);
   ASSERT_NE(audio_receiver, nullptr);
@@ -590,6 +597,14 @@ TEST_F(BroadcasterTest, StartAudioBroadcast) {
 }
 
 TEST_F(BroadcasterTest, StartAudioBroadcastMedia) {
+  com::android::bluetooth::flags::provider_->leaudio_big_depends_on_audio_state(true);
+
+  // Add Audio Actie State while broadcast created
+  LeAudioSourceAudioHalClient::Callbacks* audio_receiver;
+  EXPECT_CALL(*mock_audio_source_, Start)
+          .WillOnce(DoAll(SaveArg<1>(&audio_receiver), Return(true)))
+          .WillRepeatedly(Return(false));
+
   EXPECT_CALL(*mock_codec_manager_, UpdateActiveBroadcastAudioHalClient(mock_audio_source_, true))
           .Times(1);
   auto broadcast_id =
@@ -602,9 +617,10 @@ TEST_F(BroadcasterTest, StartAudioBroadcastMedia) {
               OnBroadcastStateChanged(broadcast_id, BroadcastState::STREAMING))
           .Times(1);
 
-  LeAudioSourceAudioHalClient::Callbacks* audio_receiver;
-  EXPECT_CALL(*mock_audio_source_, Start)
-          .WillOnce(DoAll(SaveArg<1>(&audio_receiver), Return(true)));
+  // Timers not started
+  ASSERT_TRUE(big_terminate_timer_->cb == nullptr);
+  ASSERT_TRUE(broadcast_stop_timer_->cb == nullptr);
+
   EXPECT_CALL(*mock_codec_manager_, UpdateActiveBroadcastAudioHalClient(mock_audio_source_, true))
           .Times(0);
   EXPECT_CALL(*mock_codec_manager_, UpdateActiveBroadcastAudioHalClient(mock_audio_source_, false))
@@ -741,7 +757,7 @@ TEST_F(BroadcasterTest, UpdateMetadata) {
           });
 
   EXPECT_CALL(*MockBroadcastStateMachine::GetLastInstance(), UpdatePublicBroadcastAnnouncement)
-          .WillOnce([&](uint32_t broadcast_id, const std::string& broadcast_name,
+          .WillOnce([&](uint32_t /*broadcast_id*/, const std::string& broadcast_name,
                         const bluetooth::le_audio::PublicBroadcastAnnouncementData& announcement) {
             expected_broadcast_name = broadcast_name;
             expected_public_meta = types::LeAudioLtvMap(announcement.metadata).RawPacket();
@@ -819,12 +835,16 @@ static BasicAudioAnnouncementData prepareAnnouncement(
 }
 
 TEST_F(BroadcasterTest, UpdateMetadataFromAudioTrackMetadata) {
-  ContentControlIdKeeper::GetInstance()->SetCcid(LeAudioContextType::MEDIA, media_ccid);
-  auto broadcast_id = InstantiateBroadcast();
+  com::android::bluetooth::flags::provider_->leaudio_big_depends_on_audio_state(true);
 
+  // Add Audio Actie State while broadcast created
   LeAudioSourceAudioHalClient::Callbacks* audio_receiver;
   EXPECT_CALL(*mock_audio_source_, Start)
-          .WillOnce(DoAll(SaveArg<1>(&audio_receiver), Return(true)));
+          .WillOnce(DoAll(SaveArg<1>(&audio_receiver), Return(true)))
+          .WillRepeatedly(Return(false));
+
+  ContentControlIdKeeper::GetInstance()->SetCcid(LeAudioContextType::MEDIA, media_ccid);
+  auto broadcast_id = InstantiateBroadcast();
 
   LeAudioBroadcaster::Get()->StartAudioBroadcast(broadcast_id);
   ASSERT_NE(audio_receiver, nullptr);
@@ -1191,7 +1211,7 @@ TEST_F(BroadcasterTest, AudioActiveState) {
 
   ON_CALL(*sm, UpdatePublicBroadcastAnnouncement(broadcast_id, _, _))
           .WillByDefault(
-                  [&](uint32_t broadcast_id, const std::string& broadcast_name,
+                  [&](uint32_t /*broadcast_id*/, const std::string& /*broadcast_name*/,
                       const bluetooth::le_audio::PublicBroadcastAnnouncementData& announcement) {
                     pb_announcement = announcement;
                     updated_public_meta = types::LeAudioLtvMap(announcement.metadata).RawPacket();
