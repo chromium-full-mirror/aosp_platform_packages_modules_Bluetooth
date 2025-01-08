@@ -19,6 +19,7 @@
 #include <base/functional/callback.h>
 #include <base/strings/string_number_conversions.h>
 #include <bluetooth/log.h>
+#include <com_android_bluetooth_flags.h>
 #include <hardware/bt_csis.h>
 #include <hardware/bt_gatt_types.h>
 #include <stdio.h>
@@ -58,7 +59,6 @@
 #include "internal_include/bt_trace.h"
 #include "main/shim/le_scanning_manager.h"
 #include "neighbor_inquiry.h"
-#include "os/logging/log_adapter.h"
 #include "osi/include/osi.h"
 #include "osi/include/stack_power_telemetry.h"
 #include "stack/btm/btm_sec.h"
@@ -751,14 +751,15 @@ public:
       for (auto& device : devices_) {
         if (!g->IsDeviceInTheGroup(device)) {
           if (device->GetExpectedGroupIdMember() == g->GetGroupId()) {
-            stream << "        == candidate addr: " << ADDRESS_TO_LOGGABLE_STR(device->addr)
+            stream << "        == candidate addr: " << device->addr.ToRedactedStringForLogging()
                    << "\n";
           }
           continue;
         }
 
-        stream << "        == addr: " << ADDRESS_TO_LOGGABLE_STR(device->addr) << " ==\n"
-               << "        csis instance: data:" << "\n";
+        stream << "        == addr: " << device->addr.ToRedactedStringForLogging() << " ==\n"
+               << "        csis instance: data:"
+               << "\n";
 
         auto instance = device->GetCsisInstanceByGroupId(g->GetGroupId());
         if (!instance) {
@@ -1918,7 +1919,9 @@ private:
 
     device->connecting_actively = false;
     device->conn_id = evt.conn_id;
-
+    if (com::android::bluetooth::flags::gatt_queue_cleanup_connected()) {
+      BtaGattQueue::Clean(evt.conn_id);
+    }
     /* Verify bond */
     if (BTM_SecIsSecurityPending(device->addr)) {
       /* if security collision happened, wait for encryption done

@@ -53,7 +53,6 @@
 #include "le_audio_log_history.h"
 #include "le_audio_utils.h"
 #include "main/shim/entry.h"
-#include "os/logging/log_adapter.h"
 #include "osi/include/alarm.h"
 #include "osi/include/properties.h"
 #include "stack/include/btm_client_interface.h"
@@ -291,16 +290,17 @@ bool LeAudioDevice::ConfigureAses(const set_configurations::AudioSetConfiguratio
                                   AudioLocations& group_audio_locations_memo,
                                   const AudioContexts& metadata_context_types,
                                   const std::vector<uint8_t>& ccid_lists, bool reuse_cis_id) {
+  auto direction_str = (direction == types::kLeAudioDirectionSink ? "Sink" : "Source");
   /* First try to use the already configured ASE */
   auto ase = GetFirstActiveAseByDirection(direction);
   if (ase) {
-    log::info("{}, using an already active ASE id={}", address_, ase->id);
+    log::info("{}, using an already active {} ASE id={}", address_, direction_str, ase->id);
   } else {
     ase = GetFirstInactiveAse(direction, reuse_cis_id);
   }
 
   if (!ase) {
-    log::error("{}, unable to find an ASE to configure", address_);
+    log::error("{}, unable to find a {} ASE to configure", address_, direction_str);
     PrintDebugState();
     return false;
   }
@@ -339,6 +339,8 @@ bool LeAudioDevice::ConfigureAses(const set_configurations::AudioSetConfiguratio
     auto const& ase_cfg = ase_configs.at(i);
     if (utils::IsCodecUsingLtvFormat(ase_cfg.codec.id) &&
         !utils::GetConfigurationSupportedPac(pacs, ase_cfg.codec)) {
+      log::error("{}, No {} PAC found matching codec: {}. Stop the activation.", address_,
+                 direction_str, common::ToString(ase_cfg.codec));
       return false;
     }
   }
@@ -356,12 +358,15 @@ bool LeAudioDevice::ConfigureAses(const set_configurations::AudioSetConfiguratio
   uint8_t max_required_ase_per_dev =
           ase_configs.size() / num_of_devices + (ase_configs.size() % num_of_devices);
   int needed_ase = std::min((int)(max_required_ase_per_dev), (int)(ase_configs.size()));
+  log::debug("{}, {} {} ASE(s) required for this configuration.", address_, needed_ase,
+             direction_str);
 
   for (int i = 0; i < needed_ase; ++i) {
     auto const& ase_cfg = ase_configs.at(i);
     if (utils::IsCodecUsingLtvFormat(ase_cfg.codec.id) &&
         !utils::GetConfigurationSupportedPac(pacs, ase_cfg.codec)) {
-      log::error("{}, no matching PAC found. Stop the activation.", address_);
+      log::error("{}, No {} PAC found matching codec: {}. Stop the activation.", address_,
+                 direction_str, common::ToString(ase_cfg.codec));
       return false;
     }
   }
@@ -429,8 +434,8 @@ bool LeAudioDevice::ConfigureAses(const set_configurations::AudioSetConfiguratio
     log::debug(
             "device={}, activated ASE id={}, direction={}, max_sdu_size={}, "
             "cis_id={}, target_latency={}",
-            address_, ase->id, direction == 1 ? "snk" : "src", ase->qos_config.max_sdu_size,
-            ase->cis_id, ase_cfg.qos.target_latency);
+            address_, ase->id, direction_str, ase->qos_config.max_sdu_size, ase->cis_id,
+            ase_cfg.qos.target_latency);
 
     /* Try to use the already active ASE */
     ase = GetNextActiveAseWithSameDirection(ase);
@@ -466,10 +471,6 @@ LeAudioDevice::~LeAudioDevice(void) {
 }
 
 void LeAudioDevice::ParseHeadtrackingCodec(const struct types::acs_ac_record& pac) {
-  if (!com::android::bluetooth::flags::leaudio_dynamic_spatial_audio()) {
-    return;
-  }
-
   if (pac.codec_id == types::kLeAudioCodecHeadtracking) {
     log::info("Headtracking supported");
 
@@ -479,10 +480,6 @@ void LeAudioDevice::ParseHeadtrackingCodec(const struct types::acs_ac_record& pa
             DsaMode::ISO_SW,
             DsaMode::ISO_HW,
     };
-
-    if (!com::android::bluetooth::flags::headtracker_codec_capability()) {
-      return;
-    }
 
     /*
      * Android Headtracker Codec Metadata description
@@ -1027,7 +1024,7 @@ void LeAudioDevice::DumpPacsDebugState(std::stringstream& stream,
 }
 
 void LeAudioDevice::DumpPacsDebugState(std::stringstream& stream) {
-  stream << "      ● Device PACS, address: " << ADDRESS_TO_LOGGABLE_STR(address_) << "\n";
+  stream << "      ● Device PACS, address: " << address_.ToRedactedStringForLogging() << "\n";
   stream << "\t  == Sink PACs:\n";
   DumpPacsDebugState(stream, snk_pacs_);
   stream << "\t  == Source PACs:\n";
@@ -1054,7 +1051,7 @@ void LeAudioDevice::Dump(std::stringstream& stream) {
   std::string snk_location = locationToString(snk_audio_locations_.to_ulong());
   std::string src_location = locationToString(src_audio_locations_.to_ulong());
 
-  stream << "      ● Device address: " << ADDRESS_TO_LOGGABLE_STR(address_) << ", "
+  stream << "      ● Device address: " << address_.ToRedactedStringForLogging() << ", "
          << connection_state_
          << ", conn_id: " << (conn_id_ == GATT_INVALID_CONN_ID ? "-1" : std::to_string(conn_id_))
          << ", acl_handle: " << std::to_string(acl_handle) << ", snk_location: " << snk_location
@@ -1381,9 +1378,14 @@ void LeAudioDevices::Cleanup(tGATT_IF client_if) {
       continue;
     }
 
-    if (connection_state == DeviceConnectState::CONNECTING_AUTOCONNECT) {
-      BTA_GATTC_CancelOpen(client_if, device->address_, false);
-    } else {
+    // For connecting or connected device always remove background connect
+    BTA_GATTC_CancelOpen(client_if, device->address_, false);
+
+    if (connection_state == DeviceConnectState::CONNECTING_BY_USER) {
+      // When connecting by user, remove direct connect
+      BTA_GATTC_CancelOpen(client_if, device->address_, true);
+    } else if (connection_state != DeviceConnectState::CONNECTING_AUTOCONNECT) {
+      // If connected, close the connection
       BtaGattQueue::Clean(device->conn_id_);
       BTA_GATTC_Close(device->conn_id_);
       device->DisconnectAcl();

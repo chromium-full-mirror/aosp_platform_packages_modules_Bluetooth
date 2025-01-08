@@ -17,7 +17,6 @@
 #ifndef ANDROID_INCLUDE_BT_HH_H
 #define ANDROID_INCLUDE_BT_HH_H
 
-#include <base/strings/stringprintf.h>
 #include <stdint.h>
 
 #include <string>
@@ -51,7 +50,7 @@ inline std::string bthh_connection_state_text(const bthh_connection_state_t& sta
     CASE_RETURN_TEXT(BTHH_CONN_STATE_ACCEPTING);
     CASE_RETURN_TEXT(BTHH_CONN_STATE_UNKNOWN);
     default:
-      return base::StringPrintf("UNKNOWN[%d]", state);
+      return std::format("UNKNOWN[{}]", static_cast<int>(state));
   }
 }
 
@@ -232,14 +231,14 @@ __END_DECLS
 #if __has_include(<bluetooth/log.h>)
 #include <bluetooth/log.h>
 
-namespace fmt {
+namespace std {
 template <>
 struct formatter<bthh_connection_state_t> : enum_formatter<bthh_connection_state_t> {};
 template <>
 struct formatter<bthh_protocol_mode_t> : enum_formatter<bthh_protocol_mode_t> {};
 template <>
 struct formatter<bthh_report_type_t> : enum_formatter<bthh_report_type_t> {};
-}  // namespace fmt
+}  // namespace std
 
 #endif  // __has_include(<bluetooth/log.h>)
 

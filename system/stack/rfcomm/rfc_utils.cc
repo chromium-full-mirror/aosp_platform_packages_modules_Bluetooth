@@ -29,7 +29,6 @@
 #include <cstdint>
 
 #include "internal_include/bt_target.h"
-#include "os/logging/log_adapter.h"
 #include "osi/include/allocator.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/port_ext.h"
@@ -145,7 +144,7 @@ tRFC_MCB* rfc_alloc_multiplexer_channel(const RawAddress& bd_addr, bool is_initi
       log::verbose(
               "rfc_alloc_multiplexer_channel:is_initiator:{}, found, state:{}, "
               "p_mcb:{}",
-              is_initiator, rfc_cb.port.rfc_mcb[i].state, fmt::ptr(&rfc_cb.port.rfc_mcb[i]));
+              is_initiator, rfc_cb.port.rfc_mcb[i].state, std::format_ptr(&rfc_cb.port.rfc_mcb[i]));
       return &rfc_cb.port.rfc_mcb[i];
     }
   }
@@ -166,7 +165,7 @@ tRFC_MCB* rfc_alloc_multiplexer_channel(const RawAddress& bd_addr, bool is_initi
       log::verbose(
               "rfc_alloc_multiplexer_channel:is_initiator:{}, create new p_mcb:{}, "
               "index:{}",
-              is_initiator, fmt::ptr(&rfc_cb.port.rfc_mcb[j]), j);
+              is_initiator, std::format_ptr(&rfc_cb.port.rfc_mcb[j]), j);
 
       p_mcb->mcb_timer = alarm_new("rfcomm_mcb.mcb_timer");
       p_mcb->cmd_q = fixed_queue_new(SIZE_MAX);
@@ -416,8 +415,9 @@ void rfc_check_send_cmd(tRFC_MCB* p_mcb, BT_HDR* p_buf) {
   /* if passed a buffer queue it */
   if (p_buf != NULL) {
     if (p_mcb->cmd_q == NULL) {
-      log::error("empty queue: p_mcb = {} p_mcb->lcid = {} cached p_mcb = {}", fmt::ptr(p_mcb),
-                 p_mcb->lcid, fmt::ptr(rfc_find_lcid_mcb(p_mcb->lcid)));
+      log::error("empty queue: p_mcb = {} p_mcb->lcid = {} cached p_mcb = {}",
+                 std::format_ptr(p_mcb), p_mcb->lcid,
+                 std::format_ptr(rfc_find_lcid_mcb(p_mcb->lcid)));
     }
     fixed_queue_enqueue(p_mcb->cmd_q, p_buf);
   }

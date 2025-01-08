@@ -53,7 +53,6 @@
 #include "le_audio_utils.h"
 #include "main/shim/entry.h"
 #include "metrics_collector.h"
-#include "os/logging/log_adapter.h"
 #include "stack/include/btm_client_interface.h"
 #include "types/bt_transport.h"
 
@@ -139,7 +138,7 @@ int LeAudioDeviceGroup::NumOfAvailableForDirection(int direction) const {
 }
 
 void LeAudioDeviceGroup::ClearSinksFromConfiguration(void) {
-  log::info("Group {}, group_id {}", fmt::ptr(this), group_id_);
+  log::info("Group {}, group_id {}", std::format_ptr(this), group_id_);
 
   auto direction = types::kLeAudioDirectionSink;
   stream_conf.stream_params.get(direction).clear();
@@ -147,7 +146,7 @@ void LeAudioDeviceGroup::ClearSinksFromConfiguration(void) {
 }
 
 void LeAudioDeviceGroup::ClearSourcesFromConfiguration(void) {
-  log::info("Group {}, group_id {}", fmt::ptr(this), group_id_);
+  log::info("Group {}, group_id {}", std::format_ptr(this), group_id_);
 
   auto direction = types::kLeAudioDirectionSource;
   stream_conf.stream_params.get(direction).clear();
@@ -786,8 +785,8 @@ bool LeAudioDeviceGroup::GetPresentationDelay(uint32_t* delay, uint8_t direction
     } while ((ase = leAudioDevice->GetNextActiveAseWithSameDirection(ase)));
   } while ((leAudioDevice = GetNextActiveDevice(leAudioDevice)));
 
-  if (preferred_delay_min <= preferred_delay_max && preferred_delay_min > delay_min &&
-      preferred_delay_min < delay_max) {
+  if (preferred_delay_min <= preferred_delay_max && preferred_delay_min >= delay_min &&
+      preferred_delay_min <= delay_max) {
     *delay = preferred_delay_min;
   } else {
     *delay = delay_min;
@@ -1138,6 +1137,10 @@ bool LeAudioDeviceGroup::IsReleasingOrIdle(void) const {
           !in_transition_);
 }
 
+bool LeAudioDeviceGroup::IsReleasing(void) const {
+  return (target_state_ == AseState::BTA_LE_AUDIO_ASE_STATE_IDLE) && in_transition_;
+}
+
 bool LeAudioDeviceGroup::IsGroupStreamReady(void) const {
   bool is_device_ready = false;
 
@@ -1173,7 +1176,7 @@ bool LeAudioDeviceGroup::HaveAllCisesDisconnected(void) const {
 }
 
 uint8_t LeAudioDeviceGroup::CigConfiguration::GetFirstFreeCisId(CisType cis_type) const {
-  log::info("Group: {}, group_id: {} cis_type: {}", fmt::ptr(group_), group_->group_id_,
+  log::info("Group: {}, group_id: {} cis_type: {}", std::format_ptr(group_), group_->group_id_,
             static_cast<int>(cis_type));
   for (size_t id = 0; id < cises.size(); id++) {
     if (cises[id].addr.IsEmpty() && cises[id].type == cis_type) {
@@ -1243,7 +1246,7 @@ int LeAudioDeviceGroup::GetAseCount(uint8_t direction) const {
 }
 
 void LeAudioDeviceGroup::CigConfiguration::GenerateCisIds(LeAudioContextType context_type) {
-  log::info("Group {}, group_id: {}, context_type: {}", fmt::ptr(group_), group_->group_id_,
+  log::info("Group {}, group_id: {}, context_type: {}", std::format_ptr(group_), group_->group_id_,
             bluetooth::common::ToString(context_type));
 
   if (cises.size() > 0) {
@@ -1439,7 +1442,7 @@ void LeAudioDeviceGroup::CigConfiguration::AssignCisConnHandles(
 
 void LeAudioDeviceGroup::AssignCisConnHandlesToAses(LeAudioDevice* leAudioDevice) {
   log::assert_that(leAudioDevice, "Invalid device");
-  log::info("group: {}, group_id: {}, device: {}", fmt::ptr(this), group_id_,
+  log::info("group: {}, group_id: {}, device: {}", std::format_ptr(this), group_id_,
             leAudioDevice->address_);
 
   /* Assign all CIS connection handles to ases */
@@ -1470,7 +1473,7 @@ void LeAudioDeviceGroup::AssignCisConnHandlesToAses(void) {
   LeAudioDevice* leAudioDevice = GetFirstActiveDevice();
   log::assert_that(leAudioDevice, "Shouldn't be called without an active device.");
 
-  log::info("Group {}, group_id {}", fmt::ptr(this), group_id_);
+  log::info("Group {}, group_id {}", std::format_ptr(this), group_id_);
 
   /* Assign all CIS connection handles to ases */
   for (; leAudioDevice != nullptr; leAudioDevice = GetNextActiveDevice(leAudioDevice)) {
@@ -1482,7 +1485,7 @@ void LeAudioDeviceGroup::CigConfiguration::UnassignCis(LeAudioDevice* leAudioDev
                                                        uint16_t conn_handle) {
   log::assert_that(leAudioDevice, "Invalid device");
 
-  log::info("Group {}, group_id {}, device: {}, conn_handle: {:#x}", fmt::ptr(group_),
+  log::info("Group {}, group_id {}, device: {}, conn_handle: {:#x}", std::format_ptr(group_),
             group_->group_id_, leAudioDevice->address_, conn_handle);
 
   for (struct bluetooth::le_audio::types::cis& cis_entry : cises) {
@@ -1747,8 +1750,9 @@ bool LeAudioDeviceGroup::ConfigureAses(
 
     auto const max_required_device_cnt = NumOfAvailableForDirection(direction);
     auto required_device_cnt = max_required_device_cnt;
-    uint8_t active_ase_cnt = 0;
+    log::debug("Maximum {} device(s) required for {}", max_required_device_cnt, direction_str);
 
+    uint8_t active_ase_cnt = 0;
     auto configuration_closure = [&](LeAudioDevice* dev) -> void {
       /* For the moment, we configure only connected devices and when it is
        * ready to stream i.e. All ASEs are discovered and dev is reported as
@@ -2258,7 +2262,7 @@ void LeAudioDeviceGroup::Dump(std::stringstream& stream, int active_group_id) co
       stream << "\n\t cis id: " << static_cast<int>(cis.id)
              << ",\ttype: " << static_cast<int>(cis.type)
              << ",\tconn_handle: " << static_cast<int>(cis.conn_handle)
-             << ",\taddr: " << ADDRESS_TO_LOGGABLE_STR(cis.addr);
+             << ",\taddr: " << cis.addr.ToRedactedStringForLogging();
     }
   }
   stream << "\n";

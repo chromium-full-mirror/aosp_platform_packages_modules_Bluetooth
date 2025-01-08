@@ -26,7 +26,6 @@
 #define LOG_TAG "bt_bta_gattc"
 
 #include <base/functional/bind.h>
-#include <base/strings/stringprintf.h>
 #include <bluetooth/log.h>
 #include <com_android_bluetooth_flags.h>
 
@@ -49,7 +48,6 @@
 // TODO(b/369381361) Enfore -Wmissing-prototypes
 #pragma GCC diagnostic ignored "-Wmissing-prototypes"
 
-using base::StringPrintf;
 using bluetooth::Uuid;
 using namespace bluetooth;
 
@@ -766,9 +764,8 @@ void bta_gattc_disc_close(tBTA_GATTC_CLCB* p_clcb, const tBTA_GATTC_DATA* p_data
   log::verbose("Discovery cancel conn_id=0x{:x}", p_clcb->bta_conn_id);
 
   if (p_clcb->disc_active ||
-      (com::android::bluetooth::flags::gatt_rediscover_on_canceled() &&
-       (p_clcb->request_during_discovery == BTA_GATTC_DISCOVER_REQ_READ_DB_HASH ||
-        p_clcb->request_during_discovery == BTA_GATTC_DISCOVER_REQ_READ_DB_HASH_FOR_SVC_CHG))) {
+      (p_clcb->request_during_discovery == BTA_GATTC_DISCOVER_REQ_READ_DB_HASH ||
+       p_clcb->request_during_discovery == BTA_GATTC_DISCOVER_REQ_READ_DB_HASH_FOR_SVC_CHG)) {
     bta_gattc_reset_discover_st(p_clcb->p_srcb, GATT_ERROR);
   } else {
     p_clcb->state = BTA_GATTC_CONN_ST;
@@ -837,7 +834,8 @@ void bta_gattc_cfg_mtu(tBTA_GATTC_CLCB* p_clcb, const tBTA_GATTC_DATA* p_data) {
       bta_gattc_send_mtu_response(p_clcb, p_data, current_mtu);
       return;
     case MTU_EXCHANGE_IN_PROGRESS:
-      log::info("Enqueue MTU Request  - waiting for response on p_clcb {}", fmt::ptr(p_clcb));
+      log::info("Enqueue MTU Request  - waiting for response on p_clcb {}",
+                std::format_ptr(p_clcb));
       /* MTU request is in progress and this one will not be sent to remote
        * device. Just push back on the queue and response will be sent up to
        * the upper layer when MTU Exchange will be completed.
@@ -1358,7 +1356,7 @@ void bta_gattc_op_cmpl(tBTA_GATTC_CLCB* p_clcb, const tBTA_GATTC_DATA* p_data) {
     auto outstanding_conn_ids = GATTC_GetAndRemoveListOfConnIdsWaitingForMtuRequest(p_clcb->bda);
     for (auto conn_id : outstanding_conn_ids) {
       tBTA_GATTC_CLCB* p_clcb = bta_gattc_find_clcb_by_conn_id(conn_id);
-      log::debug("Continue MTU request clcb {}", fmt::ptr(p_clcb));
+      log::debug("Continue MTU request clcb {}", std::format_ptr(p_clcb));
       if (p_clcb) {
         log::debug("Continue MTU request for client conn_id=0x{:04x}", conn_id);
         bta_gattc_continue(p_clcb);

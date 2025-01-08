@@ -48,7 +48,6 @@
 #include "le_audio_health_status.h"
 #include "le_audio_log_history.h"
 #include "le_audio_types.h"
-#include "os/logging/log_adapter.h"
 #include "osi/include/alarm.h"
 #include "osi/include/osi.h"
 #include "osi/include/properties.h"
@@ -541,7 +540,7 @@ public:
                      ToString(group->cig.GetState()));
 
     group->cig.SetState(CigState::CREATED);
-    log::info("Group: {}, id: {} cig state: {}, number of cis handles: {}", fmt::ptr(group),
+    log::info("Group: {}, id: {} cig state: {}, number of cis handles: {}", std::format_ptr(group),
               group->group_id_, ToString(group->cig.GetState()),
               static_cast<int>(conn_handles.size()));
 
@@ -644,14 +643,12 @@ public:
       return;
     }
 
-    if (com::android::bluetooth::flags::leaudio_dynamic_spatial_audio()) {
-      if (group->dsa_.active &&
-          (group->dsa_.mode == DsaMode::ISO_SW || group->dsa_.mode == DsaMode::ISO_HW) &&
-          leAudioDevice->GetDsaDataPathState() == DataPathState::CONFIGURING) {
-        log::info("Datapath configured for headtracking");
-        leAudioDevice->SetDsaDataPathState(DataPathState::CONFIGURED);
-        return;
-      }
+    if (group->dsa_.active &&
+        (group->dsa_.mode == DsaMode::ISO_SW || group->dsa_.mode == DsaMode::ISO_HW) &&
+        leAudioDevice->GetDsaDataPathState() == DataPathState::CONFIGURING) {
+      log::info("Datapath configured for headtracking");
+      leAudioDevice->SetDsaDataPathState(DataPathState::CONFIGURED);
+      return;
     }
 
     /* Update state for the given cis.*/
@@ -721,7 +718,7 @@ public:
         ases_pair.source->cis_state = CisState::DISCONNECTING;
         do_disconnect = true;
       }
-    } else if (com::android::bluetooth::flags::leaudio_dynamic_spatial_audio()) {
+    } else {
       if (group->dsa_.active && leAudioDevice->GetDsaDataPathState() == DataPathState::REMOVING) {
         log::info("DSA data path removed");
         leAudioDevice->SetDsaDataPathState(DataPathState::IDLE);
@@ -793,17 +790,17 @@ public:
   }
 
   void RemoveCigForGroup(LeAudioDeviceGroup* group) {
-    log::debug("Group: {}, id: {} cig state: {}", fmt::ptr(group), group->group_id_,
+    log::debug("Group: {}, id: {} cig state: {}", std::format_ptr(group), group->group_id_,
                ToString(group->cig.GetState()));
     if (group->cig.GetState() != CigState::CREATED) {
-      log::warn("Group: {}, id: {} cig state: {} cannot be removed", fmt::ptr(group),
+      log::warn("Group: {}, id: {} cig state: {} cannot be removed", std::format_ptr(group),
                 group->group_id_, ToString(group->cig.GetState()));
       return;
     }
 
     group->cig.SetState(CigState::REMOVING);
     IsoManager::GetInstance()->RemoveCig(group->group_id_);
-    log::debug("Group: {}, id: {} cig state: {}", fmt::ptr(group), group->group_id_,
+    log::debug("Group: {}, id: {} cig state: {}", std::format_ptr(group), group->group_id_,
                ToString(group->cig.GetState()));
     log_history_->AddLogHistory(kLogStateMachineTag, group->group_id_, RawAddress::kEmpty,
                                 kLogCigRemoveOp);
@@ -899,10 +896,6 @@ public:
 
   void applyDsaDataPath(LeAudioDeviceGroup* group, LeAudioDevice* leAudioDevice,
                         uint16_t conn_hdl) {
-    if (!com::android::bluetooth::flags::leaudio_dynamic_spatial_audio()) {
-      return;
-    }
-
     if (!group->dsa_.active) {
       log::info("DSA mode not used");
       return;
@@ -923,13 +916,21 @@ public:
     }
 
     uint8_t data_path_id = bluetooth::hci::iso_manager::kIsoDataPathHci;
+    bluetooth::le_audio::types::LeAudioCodecId codec = {
+            .coding_format = bluetooth::hci::kIsoCodingFormatTransparent,
+            .vendor_company_id = 0x0000,
+            .vendor_codec_id = 0x0000};
     log::info("DSA mode used: {}", static_cast<int>(group->dsa_.mode));
     switch (group->dsa_.mode) {
       case DsaMode::ISO_HW:
         data_path_id = bluetooth::hci::iso_manager::kIsoDataPathPlatformDefault;
+        if (!com::android::bluetooth::flags::dsa_hw_transparent_codec()) {
+          codec = bluetooth::le_audio::types::kLeAudioCodecHeadtracking;
+        }
         break;
       case DsaMode::ISO_SW:
         data_path_id = bluetooth::hci::iso_manager::kIsoDataPathHci;
+        codec = bluetooth::le_audio::types::kLeAudioCodecHeadtracking;
         break;
       default:
         log::warn("Unexpected DsaMode: {}", static_cast<int>(group->dsa_.mode));
@@ -951,11 +952,9 @@ public:
     bluetooth::hci::iso_manager::iso_data_path_params param = {
             .data_path_dir = bluetooth::hci::iso_manager::kIsoDataPathDirectionOut,
             .data_path_id = data_path_id,
-            .codec_id_format = bluetooth::le_audio::types::kLeAudioCodecHeadtracking.coding_format,
-            .codec_id_company =
-                    bluetooth::le_audio::types::kLeAudioCodecHeadtracking.vendor_company_id,
-            .codec_id_vendor =
-                    bluetooth::le_audio::types::kLeAudioCodecHeadtracking.vendor_codec_id,
+            .codec_id_format = codec.coding_format,
+            .codec_id_company = codec.vendor_company_id,
+            .codec_id_vendor = codec.vendor_codec_id,
             .controller_delay = 0x00000000,
             .codec_conf = std::vector<uint8_t>(),
     };
@@ -1070,8 +1069,7 @@ public:
     log::assert_that(ase != nullptr,
                      "shouldn't be called without an active ASE, device {}, "
                      "group id: {}, cis handle 0x{:04x}",
-                     ADDRESS_TO_LOGGABLE_CSTR(leAudioDevice->address_), event->cig_id,
-                     event->cis_conn_hdl);
+                     leAudioDevice->address_, event->cig_id, event->cis_conn_hdl);
 
     PrepareAndSendReceiverStartReady(leAudioDevice, ase);
   }
@@ -1080,8 +1078,8 @@ public:
     tGATT_WRITE_TYPE write_type = GATT_WRITE_NO_RSP;
 
     if (value.size() > (leAudioDevice->mtu_ - 3)) {
-      log::warn("{}, using long write procedure ({} > {})", leAudioDevice->address_,
-                static_cast<int>(value.size()), leAudioDevice->mtu_ - 3);
+      log::warn("{}, using long write procedure ({} > {})", leAudioDevice->address_, value.size(),
+                leAudioDevice->mtu_ - 3);
 
       /* Note, that this type is actually LONG WRITE.
        * Meaning all the Prepare Writes plus Execute is handled in the stack
@@ -1106,11 +1104,9 @@ public:
       value |= bluetooth::hci::iso_manager::kRemoveIsoDataPathDirectionOutput;
       ases_pair.source->data_path_state = DataPathState::REMOVING;
     } else {
-      if (com::android::bluetooth::flags::leaudio_dynamic_spatial_audio()) {
-        if (leAudioDevice->GetDsaDataPathState() == DataPathState::CONFIGURED) {
-          value |= bluetooth::hci::iso_manager::kRemoveIsoDataPathDirectionOutput;
-          leAudioDevice->SetDsaDataPathState(DataPathState::REMOVING);
-        }
+      if (leAudioDevice->GetDsaDataPathState() == DataPathState::CONFIGURED) {
+        value |= bluetooth::hci::iso_manager::kRemoveIsoDataPathDirectionOutput;
+        leAudioDevice->SetDsaDataPathState(DataPathState::REMOVING);
       }
     }
 
@@ -1435,10 +1431,6 @@ private:
 
   void ApplyDsaParams(LeAudioDeviceGroup* group,
                       bluetooth::hci::iso_manager::cig_create_params& param) {
-    if (!com::android::bluetooth::flags::leaudio_dynamic_spatial_audio()) {
-      return;
-    }
-
     log::info("DSA mode selected: {}", (int)group->dsa_.mode);
     group->dsa_.active = false;
 
@@ -1501,12 +1493,12 @@ private:
     uint8_t packing, framing, sca;
     std::vector<EXT_CIS_CFG> cis_cfgs;
 
-    log::debug("Group: {}, id: {} cig state: {}", fmt::ptr(group), group->group_id_,
+    log::debug("Group: {}, id: {} cig state: {}", std::format_ptr(group), group->group_id_,
                ToString(group->cig.GetState()));
 
     if (group->cig.GetState() != CigState::NONE) {
-      log::warn("Group {}, id: {} has invalid cig state: {}", fmt::ptr(group), group->group_id_,
-                ToString(group->cig.GetState()));
+      log::warn("Group {}, id: {} has invalid cig state: {}", std::format_ptr(group),
+                group->group_id_, ToString(group->cig.GetState()));
       return false;
     }
 
@@ -1620,7 +1612,7 @@ private:
 
     group->cig.SetState(CigState::CREATING);
     IsoManager::GetInstance()->CreateCig(group->group_id_, std::move(param));
-    log::debug("Group: {}, id: {} cig state: {}", fmt::ptr(group), group->group_id_,
+    log::debug("Group: {}, id: {} cig state: {}", std::format_ptr(group), group->group_id_,
                ToString(group->cig.GetState()));
     return true;
   }
@@ -2151,7 +2143,8 @@ private:
         /* Last node configured, process group to codec configured state */
         group->SetState(AseState::BTA_LE_AUDIO_ASE_STATE_CODEC_CONFIGURED);
 
-        if (group->GetTargetState() == AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING) {
+        if (group->GetTargetState() == AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING ||
+            group->GetTargetState() == AseState::BTA_LE_AUDIO_ASE_STATE_QOS_CONFIGURED) {
           if (group->cig.GetState() == CigState::CREATED) {
             /* It can happen on the earbuds switch scenario. When one device
              * is getting remove while other is adding to the stream and CIG is

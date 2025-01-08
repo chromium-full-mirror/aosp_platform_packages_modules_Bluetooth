@@ -492,6 +492,7 @@ public:
   alarm_t* avrc_ct_timer;                   /* delay timer for AVRC CT */
   alarm_t* link_signalling_timer;
   alarm_t* accept_signalling_timer; /* timer to monitor signalling when accepting */
+  alarm_t* accept_open_timer;       /* timer to monitor AVDT open when accepting */
   uint16_t l2c_cid;                 /* L2CAP channel ID */
   uint16_t stream_mtu;              /* MTU of stream */
   uint8_t media_type;               /* Media type: AVDT_MEDIA_TYPE_* */
@@ -807,9 +808,9 @@ void bta_av_vendor_offload_stop(void);
 void bta_av_st_rc_timer(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data);
 void bta_av_api_set_peer_sep(tBTA_AV_DATA* p_data);
 
-namespace fmt {
+namespace std {
 template <>
 struct formatter<tBTA_AV_RS_RES> : enum_formatter<tBTA_AV_RS_RES> {};
-}  // namespace fmt
+}  // namespace std
 
 #endif /* BTA_AV_INT_H */

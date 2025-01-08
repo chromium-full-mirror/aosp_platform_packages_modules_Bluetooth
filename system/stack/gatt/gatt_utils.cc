@@ -23,7 +23,6 @@
  ******************************************************************************/
 #define LOG_TAG "gatt_utils"
 
-#include <base/strings/stringprintf.h>
 #include <bluetooth/log.h>
 #include <com_android_bluetooth_flags.h>
 
@@ -473,7 +472,7 @@ void gatt_tcb_dump(int fd) {
     if (p_tcb->in_use) {
       in_use_cnt++;
       stream << "  id: " << +p_tcb->tcb_idx
-             << "  address: " << ADDRESS_TO_LOGGABLE_STR(p_tcb->peer_bda)
+             << "  address: " << p_tcb->peer_bda.ToRedactedStringForLogging()
              << "  transport: " << bt_transport_text(p_tcb->transport)
              << "  ch_state: " << gatt_channel_state_text(p_tcb->ch_state) << ", "
              << gatt_tcb_get_holders_info_string(p_tcb) << "\n";
@@ -1254,8 +1253,8 @@ void gatt_clcb_invalidate(tGATT_TCB* p_tcb, const tGATT_CLCB* p_clcb) {
   if (!p_tcb->pending_enc_clcb.empty()) {
     for (size_t i = 0; i < p_tcb->pending_enc_clcb.size(); i++) {
       if (p_tcb->pending_enc_clcb.at(i) == p_clcb) {
-        log::warn("Removing clcb ({}) for conn id=0x{:04x} from pending_enc_clcb", fmt::ptr(p_clcb),
-                  p_clcb->conn_id);
+        log::warn("Removing clcb ({}) for conn id=0x{:04x} from pending_enc_clcb",
+                  std::format_ptr(p_clcb), p_clcb->conn_id);
         p_tcb->pending_enc_clcb.at(i) = NULL;
         break;
       }
@@ -1287,14 +1286,14 @@ void gatt_clcb_invalidate(tGATT_TCB* p_tcb, const tGATT_CLCB* p_clcb) {
   if (iter->to_send) {
     /* If command was not send, just remove the entire element */
     cl_cmd_q_p->erase(iter);
-    log::warn("Removing scheduled clcb ({}) for conn_id=0x{:04x}", fmt::ptr(p_clcb),
+    log::warn("Removing scheduled clcb ({}) for conn_id=0x{:04x}", std::format_ptr(p_clcb),
               p_clcb->conn_id);
   } else {
     /* If command has been sent, just invalidate p_clcb pointer for proper
      * response handling */
     iter->p_clcb = NULL;
     log::warn("Invalidating clcb ({}) for already sent request on conn_id=0x{:04x}",
-              fmt::ptr(p_clcb), p_clcb->conn_id);
+              std::format_ptr(p_clcb), p_clcb->conn_id);
   }
 }
 /*******************************************************************************
@@ -1815,7 +1814,7 @@ void gatt_end_operation(tGATT_CLCB* p_clcb, tGATT_STATUS status, void* p_data) {
     (*p_cmpl_cb)(conn_id, op, status, &cb_data);
   } else {
     log::warn("not sent out op={} p_disc_cmpl_cb:{} p_cmpl_cb:{}", operation,
-              fmt::ptr(p_disc_cmpl_cb), fmt::ptr(p_cmpl_cb));
+              std::format_ptr(p_disc_cmpl_cb), std::format_ptr(p_cmpl_cb));
   }
 }
 
