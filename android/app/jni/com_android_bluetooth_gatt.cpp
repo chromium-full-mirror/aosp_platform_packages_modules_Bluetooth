@@ -122,6 +122,16 @@ static std::vector<uint8_t> toVector(JNIEnv* env, jbyteArray ba) {
   return data_vec;
 }
 
+static std::string jstr_to_str(JNIEnv* env, jstring js) {
+  const char* cstr = env->GetStringUTFChars(js, NULL);
+  if (cstr == nullptr) {
+    return "";
+  }
+  std::string ret = std::string(cstr);
+  env->ReleaseStringUTFChars(js, cstr);
+  return ret;
+}
+
 namespace android {
 
 /**
@@ -1262,13 +1272,13 @@ static int gattClientGetDeviceTypeNative(JNIEnv* env, jobject /* object */, jstr
   return sGattIf->client->get_device_type(str2addr(env, address));
 }
 
-static void gattClientRegisterAppNative(JNIEnv* /* env */, jobject /* object */, jlong app_uuid_lsb,
-                                        jlong app_uuid_msb, jboolean eatt_support) {
+static void gattClientRegisterAppNative(JNIEnv* env, jobject /* object */, jlong app_uuid_lsb,
+                                        jlong app_uuid_msb, jstring name, jboolean eatt_support) {
   if (!sGattIf) {
     return;
   }
   Uuid uuid = from_java_uuid(app_uuid_msb, app_uuid_lsb);
-  sGattIf->client->register_client(uuid, eatt_support);
+  sGattIf->client->register_client(uuid, jstr_to_str(env, name).c_str(), eatt_support);
 }
 
 static void gattClientUnregisterAppNative(JNIEnv* /* env */, jobject /* object */, jint clientIf) {
@@ -1514,16 +1524,6 @@ static void gattClientReadRemoteRssiNative(JNIEnv* env, jobject /* object */, ji
   sGattIf->client->read_remote_rssi(clientif, str2addr(env, address));
 }
 
-void set_scan_params_cmpl_cb(int client_if, uint8_t status) {
-  std::shared_lock<std::shared_mutex> lock(callbacks_mutex);
-  CallbackEnv sCallbackEnv(__func__);
-  if (!sCallbackEnv.valid() || !mScanCallbacksObj) {
-    return;
-  }
-  sCallbackEnv->CallVoidMethod(mScanCallbacksObj, method_onScanParamSetupCompleted, status,
-                               client_if);
-}
-
 static void gattSetScanParametersNative(JNIEnv* /* env */, jobject /* object */, jint client_if,
                                         jint scan_interval_unit, jint scan_window_unit,
                                         jint scan_phy) {
@@ -1531,8 +1531,7 @@ static void gattSetScanParametersNative(JNIEnv* /* env */, jobject /* object */,
     return;
   }
   sScanner->SetScanParameters(client_if, /* use active scan */ 0x01, scan_interval_unit,
-                              scan_window_unit, scan_phy,
-                              base::Bind(&set_scan_params_cmpl_cb, client_if));
+                              scan_window_unit, scan_phy);
 }
 
 void scan_filter_param_cb(uint8_t client_if, uint8_t avbl_space, uint8_t action, uint8_t status) {
@@ -1704,6 +1703,7 @@ static void gattClientScanFilterAddNative(JNIEnv* env, jobject /* object */, jin
       for (int j = 0; j < len; j++) {
         curr.irk[j] = irkBytes[j];
       }
+      env->ReleaseByteArrayElements(irkByteArray.get(), irkBytes, JNI_ABORT);
     }
 
     ScopedLocalRef<jobject> uuid(env, env->GetObjectField(current.get(), uuidFid));
@@ -1914,6 +1914,7 @@ static void gattClientMsftAdvMonitorAddNative(JNIEnv* env, jobject /* object*/,
       for (int j = 0; j < env->GetArrayLength(patternByteArray.get()); j++) {
         native_msft_adv_monitor_pattern.pattern.push_back(patternBytes[j]);
       }
+      env->ReleaseByteArrayElements(patternByteArray.get(), patternBytes, 0);
     }
 
     patterns.push_back(native_msft_adv_monitor_pattern);
@@ -2932,7 +2933,8 @@ static int register_com_android_bluetooth_gatt_(JNIEnv* env) {
           {"cleanupNative", "()V", (void*)cleanupNative},
           {"gattClientGetDeviceTypeNative", "(Ljava/lang/String;)I",
            (void*)gattClientGetDeviceTypeNative},
-          {"gattClientRegisterAppNative", "(JJZ)V", (void*)gattClientRegisterAppNative},
+          {"gattClientRegisterAppNative", "(JJLjava/lang/String;Z)V",
+           (void*)gattClientRegisterAppNative},
           {"gattClientUnregisterAppNative", "(I)V", (void*)gattClientUnregisterAppNative},
           {"gattClientConnectNative", "(ILjava/lang/String;IZIZII)V",
            (void*)gattClientConnectNative},

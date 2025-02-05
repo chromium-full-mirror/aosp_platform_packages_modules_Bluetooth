@@ -41,7 +41,6 @@ import com.android.bluetooth.audio_util.Metadata;
 import com.android.bluetooth.btservice.AdapterService;
 
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -104,9 +103,6 @@ public class MediaControlProfileTest {
         doReturn(mMockMediaPlayerWrapper).when(mMockMediaPlayerList).getActivePlayer();
         doReturn(mMockMcpService).when(mMockMcpService).getApplicationContext();
         doReturn(mMockPackageManager).when(mMockMcpService).getPackageManager();
-        doReturn(getInstrumentation().getTargetContext().getMainThreadHandler())
-                .when(mMockMcpService)
-                .getMainThreadHandler();
         doReturn(packageName).when(mMockMcpService).getPackageName();
         doReturn(name).when(mMockMediaPlayerWrapper).getPackageName();
         doReturn(charSequence).when(mMockApplicationInfo).loadLabel(any(PackageManager.class));
@@ -212,9 +208,8 @@ public class MediaControlProfileTest {
         mMockMediaData.state = bob.build();
         doReturn(mMockMediaData.state).when(mMockMediaPlayerWrapper).getPlaybackState();
 
-        Assert.assertNotEquals(
-                mMcpServiceCallbacks.onGetCurrentTrackPosition(),
-                MediaControlGattServiceInterface.TRACK_POSITION_UNAVAILABLE);
+        assertThat(mMcpServiceCallbacks.onGetCurrentTrackPosition())
+                .isNotEqualTo(MediaControlGattServiceInterface.TRACK_POSITION_UNAVAILABLE);
     }
 
     @Test

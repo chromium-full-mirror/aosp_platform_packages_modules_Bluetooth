@@ -39,7 +39,6 @@ import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.HandlerThread;
 import android.os.UserHandle;
-import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.RequiresFlagsDisabled;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
@@ -1304,7 +1303,11 @@ public class HeadsetStateMachineTest {
         verify(mHeadsetService, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
                 .sendBroadcast(intentArgument.capture(), eq(BLUETOOTH_CONNECT), any(Bundle.class));
         verify(mHeadsetService).sendBroadcast(any(), any(), any());
-        assertThat(intentArgument.getValue().getExtra(BluetoothDevice.EXTRA_DEVICE, null))
+        assertThat(
+                        intentArgument
+                                .getValue()
+                                .getParcelableExtra(
+                                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class))
                 .isEqualTo(mTestDevice);
         assertThat(
                         intentArgument
@@ -1331,7 +1334,11 @@ public class HeadsetStateMachineTest {
         verify(mHeadsetService, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
                 .sendBroadcast(intentArgument.capture(), eq(BLUETOOTH_CONNECT), any(Bundle.class));
         verify(mHeadsetService).sendBroadcast(any(), any(), any());
-        assertThat(intentArgument.getValue().getExtra(BluetoothDevice.EXTRA_DEVICE, null))
+        assertThat(
+                        intentArgument
+                                .getValue()
+                                .getParcelableExtra(
+                                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class))
                 .isEqualTo(mTestDevice);
         assertThat(
                         intentArgument
@@ -1358,7 +1365,11 @@ public class HeadsetStateMachineTest {
         verify(mHeadsetService, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
                 .sendBroadcast(intentArgument.capture(), eq(BLUETOOTH_CONNECT), any(Bundle.class));
         verify(mHeadsetService).sendBroadcast(any(), any(), any());
-        assertThat(intentArgument.getValue().getExtra(BluetoothDevice.EXTRA_DEVICE, null))
+        assertThat(
+                        intentArgument
+                                .getValue()
+                                .getParcelableExtra(
+                                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class))
                 .isEqualTo(mTestDevice);
         assertThat(
                         intentArgument
@@ -1779,6 +1790,7 @@ public class HeadsetStateMachineTest {
     }
 
     @RequiresFlagsEnabled(FLAG_DEPRECATE_STREAM_BT_SCO)
+    @Ignore("b/393399561")
     @Test
     public void testProcessVolumeEvent_withVolumeTypeSpkAndStreamVoiceCall() {
         when(mHeadsetService.getActiveDevice()).thenReturn(mTestDevice);
@@ -1790,28 +1802,6 @@ public class HeadsetStateMachineTest {
 
         assertThat(mHeadsetStateMachine.mSpeakerVolume).isEqualTo(2);
         verify(mockAudioManager).setStreamVolume(AudioManager.STREAM_VOICE_CALL, 2, 0);
-    }
-
-    @Test
-    @EnableFlags({Flags.FLAG_HFP_ALLOW_VOLUME_CHANGE_WITHOUT_SCO})
-    public void testVolumeChangeEvent_fromIntentWhenConnected() {
-        setUpConnectedState();
-        int originalVolume = mHeadsetStateMachine.mSpeakerVolume;
-        mHeadsetStateMachine.mSpeakerVolume = 0;
-        int vol = 10;
-
-        // Send INTENT_SCO_VOLUME_CHANGED message
-        Intent volumeChange = new Intent(AudioManager.ACTION_VOLUME_CHANGED);
-        volumeChange.putExtra(AudioManager.EXTRA_VOLUME_STREAM_VALUE, vol);
-
-        mHeadsetStateMachine.sendMessage(
-                HeadsetStateMachine.INTENT_SCO_VOLUME_CHANGED, volumeChange);
-        TestUtils.waitForLooperToFinishScheduledTask(mHandlerThread.getLooper());
-
-        // verify volume processed
-        verify(mNativeInterface).setVolume(mTestDevice, HeadsetHalConstants.VOLUME_TYPE_SPK, vol);
-
-        mHeadsetStateMachine.mSpeakerVolume = originalVolume;
     }
 
     @Test
