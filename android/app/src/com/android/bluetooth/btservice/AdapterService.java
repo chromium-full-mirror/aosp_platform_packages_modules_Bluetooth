@@ -2456,6 +2456,14 @@ public class AdapterService extends Service {
                 return false;
             }
 
+            if (Flags.emptyNamesAreInvalid()) {
+                requireNonNull(name);
+                name = name.trim();
+                if (name.isEmpty()) {
+                    throw new IllegalArgumentException("Empty names are not valid");
+                }
+            }
+
             Log.d(TAG, "AdapterServiceBinder.setName(" + name + ")");
             return service.mAdapterProperties.setName(name);
         }
@@ -6787,6 +6795,13 @@ public class AdapterService extends Service {
         for (ProfileService profile : mRegisteredProfiles) {
             profile.dump(sb);
         }
+        if (Flags.scanManagerRefactor()) {
+            ScanController scanController = mScanController;
+            if (scanController != null) {
+                scanController.dumpRegisterId(sb);
+                scanController.dump(sb);
+            }
+        }
         mSilenceDeviceManager.dump(fd, writer, args);
         mDatabaseManager.dump(writer);
 
@@ -6825,6 +6840,12 @@ public class AdapterService extends Service {
         MetricsLogger.dumpProto(metricsBuilder);
         for (ProfileService profile : mRegisteredProfiles) {
             profile.dumpProto(metricsBuilder);
+        }
+        if (Flags.scanManagerRefactor()) {
+            ScanController scanController = mScanController;
+            if (scanController != null) {
+                scanController.dumpProto(metricsBuilder);
+            }
         }
         byte[] metricsBytes = Base64.encode(metricsBuilder.build().toByteArray(), Base64.DEFAULT);
         Log.d(TAG, "dumpMetrics: combined metrics size is " + metricsBytes.length);
