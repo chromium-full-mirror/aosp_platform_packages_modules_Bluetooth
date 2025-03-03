@@ -16,6 +16,7 @@
 
 package com.android.bluetooth.hfp;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -28,9 +29,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.app.admin.DevicePolicyManager;
 import android.bluetooth.BluetoothDevice;
 import android.content.Context;
 import android.database.Cursor;
+import android.net.Uri;
+import android.os.UserManager;
 import android.provider.CallLog;
 import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.telephony.PhoneNumberUtils;
@@ -40,7 +44,6 @@ import androidx.test.runner.AndroidJUnit4;
 
 import com.android.bluetooth.BluetoothMethodProxy;
 import com.android.bluetooth.R;
-import com.android.bluetooth.TestUtils;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.util.DevicePolicyUtils;
 import com.android.bluetooth.util.GsmAlphabet;
@@ -52,36 +55,43 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Spy;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 @RunWith(AndroidJUnit4.class)
 public class AtPhonebookTest {
-    private static final String INVALID_COMMAND = "invalid_command";
-    private Context mTargetContext;
-    private BluetoothDevice mDevice = getTestDevice(198);
-
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private AdapterService mAdapterService;
     @Mock private HeadsetNativeInterface mNativeInterface;
 
-    private AtPhonebook mAtPhonebook;
     @Spy private BluetoothMethodProxy mHfpMethodProxy = BluetoothMethodProxy.getInstance();
+
+    private static final String INVALID_COMMAND = "invalid_command";
+
+    private final Context mTargetContext =
+            InstrumentationRegistry.getInstrumentation().getTargetContext();
+    private final BluetoothDevice mDevice = getTestDevice(198);
+
+    private AtPhonebook mAtPhonebook;
 
     @Before
     public void setUp() throws Exception {
-        mTargetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        TestUtils.setAdapterService(mAdapterService);
+        doReturn(mTargetContext.getSystemService(UserManager.class))
+                .when(mAdapterService)
+                .getSystemService(UserManager.class);
+        doReturn(mTargetContext.getSystemService(DevicePolicyManager.class))
+                .when(mAdapterService)
+                .getSystemService(DevicePolicyManager.class);
+        doReturn(mTargetContext.getContentResolver()).when(mAdapterService).getContentResolver();
+        doReturn(mTargetContext.getString(R.string.unknownNumber))
+                .when(mAdapterService)
+                .getString(R.string.unknownNumber);
 
         BluetoothMethodProxy.setInstanceForTesting(mHfpMethodProxy);
-        // Spy on native interface
-        mAtPhonebook = new AtPhonebook(mTargetContext, mNativeInterface);
+        mAtPhonebook = new AtPhonebook(mAdapterService, mNativeInterface);
     }
 
     @After
     public void tearDown() throws Exception {
-        TestUtils.clearAdapterService(mAdapterService);
         BluetoothMethodProxy.setInstanceForTesting(null);
     }
 
@@ -340,6 +350,8 @@ public class AtPhonebookTest {
     public void processCpbrCommand_doesNotCrashWithEncodingNeededNumber() {
         final String encodingNeededNumber = "###0102124";
 
+        Uri uri = DevicePolicyUtils.getEnterprisePhoneUri(mAdapterService);
+
         Cursor mockCursorOne = mock(Cursor.class);
         when(mockCursorOne.getCount()).thenReturn(1);
         when(mockCursorOne.getColumnIndex(Phone.TYPE)).thenReturn(1); // TypeColumn
@@ -350,12 +362,7 @@ public class AtPhonebookTest {
         when(mockCursorOne.moveToNext()).thenReturn(false);
         doReturn(mockCursorOne)
                 .when(mHfpMethodProxy)
-                .contentResolverQuery(
-                        any(),
-                        eq(DevicePolicyUtils.getEnterprisePhoneUri(mTargetContext)),
-                        any(),
-                        any(),
-                        any());
+                .contentResolverQuery(any(), eq(uri), any(), any(), any());
 
         mAtPhonebook.mCurrentPhonebook = "ME";
         mAtPhonebook.mCpbrIndex1 = 1;

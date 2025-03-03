@@ -16,12 +16,15 @@
 
 package com.android.bluetooth.hid;
 
+import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_ALLOWED;
+import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
+
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static org.mockito.Mockito.verify;
 
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothProfile;
 import android.platform.test.flag.junit.SetFlagsRule;
 
 import androidx.test.filters.SmallTest;
@@ -32,14 +35,12 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 public class HidHostServiceBinderTest {
     @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private HidHostService mService;
 
@@ -70,13 +71,12 @@ public class HidHostServiceBinderTest {
     public void getConnectedDevices_callsServiceMethod() {
         mBinder.getConnectedDevices(null);
 
-        verify(mService)
-                .getDevicesMatchingConnectionStates(new int[] {BluetoothProfile.STATE_CONNECTED});
+        verify(mService).getDevicesMatchingConnectionStates(new int[] {STATE_CONNECTED});
     }
 
     @Test
     public void getDevicesMatchingConnectionStates_callsServiceMethod() {
-        int[] states = new int[] {BluetoothProfile.STATE_CONNECTED};
+        int[] states = new int[] {STATE_CONNECTED};
         mBinder.getDevicesMatchingConnectionStates(states, null);
 
         verify(mService).getDevicesMatchingConnectionStates(states);
@@ -91,7 +91,7 @@ public class HidHostServiceBinderTest {
 
     @Test
     public void setConnectionPolicy_callsServiceMethod() {
-        int connectionPolicy = BluetoothProfile.CONNECTION_POLICY_ALLOWED;
+        int connectionPolicy = CONNECTION_POLICY_ALLOWED;
         mBinder.setConnectionPolicy(mDevice, connectionPolicy, null);
 
         verify(mService).setConnectionPolicy(mDevice, connectionPolicy);

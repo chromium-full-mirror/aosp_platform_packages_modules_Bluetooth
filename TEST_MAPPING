@@ -4,6 +4,9 @@
       "name": "CtsBluetoothTestCases"
     },
     {
+      "name": "BluetoothJavaUnitTests"
+    },
+    {
       "name": "GoogleBluetoothInstrumentationTests"
     },
     {
@@ -17,9 +20,6 @@
     //{
     //  "name": "bluetooth-test-audio-hal-interface"
     //},
-    {
-      "name": "net_test_audio_hearing_aid_hw"
-    },
     {
       "name": "net_test_bluetooth"
     },
@@ -78,10 +78,9 @@
     {
       "name": "bluetooth-test-audio-hal-a2dp-provider-info"
     },
-    // Broken
-    //{
-    //  "name": "bluetooth-test-audio-hal-aidl-leaudio-utils"
-    //},
+    {
+      "name": "bluetooth-test-audio-hal-aidl-leaudio-utils"
+    },
     {
       "name": "bluetooth-test-audio-hal-hfp-client-interface"
     },
@@ -96,9 +95,6 @@
     },
     {
       "name": "bluetooth_test_common"
-    },
-    {
-      "name": "bluetooth_test_gd_unit"
     },
     {
       "name": "bluetooth_test_with_timerfd"
@@ -118,10 +114,9 @@
     {
       "name": "libbluetooth_core_rs_test"
     },
-    // Broken
-    //{
-    //  "name": "libbluetooth_log_test"
-    //},
+    {
+      "name": "libbluetooth_log_test"
+    },
     {
       "name": "libbluetooth_offload_hci_test"
     },
@@ -237,6 +232,9 @@
       "name": "CtsStrictJavaPackagesTestCases"
     },
     {
+      "name": "BluetoothJavaUnitTests"
+    },
+    {
       "name": "BluetoothInstrumentationTests"
     },
     {
@@ -254,9 +252,6 @@
     //{
     //  "name": "bluetooth-test-audio-hal-interface"
     //},
-    {
-      "name": "net_test_audio_hearing_aid_hw"
-    },
     {
       "name": "net_test_bluetooth"
     },
@@ -315,10 +310,9 @@
     {
       "name": "bluetooth-test-audio-hal-a2dp-provider-info"
     },
-    // Broken
-    //{
-    //  "name": "bluetooth-test-audio-hal-aidl-leaudio-utils"
-    //},
+    {
+      "name": "bluetooth-test-audio-hal-aidl-leaudio-utils"
+    },
     {
       "name": "bluetooth-test-audio-hal-hfp-client-interface"
     },
@@ -333,9 +327,6 @@
     },
     {
       "name": "bluetooth_test_common"
-    },
-    {
-      "name": "bluetooth_test_gd_unit"
     },
     {
       "name": "bluetooth_test_with_timerfd"
@@ -355,10 +346,9 @@
     {
       "name": "libbluetooth_core_rs_test"
     },
-    // Broken
-    //{
-    //  "name": "libbluetooth_log_test"
-    //},
+    {
+      "name": "libbluetooth_log_test"
+    },
     {
       "name": "libbluetooth_offload_hci_test"
     },
@@ -471,6 +461,9 @@
       "name": "CtsBluetoothTestCases"
     },
     {
+      "name": "BluetoothJavaUnitTests"
+    },
+    {
       "name": "BluetoothInstrumentationTests"
     },
     {
@@ -487,9 +480,6 @@
     //{
     //  "name": "bluetooth-test-audio-hal-interface"
     //},
-    {
-      "name": "net_test_audio_hearing_aid_hw"
-    },
     {
       "name": "net_test_bluetooth"
     },

@@ -33,8 +33,7 @@ import java.util.Date;
 /** This class encapsulates the appParams needed for MAP. */
 // Next tag value for ContentProfileErrorReportUtils.report(): 41
 public class BluetoothMapAppParams {
-
-    private static final String TAG = "BluetoothMapAppParams";
+    private static final String TAG = BluetoothMapAppParams.class.getSimpleName();
 
     private static final int MAX_LIST_COUNT = 0x01;
     private static final int START_OFFSET = 0x02;
@@ -61,7 +60,7 @@ public class BluetoothMapAppParams {
     private static final int STATUS_INDICATOR = 0x17;
     private static final int STATUS_VALUE = 0x18;
     private static final int MSE_TIME = 0x19;
-    private static final int DATABASE_INDETIFIER = 0x1A;
+    private static final int DATABASE_IDENTIFIER = 0x1A;
     private static final int CONVO_LIST_VER_COUNTER = 0x1B;
     private static final int PRESENCE_AVAILABLE = 0x1C;
     private static final int PRESENCE_TEXT = 0x1D;
@@ -98,7 +97,7 @@ public class BluetoothMapAppParams {
     private static final int FRACTION_DELIVER_LEN = 0x01; // , 0x0000, 0x0001),
     private static final int STATUS_INDICATOR_LEN = 0x01; // , 0x0000, 0x0001),
     private static final int STATUS_VALUE_LEN = 0x01; // , 0x0000, 0x0001),
-    private static final int DATABASE_INDETIFIER_LEN = 0x10;
+    private static final int DATABASE_IDENTIFIER_LEN = 0x10;
     private static final int CONVO_LIST_VER_COUNTER_LEN = 0x10;
     private static final int PRESENCE_AVAILABLE_LEN = 0X01;
     private static final int CHAT_STATE_LEN = 0x01;
@@ -670,14 +669,14 @@ public class BluetoothMapAppParams {
                 case MSE_TIME:
                     setMseTime(new String(appParams, i, tagLength));
                     break;
-                case DATABASE_INDETIFIER:
-                    if ((tagLength != DATABASE_INDETIFIER_LEN)) {
+                case DATABASE_IDENTIFIER:
+                    if ((tagLength != DATABASE_IDENTIFIER_LEN)) {
                         Log.w(
                                 TAG,
                                 "DATABASE_IDENTIFIER: Wrong length received: "
                                         + tagLength
                                         + " expected: "
-                                        + DATABASE_INDETIFIER_LEN);
+                                        + DATABASE_IDENTIFIER_LEN);
                         ContentProfileErrorReportUtils.report(
                                 BluetoothProfile.MAP,
                                 BluetoothProtoEnums.BLUETOOTH_MAP_APP_PARAMS,
@@ -1106,8 +1105,8 @@ public class BluetoothMapAppParams {
         }
         // Note: New for IM
         if (getDatabaseIdentifier() != null) {
-            appParamBuf.put((byte) DATABASE_INDETIFIER);
-            appParamBuf.put((byte) DATABASE_INDETIFIER_LEN);
+            appParamBuf.put((byte) DATABASE_IDENTIFIER);
+            appParamBuf.put((byte) DATABASE_IDENTIFIER_LEN);
             appParamBuf.put(getDatabaseIdentifier());
         }
         if (getConvoListingVerCounter() != null) {

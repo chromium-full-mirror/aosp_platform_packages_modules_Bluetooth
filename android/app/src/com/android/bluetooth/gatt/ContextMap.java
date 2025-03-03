@@ -50,7 +50,9 @@ import java.util.function.Predicate;
  * @param <C> the callback type for this map
  */
 public class ContextMap<C> {
-    private static final String TAG = GattServiceConfig.TAG_PREFIX + "ContextMap";
+    private static final String TAG =
+            GattServiceConfig.TAG_PREFIX + ContextMap.class.getSimpleName();
+
     private static final DateTimeFormatter sDateFormat =
             DateTimeFormatter.ofPattern("MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
     private static final int MAX_LAST_RECORDS = 5;
@@ -403,13 +405,13 @@ public class ContextMap<C> {
 
     /** Returns connect device map with addr and appid */
     Map<Integer, String> getConnectedMap() {
-        Map<Integer, String> connectedmap = new HashMap<Integer, String>();
+        Map<Integer, String> connectedMap = new HashMap<Integer, String>();
         synchronized (mConnectionsLock) {
             for (Connection conn : mConnections) {
-                connectedmap.put(conn.appId, conn.address);
+                connectedMap.put(conn.appId, conn.address);
             }
         }
-        return connectedmap;
+        return connectedMap;
     }
 
     /** Logs debug information. */

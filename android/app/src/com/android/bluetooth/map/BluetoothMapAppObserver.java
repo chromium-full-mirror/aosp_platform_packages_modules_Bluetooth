@@ -40,8 +40,7 @@ import java.util.Objects;
 /** Class to construct content observers for email applications on the system. */
 // Next tag value for ContentProfileErrorReportUtils.report(): 6
 public class BluetoothMapAppObserver {
-
-    private static final String TAG = "BluetoothMapAppObserver";
+    private static final String TAG = BluetoothMapAppObserver.class.getSimpleName();
 
     /*  */
     private Map<BluetoothMapAccountItem, List<BluetoothMapAccountItem>> mFullList;
@@ -181,7 +180,7 @@ public class BluetoothMapAppObserver {
                                         + Thread.currentThread().getId()
                                         + " Uri: "
                                         + uri
-                                        + " selfchange: "
+                                        + " selfChange: "
                                         + selfChange);
                         if (uri != null) {
                             handleAccountChanges(uri.getHost());

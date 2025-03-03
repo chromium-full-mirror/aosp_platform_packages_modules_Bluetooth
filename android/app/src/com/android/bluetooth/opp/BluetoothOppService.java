@@ -84,6 +84,7 @@ import java.util.Locale;
  */
 // Next tag value for ContentProfileErrorReportUtils.report(): 22
 public class BluetoothOppService extends ProfileService implements IObexConnectionHandler {
+    private static final String TAG = BluetoothOppService.class.getSimpleName();
 
     /** Owned providers and activities */
     private static final String OPP_PROVIDER = BluetoothOppProvider.class.getCanonicalName();
@@ -127,8 +128,6 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
             updateFromProvider();
         }
     }
-
-    private static final String TAG = "BtOppService";
 
     /** Observer to get notified when the content observer's data changes */
     private BluetoothShareContentObserver mObserver;
@@ -224,17 +223,7 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
         filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
         registerReceiver(mBluetoothReceiver, filter);
 
-        BluetoothOppPreference preference = BluetoothOppPreference.getInstance(this);
-        if (preference != null) {
-            preference.dump();
-        } else {
-            Log.w(TAG, "BluetoothOppPreference.getInstance returned null.");
-            ContentProfileErrorReportUtils.report(
-                    BluetoothProfile.OPP,
-                    BluetoothProtoEnums.BLUETOOTH_OPP_SERVICE,
-                    BluetoothStatsLog.BLUETOOTH_CONTENT_PROFILE_ERROR_REPORTED__TYPE__LOG_WARN,
-                    0);
-        }
+        BluetoothOppPreference.getInstance(this).dump();
 
         setComponentAvailable(OPP_PROVIDER, true);
         setComponentAvailable(INCOMING_FILE_CONFIRM_ACTIVITY, true);
@@ -269,9 +258,11 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
     }
 
     @Override
-    public void stop() {
+    public void cleanup() {
+        Log.i(TAG, "Cleanup BluetoothOpp Service");
+
         if (sBluetoothOppService == null) {
-            Log.w(TAG, "stop() called before start()");
+            Log.w(TAG, "cleanup() called before initialization");
             ContentProfileErrorReportUtils.report(
                     BluetoothProfile.OPP,
                     BluetoothProtoEnums.BLUETOOTH_OPP_SERVICE,
@@ -287,6 +278,10 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
         setComponentAvailable(TRANSFER_HISTORY_ACTIVITY, false);
         setComponentAvailable(OPP_RECEIVER, false);
         setComponentAvailable(OPP_HANDOFF_RECEIVER, false);
+
+        mBatches.clear();
+        mShares.clear();
+        mHandler.removeCallbacksAndMessages(null);
     }
 
     private void startListener() {
@@ -508,7 +503,7 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
         acceptNewConnections();
         SdpManagerNativeInterface nativeInterface = SdpManagerNativeInterface.getInstance();
         if (!nativeInterface.isAvailable()) {
-            Log.e(TAG, "ERROR:serversocket: SdpManagerNativeInterface is not available");
+            Log.e(TAG, "ERROR:serverSocket: SdpManagerNativeInterface is not available");
             ContentProfileErrorReportUtils.report(
                     BluetoothProfile.OPP,
                     BluetoothProtoEnums.BLUETOOTH_OPP_SERVICE,
@@ -517,7 +512,7 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
             return;
         }
         if (mServerSocket == null) {
-            Log.e(TAG, "ERROR:serversocket: mServerSocket is null");
+            Log.e(TAG, "ERROR:serverSocket: mServerSocket is null");
             ContentProfileErrorReportUtils.report(
                     BluetoothProfile.OPP,
                     BluetoothProtoEnums.BLUETOOTH_OPP_SERVICE,
@@ -533,15 +528,6 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
                         0x0102,
                         SUPPORTED_OPP_FORMAT);
         Log.d(TAG, "mOppSdpHandle :" + mOppSdpHandle);
-    }
-
-    @Override
-    public void cleanup() {
-        Log.v(TAG, "onDestroy");
-
-        mBatches.clear();
-        mShares.clear();
-        mHandler.removeCallbacksAndMessages(null);
     }
 
     private void unregisterReceivers() {
@@ -614,7 +600,7 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
 
     /* suppose we auto accept an incoming OPUSH connection */
     private void createServerSession(ObexTransport transport) {
-        mServerSession = new BluetoothOppObexServerSession(this, transport, this);
+        mServerSession = new BluetoothOppObexServerSession(mAdapterService, transport, this);
         mServerSession.preStart();
         Log.d(
                 TAG,
@@ -909,7 +895,7 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
                 }
             }
             if (mBatches.size() == 0) {
-                BluetoothOppBatch newBatch = new BluetoothOppBatch(this, info);
+                BluetoothOppBatch newBatch = new BluetoothOppBatch(mAdapterService, info);
                 newBatch.mId = mBatchId;
                 mBatchId++;
                 mBatches.add(newBatch);
@@ -1229,7 +1215,7 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
     static void trimDatabase(ContentResolver contentResolver) {
         // Try-catch is important because trimDatabase can run even when the OPP_PROVIDER is
         // disabled (by OPP service, shell command, etc.).
-        // At the sametime, it's ok to retry trimDatabase later when the service restart
+        // At the same time, it's ok to retry trimDatabase later when the service restart
         try {
             // remove the invisible/unconfirmed inbound shares
             int delNum =
@@ -1346,7 +1332,7 @@ public class BluetoothOppService extends ProfileService implements IObexConnecti
         if (mOppSdpHandle >= 0 && nativeInterface.isAvailable()) {
             Log.d(TAG, "Removing SDP record mOppSdpHandle :" + mOppSdpHandle);
             boolean status = nativeInterface.removeSdpRecord(mOppSdpHandle);
-            Log.d(TAG, "RemoveSDPrecord returns " + status);
+            Log.d(TAG, "RemoveSDPRecord returns " + status);
             mOppSdpHandle = -1;
         }
         if (mServerSocket != null) {

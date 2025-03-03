@@ -28,6 +28,7 @@ import static android.content.pm.PackageManager.FEATURE_WATCH;
 import static androidx.test.espresso.intent.matcher.IntentMatchers.hasAction;
 import static androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 import static com.android.bluetooth.hfpclient.HeadsetClientStateMachine.AT_OK;
 import static com.android.bluetooth.hfpclient.HeadsetClientStateMachine.ENTER_PRIVATE_MODE;
@@ -79,8 +80,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.hamcrest.MockitoHamcrest;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 import java.util.List;
 import java.util.Set;
@@ -94,7 +93,7 @@ public class HeadsetClientStateMachineTest {
     private InOrder mInOrder;
     private TestLooper mTestLooper;
 
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
@@ -243,7 +242,7 @@ public class HeadsetClientStateMachineTest {
     public void testProcessAndroidSlcCommand() {
         initToConnectedState();
 
-        // True on correct AT command and BluetothDevice
+        // True on correct AT command and BluetoothDevice
         assertThat(processAndroidSlcCommand("+ANDROID: (SINKAUDIOPOLICY)")).isTrue();
         assertThat(processAndroidSlcCommand("+ANDROID: ()")).isTrue();
         assertThat(processAndroidSlcCommand("+ANDROID: (,,,)")).isTrue();
@@ -947,7 +946,7 @@ public class HeadsetClientStateMachineTest {
         assertThat(currentCalls.get(0)).isEqualTo(call);
     }
 
-    private void assertName(int message, String message_name) {
+    private static void assertName(int message, String message_name) {
         assertThat(HeadsetClientStateMachine.getMessageName(message)).isEqualTo(message_name);
     }
 

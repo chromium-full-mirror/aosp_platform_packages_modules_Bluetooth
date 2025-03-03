@@ -59,6 +59,7 @@ import java.util.Set;
 // should be avoided
 public class BluetoothMethodProxy {
     private static final String TAG = BluetoothMethodProxy.class.getSimpleName();
+
     private static final Object INSTANCE_LOCK = new Object();
     private static BluetoothMethodProxy sInstance;
 
@@ -289,7 +290,7 @@ public class BluetoothMethodProxy {
         return handlerThread.getLooper();
     }
 
-    /** Peoziws {@link MediaSessionManager#getActiveSessions} */
+    /** Proxies {@link MediaSessionManager#getActiveSessions} */
     public @NonNull List<MediaController> mediaSessionManagerGetActiveSessions(
             MediaSessionManager manager) {
         return manager.getActiveSessions(null);

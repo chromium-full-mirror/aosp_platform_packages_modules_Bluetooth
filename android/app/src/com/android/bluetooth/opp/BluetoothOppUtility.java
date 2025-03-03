@@ -75,7 +75,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /** This class has some utilities for Opp application; */
 // Next tag value for ContentProfileErrorReportUtils.report(): 10
 public class BluetoothOppUtility {
-    private static final String TAG = "BluetoothOppUtility";
+    private static final String TAG = BluetoothOppUtility.class.getSimpleName();
 
     /** Whether the device has the "nosdcard" characteristic, or null if not-yet-known. */
     private static Boolean sNoSdCard = null;
@@ -207,7 +207,7 @@ public class BluetoothOppUtility {
         }
 
         if (!isBluetoothShareUri(uri)) {
-            Log.e(TAG, "Trying to open a file that wasn't transfered over Bluetooth");
+            Log.e(TAG, "Trying to open a file that wasn't transferred over Bluetooth");
             ContentProfileErrorReportUtils.report(
                     BluetoothProfile.OPP,
                     BluetoothProtoEnums.BLUETOOTH_OPP_UTILITY,

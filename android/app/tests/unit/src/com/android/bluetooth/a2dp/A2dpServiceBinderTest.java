@@ -17,7 +17,10 @@
 package com.android.bluetooth.a2dp;
 
 import static android.bluetooth.BluetoothCodecConfig.SOURCE_CODEC_TYPE_INVALID;
+import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_ALLOWED;
+import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static org.mockito.Mockito.any;
@@ -28,7 +31,6 @@ import static org.mockito.Mockito.verify;
 import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.BluetoothCodecConfig;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothProfile;
 import android.content.AttributionSource;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -39,8 +41,6 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 public class A2dpServiceBinderTest {
     private static final AttributionSource sSource = new AttributionSource.Builder(0).build();
@@ -48,7 +48,7 @@ public class A2dpServiceBinderTest {
 
     @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private A2dpService mA2dpService;
     @Mock private PackageManager mPackageManager;
@@ -90,7 +90,7 @@ public class A2dpServiceBinderTest {
 
     @Test
     public void getDevicesMatchingConnectionStates() {
-        int[] states = new int[] {BluetoothProfile.STATE_CONNECTED};
+        int[] states = new int[] {STATE_CONNECTED};
 
         mBinder.getDevicesMatchingConnectionStates(states, sSource);
         verify(mA2dpService).getDevicesMatchingConnectionStates(states);
@@ -122,7 +122,7 @@ public class A2dpServiceBinderTest {
 
     @Test
     public void setConnectionPolicy() {
-        int connectionPolicy = BluetoothProfile.CONNECTION_POLICY_ALLOWED;
+        int connectionPolicy = CONNECTION_POLICY_ALLOWED;
 
         mBinder.setConnectionPolicy(sDevice, connectionPolicy, sSource);
         verify(mA2dpService).setConnectionPolicy(sDevice, connectionPolicy);

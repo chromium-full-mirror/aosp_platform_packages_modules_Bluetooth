@@ -20,6 +20,8 @@ import static android.bluetooth.BluetoothA2dp.OPTIONAL_CODECS_NOT_SUPPORTED;
 import static android.bluetooth.BluetoothA2dp.OPTIONAL_CODECS_PREF_DISABLED;
 import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_FORBIDDEN;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
+
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
@@ -54,8 +56,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -64,7 +64,7 @@ import java.util.List;
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 public class DataMigrationTest {
-    private static final String TAG = "DataMigrationTest";
+    private static final String TAG = DataMigrationTest.class.getSimpleName();
 
     private static final String AUTHORITY = "bluetooth_legacy.provider";
 
@@ -75,7 +75,7 @@ public class DataMigrationTest {
     private Context mTargetContext;
     private SharedPreferences mPrefs;
 
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private Context mMockContext;
 
@@ -172,11 +172,11 @@ public class DataMigrationTest {
         assertThat(mPrefs.getInt(DataMigration.MIGRATION_ATTEMPT_PROPERTY, -1)).isEqualTo(-1);
 
         for (int i = 0; i < DataMigration.MAX_ATTEMPT; i++) {
-            assertThat(DataMigration.incrementeMigrationAttempt(mMockContext)).isTrue();
+            assertThat(DataMigration.incrementMigrationAttempt(mMockContext)).isTrue();
             assertThat(mPrefs.getInt(DataMigration.MIGRATION_ATTEMPT_PROPERTY, -1))
                     .isEqualTo(i + 1);
         }
-        assertThat(DataMigration.incrementeMigrationAttempt(mMockContext)).isFalse();
+        assertThat(DataMigration.incrementMigrationAttempt(mMockContext)).isFalse();
         assertThat(mPrefs.getInt(DataMigration.MIGRATION_ATTEMPT_PROPERTY, -1))
                 .isEqualTo(DataMigration.MAX_ATTEMPT + 1);
 

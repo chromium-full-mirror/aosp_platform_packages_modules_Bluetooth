@@ -16,6 +16,7 @@
 
 package com.android.bluetooth.avrcpcontroller;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -29,11 +30,9 @@ import android.support.v4.media.session.PlaybackStateCompat;
 import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 public class AvrcpPlayerTest {
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private PlayerApplicationSettings mPlayerApplicationSettings;
 
@@ -179,7 +178,7 @@ public class AvrcpPlayerTest {
         assertThat(avrcpPlayer.notifyImageDownload(uuid, uri)).isTrue();
     }
 
-    private void setSupportedFeature(byte[] supportedFeatures, int feature) {
+    private static void setSupportedFeature(byte[] supportedFeatures, int feature) {
         int byteNumber = feature / 8;
         byte bitMask = (byte) (1 << (feature % 8));
         supportedFeatures[byteNumber] = (byte) (supportedFeatures[byteNumber] | bitMask);

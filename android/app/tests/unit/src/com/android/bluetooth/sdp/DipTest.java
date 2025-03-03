@@ -16,6 +16,7 @@
 
 package com.android.bluetooth.sdp;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -45,13 +46,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 public class DipTest {
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private AdapterService mAdapterService;
     @Mock private SdpManagerNativeInterface mNativeInterface;
@@ -83,7 +82,7 @@ public class DipTest {
         SdpManagerNativeInterface.setInstance(null);
     }
 
-    private void verifyDipSdpRecordIntent(
+    private static void verifyDipSdpRecordIntent(
             ArgumentCaptor<Intent> intentArgument,
             int status,
             BluetoothDevice device,

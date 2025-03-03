@@ -15,6 +15,9 @@
  */
 package com.android.bluetooth.map;
 
+import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
+
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 import static com.android.bluetooth.TestUtils.mockGetSystemService;
 
@@ -25,7 +28,6 @@ import static org.mockito.Mockito.when;
 
 import android.app.AlarmManager;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.telephony.TelephonyManager;
 
@@ -42,8 +44,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 @MediumTest
 @RunWith(AndroidJUnit4.class)
@@ -53,7 +53,7 @@ public class BluetoothMapServiceTest {
     private final Context mTargetContext =
             InstrumentationRegistry.getInstrumentation().getTargetContext();
 
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private AdapterService mAdapterService;
     @Mock private DatabaseManager mDatabaseManager;
@@ -74,7 +74,7 @@ public class BluetoothMapServiceTest {
 
     @After
     public void tearDown() {
-        mService.stop();
+        mService.cleanup();
         assertThat(BluetoothMapService.getBluetoothMapService()).isNull();
     }
 
@@ -87,9 +87,7 @@ public class BluetoothMapServiceTest {
     public void getDevicesMatchingConnectionStates_whenNoDeviceIsConnected_returnsEmptyList() {
         when(mAdapterService.getBondedDevices()).thenReturn(new BluetoothDevice[] {mDevice});
 
-        assertThat(
-                        mService.getDevicesMatchingConnectionStates(
-                                new int[] {BluetoothProfile.STATE_CONNECTED}))
+        assertThat(mService.getDevicesMatchingConnectionStates(new int[] {STATE_CONNECTED}))
                 .isEmpty();
     }
 

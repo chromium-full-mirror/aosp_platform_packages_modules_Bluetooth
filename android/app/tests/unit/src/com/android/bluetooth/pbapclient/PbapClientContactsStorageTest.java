@@ -16,6 +16,7 @@
 
 package com.android.bluetooth.pbapclient;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -56,8 +57,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 import java.io.File;
 import java.time.Instant;
@@ -71,7 +70,7 @@ import java.util.List;
 @MediumTest
 @RunWith(AndroidJUnit4.class)
 public class PbapClientContactsStorageTest {
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     private static final String ACCOUNT_TYPE = "com.android.bluetooth.pbapclient.account";
 
@@ -553,11 +552,11 @@ public class PbapClientContactsStorageTest {
         assertThat(mStorage.isStorageReady()).isTrue();
     }
 
-    private Account getAccountForDevice(BluetoothDevice device) {
+    private static Account getAccountForDevice(BluetoothDevice device) {
         return new Account(device.getAddress(), ACCOUNT_TYPE);
     }
 
-    private List<VCardEntry> getMockContacts(int numContacts) {
+    private static List<VCardEntry> getMockContacts(int numContacts) {
         List<VCardEntry> contacts = new ArrayList<VCardEntry>();
         for (int i = 0; i < numContacts; i++) {
             VCardEntry card = new VCardEntry(VCardConfig.VCARD_TYPE_V21_GENERIC);
@@ -571,7 +570,7 @@ public class PbapClientContactsStorageTest {
         return contacts;
     }
 
-    private List<VCardEntry> getMockCallHistory(int type, int numEntries) {
+    private static List<VCardEntry> getMockCallHistory(int type, int numEntries) {
         String typeIndicator = "";
         if (type == CallLog.Calls.INCOMING_TYPE) {
             typeIndicator = "RECEIVED";

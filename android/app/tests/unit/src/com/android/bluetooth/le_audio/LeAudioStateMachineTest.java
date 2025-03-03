@@ -17,6 +17,11 @@
 
 package com.android.bluetooth.le_audio;
 
+import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
+import static android.bluetooth.BluetoothProfile.STATE_CONNECTING;
+import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
+
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 import static com.android.bluetooth.le_audio.LeAudioStateMachine.CONNECT;
 import static com.android.bluetooth.le_audio.LeAudioStateMachine.DISCONNECT;
@@ -33,7 +38,6 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.HandlerThread;
@@ -53,8 +57,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 @MediumTest
 @RunWith(AndroidJUnit4.class)
@@ -64,7 +66,7 @@ public class LeAudioStateMachineTest {
     private final BluetoothDevice mDevice = getTestDevice(68);
     private static final int TIMEOUT_MS = 1000;
 
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
     @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @Mock private AdapterService mAdapterService;
@@ -98,8 +100,7 @@ public class LeAudioStateMachineTest {
     /** Test that default state is disconnected */
     @Test
     public void testDefaultDisconnectedState() {
-        assertThat(mLeAudioStateMachine.getConnectionState())
-                .isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+        assertThat(mLeAudioStateMachine.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
     }
 
     /**
@@ -145,8 +146,7 @@ public class LeAudioStateMachineTest {
 
         // Verify that one connection state change is notifyed
         verify(mLeAudioService, timeout(TIMEOUT_MS))
-                .notifyConnectionStateChanged(
-                        any(), eq(BluetoothProfile.STATE_CONNECTING), anyInt());
+                .notifyConnectionStateChanged(any(), eq(STATE_CONNECTING), anyInt());
 
         // Check that we are in Connecting state
         assertThat(mLeAudioStateMachine.getCurrentState())
@@ -162,11 +162,9 @@ public class LeAudioStateMachineTest {
         // Verify that the expected number of notification are called:
         // - two calls to notifyConnectionStateChanged(): Disconnected -> Connecting -> Connected
         verify(mLeAudioService, timeout(TIMEOUT_MS))
-                .notifyConnectionStateChanged(
-                        any(), eq(BluetoothProfile.STATE_CONNECTING), anyInt());
+                .notifyConnectionStateChanged(any(), eq(STATE_CONNECTING), anyInt());
         verify(mLeAudioService, timeout(TIMEOUT_MS))
-                .notifyConnectionStateChanged(
-                        any(), eq(BluetoothProfile.STATE_CONNECTED), anyInt());
+                .notifyConnectionStateChanged(any(), eq(STATE_CONNECTED), anyInt());
         // Check that we are in Connected state
         assertThat(mLeAudioStateMachine.getCurrentState())
                 .isInstanceOf(LeAudioStateMachine.Connected.class);
@@ -184,8 +182,7 @@ public class LeAudioStateMachineTest {
 
         // Verify that one connection state change is notified
         verify(mLeAudioService, timeout(TIMEOUT_MS))
-                .notifyConnectionStateChanged(
-                        any(), eq(BluetoothProfile.STATE_CONNECTING), anyInt());
+                .notifyConnectionStateChanged(any(), eq(STATE_CONNECTING), anyInt());
 
         // Check that we are in Connecting state
         assertThat(mLeAudioStateMachine.getCurrentState())
@@ -193,8 +190,7 @@ public class LeAudioStateMachineTest {
 
         // Verify that one connection state change is notified
         verify(mLeAudioService, timeout(LeAudioStateMachine.sConnectTimeoutMs * 2L))
-                .notifyConnectionStateChanged(
-                        any(), eq(BluetoothProfile.STATE_DISCONNECTED), anyInt());
+                .notifyConnectionStateChanged(any(), eq(STATE_DISCONNECTED), anyInt());
 
         // Check that we are in Disconnected state
         assertThat(mLeAudioStateMachine.getCurrentState())
@@ -217,8 +213,7 @@ public class LeAudioStateMachineTest {
 
         // Verify that one connection state change is notified
         verify(mLeAudioService, timeout(TIMEOUT_MS))
-                .notifyConnectionStateChanged(
-                        any(), eq(BluetoothProfile.STATE_CONNECTING), anyInt());
+                .notifyConnectionStateChanged(any(), eq(STATE_CONNECTING), anyInt());
 
         // Check that we are in Connecting state
         assertThat(mLeAudioStateMachine.getCurrentState())
@@ -226,8 +221,7 @@ public class LeAudioStateMachineTest {
 
         // Verify that one connection state change is notified
         verify(mLeAudioService, timeout(LeAudioStateMachine.sConnectTimeoutMs * 2L))
-                .notifyConnectionStateChanged(
-                        any(), eq(BluetoothProfile.STATE_DISCONNECTED), anyInt());
+                .notifyConnectionStateChanged(any(), eq(STATE_DISCONNECTED), anyInt());
 
         // Check that we are in Disconnected state
         assertThat(mLeAudioStateMachine.getCurrentState())
@@ -249,10 +243,7 @@ public class LeAudioStateMachineTest {
         sendAndDispatchMessage(CONNECT, mDevice);
         // Verify that one connection state change is notified
         verify(mLeAudioService, timeout(TIMEOUT_MS))
-                .notifyConnectionStateChanged(
-                        any(),
-                        eq(BluetoothProfile.STATE_CONNECTING),
-                        eq(BluetoothProfile.STATE_DISCONNECTED));
+                .notifyConnectionStateChanged(any(), eq(STATE_CONNECTING), eq(STATE_DISCONNECTED));
         assertThat(mLeAudioStateMachine.getCurrentState())
                 .isInstanceOf(LeAudioStateMachine.Connecting.class);
 
@@ -262,10 +253,7 @@ public class LeAudioStateMachineTest {
         sendAndDispatchMessage(DISCONNECT, mDevice);
         // Verify that one connection state change is notified
         verify(mLeAudioService, timeout(TIMEOUT_MS))
-                .notifyConnectionStateChanged(
-                        any(),
-                        eq(BluetoothProfile.STATE_DISCONNECTED),
-                        eq(BluetoothProfile.STATE_CONNECTING));
+                .notifyConnectionStateChanged(any(), eq(STATE_DISCONNECTED), eq(STATE_CONNECTING));
         assertThat(mLeAudioStateMachine.getCurrentState())
                 .isInstanceOf(LeAudioStateMachine.Disconnected.class);
         TestUtils.waitForLooperToFinishScheduledTask(mHandlerThread.getLooper());

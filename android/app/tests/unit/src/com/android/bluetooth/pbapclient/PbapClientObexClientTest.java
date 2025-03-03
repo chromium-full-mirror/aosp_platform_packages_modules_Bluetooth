@@ -16,6 +16,12 @@
 
 package com.android.bluetooth.pbapclient;
 
+import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
+import static android.bluetooth.BluetoothProfile.STATE_CONNECTING;
+import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
+import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTING;
+
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -30,7 +36,6 @@ import static org.mockito.Mockito.verify;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
-import android.bluetooth.BluetoothProfile;
 import android.util.Log;
 
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -54,8 +59,6 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -69,7 +72,7 @@ public class PbapClientObexClientTest {
     private static final int TEST_L2CAP_PSM = 4098;
     private static final int TEST_RFCOMM_CHANNEL_ID = 3;
 
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     private BluetoothAdapter mAdapter = null;
     private BluetoothDevice mDevice;
@@ -137,7 +140,7 @@ public class PbapClientObexClientTest {
         assertThat(mObexClient.getL2capPsm()).isEqualTo(PbapClientObexClient.L2CAP_INVALID_PSM);
         assertThat(mObexClient.getRfcommChannelId())
                 .isEqualTo(PbapClientObexClient.RFCOMM_INVALID_CHANNEL_ID);
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
         assertThat(mObexClient.isConnected()).isFalse();
     }
 
@@ -153,18 +156,13 @@ public class PbapClientObexClientTest {
         mTestLooper.dispatchAll();
 
         verify(mMockCallback)
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_DISCONNECTED),
-                        eq(BluetoothProfile.STATE_CONNECTING));
-        verify(mMockCallback)
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_CONNECTING),
-                        eq(BluetoothProfile.STATE_CONNECTED));
+                .onConnectionStateChanged(eq(STATE_DISCONNECTED), eq(STATE_CONNECTING));
+        verify(mMockCallback).onConnectionStateChanged(eq(STATE_CONNECTING), eq(STATE_CONNECTED));
         assertThat(mObexClient.getTransportType()).isEqualTo(PbapClientObexClient.TRANSPORT_L2CAP);
         assertThat(mObexClient.getL2capPsm()).isEqualTo(TEST_L2CAP_PSM);
         assertThat(mObexClient.getRfcommChannelId())
                 .isEqualTo(PbapClientObexClient.RFCOMM_INVALID_CHANNEL_ID);
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_CONNECTED);
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_CONNECTED);
         assertThat(mObexClient.isConnected()).isTrue();
     }
 
@@ -176,17 +174,12 @@ public class PbapClientObexClientTest {
         mTestLooper.dispatchAll();
 
         verify(mMockCallback)
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_DISCONNECTED),
-                        eq(BluetoothProfile.STATE_CONNECTING));
-        verify(mMockCallback)
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_CONNECTING),
-                        eq(BluetoothProfile.STATE_CONNECTED));
+                .onConnectionStateChanged(eq(STATE_DISCONNECTED), eq(STATE_CONNECTING));
+        verify(mMockCallback).onConnectionStateChanged(eq(STATE_CONNECTING), eq(STATE_CONNECTED));
         assertThat(mObexClient.getTransportType()).isEqualTo(PbapClientObexClient.TRANSPORT_RFCOMM);
         assertThat(mObexClient.getRfcommChannelId()).isEqualTo(TEST_RFCOMM_CHANNEL_ID);
         assertThat(mObexClient.getL2capPsm()).isEqualTo(PbapClientObexClient.L2CAP_INVALID_PSM);
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_CONNECTED);
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_CONNECTED);
         assertThat(mObexClient.isConnected()).isTrue();
     }
 
@@ -298,7 +291,7 @@ public class PbapClientObexClientTest {
         assertThat(mObexClient.getL2capPsm()).isEqualTo(PbapClientObexClient.L2CAP_INVALID_PSM);
         assertThat(mObexClient.getRfcommChannelId())
                 .isEqualTo(PbapClientObexClient.RFCOMM_INVALID_CHANNEL_ID);
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
         assertThat(mObexClient.isConnected()).isFalse();
     }
 
@@ -310,7 +303,7 @@ public class PbapClientObexClientTest {
 
         verify(mMockCallback, never()).onConnectionStateChanged(anyInt(), anyInt());
 
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
         assertThat(mObexClient.isConnected()).isFalse();
     }
 
@@ -322,14 +315,10 @@ public class PbapClientObexClientTest {
         mTestLooper.dispatchAll();
 
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_CONNECTED),
-                        eq(BluetoothProfile.STATE_DISCONNECTING));
+                .onConnectionStateChanged(eq(STATE_CONNECTED), eq(STATE_DISCONNECTING));
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_DISCONNECTING),
-                        eq(BluetoothProfile.STATE_DISCONNECTED));
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+                .onConnectionStateChanged(eq(STATE_DISCONNECTING), eq(STATE_DISCONNECTED));
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
     }
 
     @Test
@@ -342,14 +331,10 @@ public class PbapClientObexClientTest {
         mTestLooper.dispatchAll();
 
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_CONNECTED),
-                        eq(BluetoothProfile.STATE_DISCONNECTING));
+                .onConnectionStateChanged(eq(STATE_CONNECTED), eq(STATE_DISCONNECTING));
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_DISCONNECTING),
-                        eq(BluetoothProfile.STATE_DISCONNECTED));
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+                .onConnectionStateChanged(eq(STATE_DISCONNECTING), eq(STATE_DISCONNECTED));
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
     }
 
     @Test
@@ -388,14 +373,10 @@ public class PbapClientObexClientTest {
         mTestLooper.dispatchAll();
 
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_CONNECTED),
-                        eq(BluetoothProfile.STATE_DISCONNECTING));
+                .onConnectionStateChanged(eq(STATE_CONNECTED), eq(STATE_DISCONNECTING));
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_DISCONNECTING),
-                        eq(BluetoothProfile.STATE_DISCONNECTED));
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+                .onConnectionStateChanged(eq(STATE_DISCONNECTING), eq(STATE_DISCONNECTED));
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
     }
 
     @Test
@@ -426,14 +407,10 @@ public class PbapClientObexClientTest {
         mTestLooper.dispatchAll();
 
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_CONNECTED),
-                        eq(BluetoothProfile.STATE_DISCONNECTING));
+                .onConnectionStateChanged(eq(STATE_CONNECTED), eq(STATE_DISCONNECTING));
         verify(mMockCallback, times(1))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_DISCONNECTING),
-                        eq(BluetoothProfile.STATE_DISCONNECTED));
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+                .onConnectionStateChanged(eq(STATE_DISCONNECTING), eq(STATE_DISCONNECTED));
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
     }
 
     // *********************************************************************************************
@@ -450,7 +427,7 @@ public class PbapClientObexClientTest {
         mObexClient.close();
         mTestLooper.dispatchAll();
 
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
         assertThat(mObexClient.isConnected()).isFalse();
     }
 
@@ -464,14 +441,12 @@ public class PbapClientObexClientTest {
         // Timeout() is desirable, but we can't use test looper without receiving the
         // InterruptedExceptions
         verify(mMockCallback, timeout(2000))
-                .onConnectionStateChanged(
-                        eq(BluetoothProfile.STATE_CONNECTING),
-                        eq(BluetoothProfile.STATE_CONNECTED));
+                .onConnectionStateChanged(eq(STATE_CONNECTING), eq(STATE_CONNECTED));
 
         mObexClient.close();
         mTestLooper.dispatchAll();
 
-        assertThat(mObexClient.getConnectionState()).isEqualTo(BluetoothProfile.STATE_DISCONNECTED);
+        assertThat(mObexClient.getConnectionState()).isEqualTo(STATE_DISCONNECTED);
     }
 
     // *********************************************************************************************
@@ -503,6 +478,7 @@ public class PbapClientObexClientTest {
 
     private static class FakePbapObexServer extends FakeObexServer {
         private static final String TAG = FakePbapObexServer.class.getSimpleName();
+
         private static final String TYPE_GET_PHONEBOOK = "x-bt/phonebook";
         private static final byte SIZE_BYTES = 2;
         private static final byte DATABASE_IDENTIFIER_BYTES = 4;

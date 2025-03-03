@@ -32,7 +32,7 @@ import com.android.bluetooth.Utils;
 import com.android.bluetooth.flags.Flags;
 
 class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
-    private static final String TAG = "BtSocketManagerBinder";
+    private static final String TAG = BluetoothSocketManagerBinder.class.getSimpleName();
 
     private static final int INVALID_FD = -1;
 
@@ -96,7 +96,7 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
     }
 
     @Override
-    public ParcelFileDescriptor connectSocketwithOffload(
+    public ParcelFileDescriptor connectSocketWithOffload(
             BluetoothDevice device,
             int type,
             ParcelUuid uuid,
@@ -125,7 +125,7 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
 
         Log.i(
                 TAG,
-                "connectSocketwithOffload: device="
+                "connectSocketWithOffload: device="
                         + device
                         + ", type="
                         + type

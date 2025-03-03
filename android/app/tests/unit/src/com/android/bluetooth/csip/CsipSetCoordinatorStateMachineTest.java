@@ -22,6 +22,7 @@ import static android.bluetooth.BluetoothProfile.STATE_CONNECTING;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTING;
 
+import static com.android.bluetooth.TestUtils.MockitoRule;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -35,7 +36,6 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
 import android.os.HandlerThread;
-import android.os.Looper;
 import android.os.Message;
 
 import androidx.test.filters.MediumTest;
@@ -50,40 +50,33 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
 
 @MediumTest
 @RunWith(AndroidJUnit4.class)
 public class CsipSetCoordinatorStateMachineTest {
-    private final String mFlagDexmarker = System.getProperty("dexmaker.share_classloader", "false");
-
-    private final BluetoothDevice mDevice = getTestDevice(89);
-    private HandlerThread mHandlerThread;
-    private CsipSetCoordinatorStateMachineWrapper mStateMachine;
-    private static final int TIMEOUT_MS = 1000;
-
-    @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private AdapterService mAdapterService;
     @Mock private CsipSetCoordinatorService mService;
     @Mock private CsipSetCoordinatorNativeInterface mNativeInterface;
 
+    private static final int TIMEOUT_MS = 1000;
+
+    private final BluetoothDevice mDevice = getTestDevice(89);
+
+    private HandlerThread mHandlerThread;
+    private CsipSetCoordinatorStateMachine mStateMachine;
+
     @Before
     public void setUp() throws Exception {
-        if (!mFlagDexmarker.equals("true")) {
-            System.setProperty("dexmaker.share_classloader", "true");
-        }
-
         TestUtils.setAdapterService(mAdapterService);
-
 
         // Set up thread and looper
         mHandlerThread = new HandlerThread("CsipSetCoordinatorServiceTestHandlerThread");
         mHandlerThread.start();
         mStateMachine =
                 spy(
-                        new CsipSetCoordinatorStateMachineWrapper(
+                        new CsipSetCoordinatorStateMachine(
                                 mDevice, mService, mNativeInterface, mHandlerThread.getLooper()));
 
         // Override the timeout value to speed up the test
@@ -93,9 +86,6 @@ public class CsipSetCoordinatorStateMachineTest {
 
     @After
     public void tearDown() throws Exception {
-        if (!mFlagDexmarker.equals("true")) {
-            System.setProperty("dexmaker.share_classloader", mFlagDexmarker);
-        }
         mStateMachine.doQuit();
         mHandlerThread.quit();
         TestUtils.clearAdapterService(mAdapterService);
@@ -527,7 +517,10 @@ public class CsipSetCoordinatorStateMachineTest {
         Message msg = mStateMachine.obtainMessage(CsipSetCoordinatorStateMachine.CONNECT);
         mStateMachine.sendMessage(msg);
         TestUtils.waitForLooperToFinishScheduledTask(mHandlerThread.getLooper());
-        verify(mStateMachine).deferMessage(msg);
+        assertThat(
+                        mStateMachine.doesSuperHaveDeferredMessages(
+                                CsipSetCoordinatorStateMachine.CONNECT))
+                .isTrue();
     }
 
     @Test
@@ -543,7 +536,10 @@ public class CsipSetCoordinatorStateMachineTest {
         Message msg = mStateMachine.obtainMessage(CsipSetCoordinatorStateMachine.DISCONNECT);
         mStateMachine.sendMessage(msg);
         TestUtils.waitForLooperToFinishScheduledTask(mHandlerThread.getLooper());
-        verify(mStateMachine).deferMessage(msg);
+        assertThat(
+                        mStateMachine.doesSuperHaveDeferredMessages(
+                                CsipSetCoordinatorStateMachine.DISCONNECT))
+                .isTrue();
     }
 
     @Test
@@ -682,21 +678,5 @@ public class CsipSetCoordinatorStateMachineTest {
         // Verify that one connection state broadcast is executed
         verify(mService, timeout(TIMEOUT_MS)).sendBroadcast(any(Intent.class), anyString());
         assertThat(mStateMachine.getCurrentState()).isInstanceOf(type);
-    }
-
-    public static class CsipSetCoordinatorStateMachineWrapper
-            extends CsipSetCoordinatorStateMachine {
-
-        CsipSetCoordinatorStateMachineWrapper(
-                BluetoothDevice device,
-                CsipSetCoordinatorService svc,
-                CsipSetCoordinatorNativeInterface nativeInterface,
-                Looper looper) {
-            super(device, svc, nativeInterface, looper);
-        }
-
-        public boolean doesSuperHaveDeferredMessages(int what) {
-            return super.hasDeferredMessages(what);
-        }
     }
 }
