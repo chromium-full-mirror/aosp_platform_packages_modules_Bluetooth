@@ -32,14 +32,13 @@ import android.util.Log;
 import com.android.bluetooth.BluetoothMethodProxy;
 import com.android.bluetooth.BluetoothStatsLog;
 import com.android.bluetooth.content_profiles.ContentProfileErrorReportUtils;
+import com.android.bluetooth.flags.Flags;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.obex.ApplicationParameter;
 import com.android.obex.HeaderSet;
 import com.android.obex.Operation;
 import com.android.obex.ResponseCodes;
 import com.android.obex.ServerRequestHandler;
-
-import com.google.common.base.Ascii;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -50,6 +49,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 // Next tag value for ContentProfileErrorReportUtils.report(): 34
 public class BluetoothPbapObexServer extends ServerRequestHandler {
@@ -1006,7 +1006,7 @@ public class BluetoothPbapObexServer extends ServerRequestHandler {
             List<Integer> savedPosList = new ArrayList<>();
             List<String> selectedNameList = new ArrayList<String>();
             if (appParamValue.searchValue != null) {
-                compareValue = Ascii.toLowerCase(appParamValue.searchValue.trim());
+                compareValue = appParamValue.searchValue.trim().toLowerCase(Locale.ROOT);
             }
 
             for (int pos = 0; pos < listSize; pos++) {
@@ -1018,8 +1018,9 @@ public class BluetoothPbapObexServer extends ServerRequestHandler {
 
                 if (appParamValue.searchValue != null) {
                     if (appParamValue.searchValue.isEmpty()
-                            || Ascii.toLowerCase(currentValue)
-                                    .startsWith(Ascii.toLowerCase(compareValue))) {
+                            || currentValue
+                                    .toLowerCase(Locale.ROOT)
+                                    .startsWith(compareValue.toLowerCase(Locale.ROOT))) {
                         selectedNameList.add(currentValue);
                         savedPosList.add(pos);
                     }
@@ -1517,6 +1518,19 @@ public class BluetoothPbapObexServer extends ServerRequestHandler {
             startIndex = 0;
             lastIndex = pbSize - 1;
         }
+
+        if (Flags.pbapLimitCallLog()) {
+            // Limit the number of call log to CALLLOG_NUM_LIMIT
+            if ((appParamValue.needTag != BluetoothPbapObexServer.ContentType.PHONEBOOK)
+                    && (appParamValue.needTag != BluetoothPbapObexServer.ContentType.FAVORITES)
+                    && (appParamValue.needTag
+                            != BluetoothPbapObexServer.ContentType.SIM_PHONEBOOK)) {
+                if (requestSize > CALLLOG_NUM_LIMIT) {
+                    requestSize = CALLLOG_NUM_LIMIT;
+                }
+            }
+        }
+
         // [startPoint, endPoint] denote the range of vcf indices to send, inclusive.
         int startPoint = startIndex + appParamValue.listStartOffset;
         int endPoint = startPoint + requestSize - 1;
@@ -1533,12 +1547,15 @@ public class BluetoothPbapObexServer extends ServerRequestHandler {
             endPoint = lastIndex;
         }
 
-        // Limit the number of call log to CALLLOG_NUM_LIMIT
-        if ((appParamValue.needTag != BluetoothPbapObexServer.ContentType.PHONEBOOK)
-                && (appParamValue.needTag != BluetoothPbapObexServer.ContentType.FAVORITES)
-                && (appParamValue.needTag != BluetoothPbapObexServer.ContentType.SIM_PHONEBOOK)) {
-            if (requestSize > CALLLOG_NUM_LIMIT) {
-                requestSize = CALLLOG_NUM_LIMIT;
+        if (!Flags.pbapLimitCallLog()) {
+            // Limit the number of call log to CALLLOG_NUM_LIMIT
+            if ((appParamValue.needTag != BluetoothPbapObexServer.ContentType.PHONEBOOK)
+                    && (appParamValue.needTag != BluetoothPbapObexServer.ContentType.FAVORITES)
+                    && (appParamValue.needTag
+                            != BluetoothPbapObexServer.ContentType.SIM_PHONEBOOK)) {
+                if (requestSize > CALLLOG_NUM_LIMIT) {
+                    requestSize = CALLLOG_NUM_LIMIT;
+                }
             }
         }
 

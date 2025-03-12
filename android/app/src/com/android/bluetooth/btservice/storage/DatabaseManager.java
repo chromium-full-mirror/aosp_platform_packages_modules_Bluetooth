@@ -46,6 +46,7 @@ import android.os.Message;
 import android.provider.Settings;
 import android.util.Log;
 
+import com.android.bluetooth.BluetoothEventLogger;
 import com.android.bluetooth.BluetoothStatsLog;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AdapterService;
@@ -53,9 +54,6 @@ import com.android.bluetooth.flags.Flags;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 
-import com.google.common.collect.EvictingQueue;
-
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -99,8 +97,6 @@ public class DatabaseManager {
     private static final String LEGACY_HEARING_AID_PRIORITY_PREFIX =
             "bluetooth_hearing_aid_priority_";
 
-    private static final int METADATA_CHANGED_LOG_MAX_SIZE = 20;
-
     private final BluetoothAdapter mAdapter;
     private final AdapterService mAdapterService;
     private HandlerThread mHandlerThread = null;
@@ -111,13 +107,13 @@ public class DatabaseManager {
 
     @VisibleForTesting final Map<String, Metadata> mMetadataCache = new HashMap<>();
     private final Semaphore mSemaphore = new Semaphore(1);
-    private final EvictingQueue<String> mMetadataChangedLog;
+    private final BluetoothEventLogger mMetadataChangedLog =
+            new BluetoothEventLogger(20, "Metadata Changes");
 
     /** Constructor of the DatabaseManager */
     public DatabaseManager(AdapterService service) {
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         mAdapterService = requireNonNull(service);
-        mMetadataChangedLog = EvictingQueue.create(METADATA_CHANGED_LOG_MAX_SIZE);
     }
 
     private class DatabaseHandler extends Handler {
@@ -1187,8 +1183,7 @@ public class DatabaseManager {
     /** Clear all persistence data in database */
     public void factoryReset() {
         Log.w(TAG, "factoryReset");
-        Message message = mHandler.obtainMessage(MSG_CLEAR_DATABASE);
-        mHandler.sendMessage(message);
+        mHandler.sendEmptyMessage(MSG_CLEAR_DATABASE);
     }
 
     /** Close and de-init the DatabaseManager */
@@ -1463,8 +1458,7 @@ public class DatabaseManager {
 
     private void loadDatabase() {
         Log.d(TAG, "Load Database");
-        Message message = mHandler.obtainMessage(MSG_LOAD_DATABASE);
-        mHandler.sendMessage(message);
+        mHandler.sendEmptyMessage(MSG_LOAD_DATABASE);
         try {
             // Lock the thread until handler thread finish loading database.
             mSemaphore.tryAcquire(LOAD_DATABASE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
@@ -1479,9 +1473,7 @@ public class DatabaseManager {
             return;
         }
         Log.d(TAG, "updateDatabase " + data.getAnonymizedAddress());
-        Message message = mHandler.obtainMessage(MSG_UPDATE_DATABASE);
-        message.obj = data;
-        mHandler.sendMessage(message);
+        mHandler.obtainMessage(MSG_UPDATE_DATABASE, data).sendToTarget();
     }
 
     @VisibleForTesting
@@ -1492,9 +1484,7 @@ public class DatabaseManager {
             return;
         }
         logMetadataChange(data, "Metadata deleted");
-        Message message = mHandler.obtainMessage(MSG_DELETE_DATABASE);
-        message.obj = data.getAddress();
-        mHandler.sendMessage(message);
+        mHandler.obtainMessage(MSG_DELETE_DATABASE, data.getAddress()).sendToTarget();
     }
 
     private void logManufacturerInfo(BluetoothDevice device, int key, byte[] bytesValue) {
@@ -1539,30 +1529,20 @@ public class DatabaseManager {
     }
 
     private void logMetadataChange(Metadata data, String log) {
-        String time = Utils.getLocalTimeString();
         String uidPid = Utils.getUidPidString();
-        mMetadataChangedLog.add(
-                time + " (" + uidPid + ") " + data.getAnonymizedAddress() + " " + log);
+        mMetadataChangedLog.add(uidPid + ": " + data.getAnonymizedAddress() + " " + log);
     }
 
-    /**
-     * Dump database info to a PrintWriter
-     *
-     * @param writer the PrintWriter to write log
-     */
-    public void dump(PrintWriter writer) {
-        writer.println("\nBluetoothDatabase:");
-        writer.println("  Metadata Changes:");
-        for (String log : mMetadataChangedLog) {
-            writer.println("    " + log);
-        }
-        writer.println("\nMetadata:");
+    /** Dump database info */
+    public void dump(StringBuilder sb) {
+        mMetadataChangedLog.dump(sb);
+        sb.append("Metadata:\n");
         for (Map.Entry<String, Metadata> entry : mMetadataCache.entrySet()) {
             if (entry.getKey().equals(LOCAL_STORAGE)) {
                 // No need to dump local storage
                 continue;
             }
-            writer.println("    " + entry.getValue());
+            sb.append("  ").append(entry.getValue()).append("\n");
         }
     }
 

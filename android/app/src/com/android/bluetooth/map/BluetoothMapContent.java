@@ -51,7 +51,6 @@ import com.android.internal.annotations.VisibleForTesting;
 
 import com.google.android.mms.pdu.CharacterSets;
 import com.google.android.mms.pdu.PduHeaders;
-import com.google.common.base.Ascii;
 
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
@@ -64,6 +63,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -2004,7 +2004,7 @@ public class BluetoothMapContent {
             // Filter ConvoId
             long convoId = -1;
             if (ap.getFilterConvoId() != null) {
-                convoId = ap.getFilterConvoId().getLeastSignificantBits();
+                convoId = ap.getFilterConvoId().leastSignificantBits();
             }
             if (convoId > 0) {
                 selection
@@ -3413,7 +3413,7 @@ public class BluetoothMapContent {
         }
         long convoId = -1;
         if (ap.getFilterConvoId() != null) {
-            convoId = ap.getFilterConvoId().getLeastSignificantBits();
+            convoId = ap.getFilterConvoId().leastSignificantBits();
         }
         if (convoId > 0) {
             newUri.appendQueryParameter(
@@ -3818,7 +3818,7 @@ public class BluetoothMapContent {
     }
 
     /**
-     * Read out the mms parts and update the bMessage object provided i {@linkplain message}
+     * Read out the mms parts and update the bMessage object provided i {@code message}
      *
      * @param id the content provider ID of the message
      * @param message the bMessage object to add the information to
@@ -3889,7 +3889,7 @@ public class BluetoothMapContent {
                     // according to spec, "charset" should not be set. However, if the attachment
                     // is replaced with a text string, the bMessage now contains text and should
                     // have charset set to UTF-8 according to spec.
-                    if (!Ascii.toUpperCase(part.mContentType).contains("TEXT")
+                    if (!part.mContentType.toUpperCase(Locale.ROOT).contains("TEXT")
                             && !message.getIncludeAttachments()) {
                         StringBuilder sb = new StringBuilder();
                         part.encodePlainText(sb);
