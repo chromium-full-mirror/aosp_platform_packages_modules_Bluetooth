@@ -368,7 +368,7 @@ uint8_t A2DP_BitsSet(uint64_t num) {
  *
  ******************************************************************************/
 void A2DP_Init(void) {
-  a2dp_cb = tA2DP_CB{};
+  memset(&a2dp_cb, 0, sizeof(tA2DP_CB));
 }
 
 uint16_t A2DP_GetAvdtpVersion() { return AVDT_VERSION; }
