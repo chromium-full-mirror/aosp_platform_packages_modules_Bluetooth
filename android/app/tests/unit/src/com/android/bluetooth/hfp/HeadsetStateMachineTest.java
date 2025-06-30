@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 The Android Open Source Project
+ * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,10 +69,12 @@ import com.android.bluetooth.TestUtils;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.ActiveDeviceManager;
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.btservice.PhonePolicy;
 import com.android.bluetooth.btservice.RemoteDevices;
 import com.android.bluetooth.btservice.SilenceDeviceManager;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.flags.Flags;
+import com.android.bluetooth.util.SystemProperties;
 
 import org.junit.After;
 import org.junit.Before;
@@ -86,7 +88,7 @@ import org.mockito.Mockito;
 
 import java.util.ArrayList;
 
-/** Tests for {@link HeadsetStateMachine} */
+/** Test cases for {@link HeadsetStateMachine}. */
 @MediumTest
 @RunWith(AndroidJUnit4.class)
 public class HeadsetStateMachineTest {
@@ -121,6 +123,7 @@ public class HeadsetStateMachineTest {
     private MockContentResolver mMockContentResolver;
     @Mock private HeadsetNativeInterface mNativeInterface;
     @Mock private RemoteDevices mRemoteDevices;
+    @Mock private SystemProperties.MockableSystemProperties mProperties;
 
     @Before
     public void setUp() throws Exception {
@@ -130,7 +133,7 @@ public class HeadsetStateMachineTest {
         // Stub system interface
         doReturn(mPhoneState).when(mSystemInterface).getHeadsetPhoneState();
         doReturn(mAudioManager).when(mSystemInterface).getAudioManager();
-        doReturn(true).when(mDatabaseManager).setAudioPolicyMetadata(anyObject(), anyObject());
+        doReturn(true).when(mDatabaseManager).setAudioPolicyMetadata(any(), any());
         doReturn(true).when(mNativeInterface).connectHfp(mDevice);
         doReturn(true).when(mNativeInterface).disconnectHfp(mDevice);
         doReturn(true).when(mNativeInterface).connectAudio(mDevice);
@@ -175,6 +178,8 @@ public class HeadsetStateMachineTest {
                                 mAdapterService,
                                 mNativeInterface,
                                 mSystemInterface);
+
+        SystemProperties.mProperties = mProperties;
     }
 
     @After
@@ -1765,6 +1770,49 @@ public class HeadsetStateMachineTest {
         verify(mockAudioManager).setStreamVolume(AudioManager.STREAM_VOICE_CALL, 2, 0);
     }
 
+    @RequiresFlagsEnabled(Flags.FLAG_HFP_VOLUME_CONTROL_PROPERTY)
+    @Test
+    public void testProcessVolumeEventAudioConnected_withVolumeControlEnabled_ShowUiFlagEnabled() {
+        doReturn(true)
+            .when(mProperties)
+            .getBoolean(eq(HeadsetStateMachine.HFP_VOLUME_CONTROL_ENABLED), anyBoolean());
+
+        setUpAudioOnState();
+
+        when(mHeadsetService.getActiveDevice()).thenReturn(mDevice);
+        AudioManager mockAudioManager = mock(AudioManager.class);
+        when(mockAudioManager.getStreamVolume(anyInt())).thenReturn(1);
+        when(mSystemInterface.getAudioManager()).thenReturn(mockAudioManager);
+
+        mHeadsetStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_SPK, 2);
+
+        var flagsCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(mockAudioManager).setStreamVolume(anyInt(), anyInt(), flagsCaptor.capture());
+        assertThat(flagsCaptor.getValue() & AudioManager.FLAG_SHOW_UI)
+            .isEqualTo(AudioManager.FLAG_SHOW_UI);
+    }
+
+    @RequiresFlagsEnabled(Flags.FLAG_HFP_VOLUME_CONTROL_PROPERTY)
+    @Test
+    public void testProcessVolumeEventAudioConnected_withVolumeControlEnabled_ShowUiFlagDisabled() {
+        doReturn(false)
+            .when(mProperties)
+            .getBoolean(eq(HeadsetStateMachine.HFP_VOLUME_CONTROL_ENABLED), anyBoolean());
+
+        setUpAudioOnState();
+
+        when(mHeadsetService.getActiveDevice()).thenReturn(mDevice);
+        AudioManager mockAudioManager = mock(AudioManager.class);
+        when(mockAudioManager.getStreamVolume(anyInt())).thenReturn(1);
+        when(mSystemInterface.getAudioManager()).thenReturn(mockAudioManager);
+
+        mHeadsetStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_SPK, 2);
+
+        var flagsCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(mockAudioManager).setStreamVolume(anyInt(), anyInt(), flagsCaptor.capture());
+        assertThat(flagsCaptor.getValue() & AudioManager.FLAG_SHOW_UI).isEqualTo(0);
+    }
+
     @Test
     public void testVolumeChangeEvent_fromIntentWhenAudioOn() {
         setUpAudioOnState();
@@ -1897,7 +1945,7 @@ public class HeadsetStateMachineTest {
                         mDevice));
         expectCallTimes++;
         verify(mDatabaseManager, timeout(ASYNC_CALL_TIMEOUT_MILLIS).times(expectCallTimes))
-                .setAudioPolicyMetadata(anyObject(), anyObject());
+                .setAudioPolicyMetadata(any(), any());
 
         // receive and not set android policy
         mHeadsetStateMachine.sendMessage(
@@ -1907,7 +1955,7 @@ public class HeadsetStateMachineTest {
                         "AT+ANDROID=PROBE,1,1,\"PQGHRSBCTU__\"",
                         mDevice));
         verify(mDatabaseManager, timeout(ASYNC_CALL_TIMEOUT_MILLIS).times(expectCallTimes))
-                .setAudioPolicyMetadata(anyObject(), anyObject());
+                .setAudioPolicyMetadata(any(), any());
     }
 
     /** A test to verify whether the sink audio policy command is valid */
@@ -2200,7 +2248,7 @@ public class HeadsetStateMachineTest {
                 new HeadsetStackEvent(
                         HeadsetStackEvent.EVENT_TYPE_UNKNOWN_AT, "+ANDROID=?", mDevice));
         verify(mNativeInterface, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
-                .atResponseString(anyObject(), anyString());
+                .atResponseString(any(), anyString());
     }
 
     private void configureHeadsetServiceForAptxVoice(boolean enable) {
