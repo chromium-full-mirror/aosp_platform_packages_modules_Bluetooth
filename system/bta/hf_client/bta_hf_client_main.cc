@@ -45,7 +45,7 @@ using namespace bluetooth;
 
 static const char* bta_hf_client_evt_str(uint16_t event);
 static const char* bta_hf_client_state_str(uint8_t state);
-void bta_hf_client_cb_init(tBTA_HF_CLIENT_CB* client_cb, uint16_t handle);
+static void bta_hf_client_cb_init(tBTA_HF_CLIENT_CB* client_cb, uint16_t handle);
 
 /* state machine states */
 enum {
@@ -273,7 +273,7 @@ void bta_hf_client_cb_arr_init() {
  * Returns          void
  *
  ******************************************************************************/
-void bta_hf_client_cb_init(tBTA_HF_CLIENT_CB* client_cb, uint16_t handle) {
+static void bta_hf_client_cb_init(tBTA_HF_CLIENT_CB* client_cb, uint16_t handle) {
   log::verbose("");
 
   // Free any memory we need to explicity release
@@ -283,8 +283,7 @@ void bta_hf_client_cb_init(tBTA_HF_CLIENT_CB* client_cb, uint16_t handle) {
   client_cb->enabled_hf_indicators.clear();
   client_cb->peer_hf_indicators.clear();
 
-  if (client_cb->p_disc_db &&
-      com::android::bluetooth::flags::btsec_check_valid_discovery_database()) {
+  if (client_cb->p_disc_db) {
     if (!get_legacy_stack_sdp_api()->service.SDP_CancelServiceSearch(client_cb->p_disc_db)) {
       log::warn("Unable to cancel SDP service discovery peer:{}", client_cb->peer_addr);
     }
