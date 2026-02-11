@@ -287,9 +287,6 @@ public:
   void StartLinkQualityReports(uint16_t cis_handle);
   void FreeLinkQualityReports(void);
 
-  void StartLinkQualityReports(uint16_t cis_handle);
-  void FreeLinkQualityReports(void);
-
 private:
   types::BidirectionalPair<types::AudioContexts> avail_contexts_;
   types::BidirectionalPair<types::AudioContexts> supp_contexts_;

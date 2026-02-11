@@ -1218,9 +1218,6 @@ protected:
                 return true;
               }
 
-              auto enabled_directions =
-                      state_machine_callbacks_->OnGetEnabledDirections(group->group_id_);
-
               // Inject the state
               group->SetTargetState(types::AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING);
 
