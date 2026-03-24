@@ -285,7 +285,7 @@ void BTA_dm_on_hw_on() {
     }
   }
 
-  btm_ble_scanner_init();
+  do_in_main_thread(base::BindOnce(&btm_ble_scanner_init));
 
   // Synchronize with the controller before continuing
   bta_dm_le_rand(get_main_thread()->BindOnce([](uint64_t /*value*/) { BTIF_dm_enable(); }));
