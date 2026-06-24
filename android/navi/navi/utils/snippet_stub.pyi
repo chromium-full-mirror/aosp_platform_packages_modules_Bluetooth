@@ -4,6 +4,8 @@ from typing import Any
 from mobly.controllers.android_device_lib import callback_handler_v2
 from mobly.controllers.android_device_lib import snippet_client_v2
 
+from navi.utils import android_constants
+
 
 class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
     # Mobly
@@ -13,6 +15,18 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
 
     # Other
     def ping(self) -> str:
+        ...
+
+    def getHardware(self) -> str:
+        ...
+
+    def getSdkVersion(self) -> int:
+        ...
+
+    def registerVoiceCommandCallback(self,) -> callback_handler_v2.CallbackHandlerV2:
+        ...
+
+    def unregisterVoiceCommandCallback(self, callback_id: str) -> None:
         ...
 
     # Adapter
@@ -25,10 +39,13 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
     def disable(self) -> bool:
         ...
 
-    def adapterSetup(self) -> callback_handler_v2.CallbackHandlerV2:
+    def waitForAdapterState(self, state: int) -> bool:
         ...
 
-    def adapterTeardown(self, callback_id: str) -> bool:
+    def registerAdapterCallback(self) -> callback_handler_v2.CallbackHandlerV2:
+        ...
+
+    def unregisterAdapterCallback(self, callback_id: str) -> None:
         ...
 
     def getBondedDevices(self) -> list[str]:
@@ -99,6 +116,8 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
         advertising_set_parameters: dict[str, Any],
         advertise_data: dict[str, Any] | None = None,
         scan_response: dict[str, Any] | None = None,
+        periodic_advertising_parameters: dict[str, Any] | None = None,
+        periodic_advertising_data: dict[str, Any] | None = None,
     ) -> str:
         ...
 
@@ -142,11 +161,14 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
     def unregisterBluetoothQualityReportCallback(self, callback_id: str) -> None:
         ...
 
-    # A2DP
-    def a2dpSetup(self) -> callback_handler_v2.CallbackHandlerV2:
+    def isLePeriodicAdvertisingSupported(self) -> bool:
         ...
 
-    def a2dpTeardown(self, callback_id: str) -> None:
+    # A2DP
+    def registerA2dpCallback(self) -> callback_handler_v2.CallbackHandlerV2:
+        ...
+
+    def unregisterA2dpCallback(self, callback_id: str) -> None:
         ...
 
     def setA2dpConnectionPolicy(self, address: str, policy: int) -> None:
@@ -163,7 +185,7 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
         self,
         address: str,
         transport: int,
-        address_type: int | None = None,
+        address_type: int = android_constants.AddressTypeStatus.RANDOM,
     ) -> callback_handler_v2.CallbackHandlerV2:
         ...
 
@@ -265,10 +287,10 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
         ...
 
     # HFP-AG
-    def hfpAgSetup(self) -> callback_handler_v2.CallbackHandlerV2:
+    def registerHfpAgCallback(self) -> callback_handler_v2.CallbackHandlerV2:
         ...
 
-    def hfpAgTeardown(self, callback_id: str) -> None:
+    def unregisterHfpAgCallback(self, callback_id: str) -> None:
         ...
 
     def setHfpAgConnectionPolicy(self, address: str, policy: int) -> None:
@@ -289,11 +311,17 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
     def hfpAgGetAudioState(self, address: str) -> int:
         ...
 
-    # HFP-HF
-    def hfpHfSetup(self) -> callback_handler_v2.CallbackHandlerV2:
+    def hfpAgStartVoiceRecognition(self, address: str) -> bool:
         ...
 
-    def hfpHfTeardown(self, callback_id: str) -> None:
+    def hfpAgStopVoiceRecognition(self, address: str) -> bool:
+        ...
+
+    # HFP-HF
+    def registerHfpHfCallback(self) -> callback_handler_v2.CallbackHandlerV2:
+        ...
+
+    def unregisterHfpHfCallback(self, callback_id: str) -> None:
         ...
 
     def setHfpHfConnectionPolicy(self, address: str, policy: int) -> None:
@@ -314,12 +342,11 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
         address: str,
         secure: bool,
         psm: int,
-        transport: int,
-        address_type: int | None = None,
+        address_type: int = android_constants.AddressTypeStatus.RANDOM,
     ) -> str:
         ...
 
-    def l2capOpenServer(self, secure: bool, transport: int, psm: int) -> int:
+    def l2capOpenServer(self, secure: bool, psm: int) -> int:
         ...
 
     def l2capWaitConnection(self, psm: int) -> str:
@@ -338,10 +365,16 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
         ...
 
     # RFCOMM
-    def rfcommConnectWithUuid(self, address: str, secure: bool, uuid: str) -> str:
+    def rfcommConnectWithUuid(self,
+                              address: str,
+                              secure: bool,
+                              uuid: str,
+                              blocking: bool = True) -> str:
         ...
 
-    def rfcommConnectWithChannel(self, address: str, secure: bool, channel: int) -> str:
+    def rfcommWaitForConnectionComplete(self,
+                                        cookie: str,
+                                        timeout_milliseconds: int = 10_000) -> None:
         ...
 
     def rfcommOpenServer(self, secure: bool, uuid: str) -> None:
@@ -369,43 +402,63 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
     def audioUnregisterCallback(self, callback_id: str) -> None:
         ...
 
-    def audioPlaySine(self) -> None:
+    def audioPlaySine(self, player_id: str | None = None) -> None:
         ...
 
-    def audioPlayFile(self, fileUri: str) -> None:
+    def audioPlayFile(self, fileUri: str, player_id: str | None = None) -> None:
         ...
 
-    def audioSetRepeat(self, repeatMode: int) -> None:
+    def audioSetRepeat(self, repeatMode: int, player_id: str | None = None) -> None:
         ...
 
-    def audioResume(self) -> None:
+    def audioResume(self, player_id: str | None = None) -> None:
         ...
 
-    def audioPause(self) -> None:
+    def audioPause(self, player_id: str | None = None) -> None:
         ...
 
-    def audioStop(self) -> None:
+    def audioStop(self, player_id: str | None = None) -> None:
         ...
 
-    def audioSetRouteSco(self, address: str) -> None:
+    def addPlayer(self) -> str:
         ...
 
-    def audioSetRouteDefault(self) -> None:
+    def removePlayer(self, player_id: str | None = None) -> None:
         ...
 
-    def addMediaItem(self, fileUri: str) -> None:
+    def setAudioAttributes(
+        self,
+        attributes: dict[str, Any] | None,
+        handle_audio_focus: bool,
+        player_id: str | None = None,
+    ) -> None:
         ...
 
-    def startRecording(self, output_path: str, source: int | None = None) -> None:
+    def audioSetRouteSco(self, address: str, player_id: str | None = None) -> None:
+        ...
+
+    def audioSetRouteDefault(self, player_id: str | None = None) -> None:
+        ...
+
+    def addMediaItem(self, fileUri: str, player_id: str | None = None) -> None:
+        ...
+
+    def setAudioPlaybackOffload(self, enabled: bool, player_id: str | None = None) -> None:
+        ...
+
+    def setHandleAudioBecomingNoisy(self, enabled: bool, player_id: str | None = None) -> None:
+        ...
+
+    def startRecording(
+        self,
+        output_path: str,
+        source: int | None = None,
+        preferred_device_address: str | None = None,
+        preferred_device_type: int | None = None,
+    ) -> None:
         ...
 
     def stopRecording(self, output_path: str) -> None:
-        ...
-
-    def setAudioPlaybackOffload(self, enabled: bool) -> None:
-        ...
-
-    def setHandleAudioBecomingNoisy(self, enabled: bool) -> None:
         ...
 
     def setVolume(self, stream_type: int, volume: int) -> None:
@@ -420,11 +473,9 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
     def getMinVolume(self, stream_type: int) -> int:
         ...
 
-    def setAudioAttributes(self, attributes: dict[str, Any] | None,
-                           handle_audio_focus: bool) -> None:
-        ...
-
-    def registerPlayerListener(self) -> callback_handler_v2.CallbackHandlerV2:
+    def registerPlayerListener(self,
+                               player_id: str | None = None
+                              ) -> callback_handler_v2.CallbackHandlerV2:
         ...
 
     def unregisterPlayerListener(self, callback_id: str) -> None:
@@ -482,6 +533,32 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
         ...
 
     def unregisterInputEventCallback(self, callback_id: str) -> None:
+        ...
+
+    # HID Device
+    def registerHidDeviceApp(
+        self,
+        sdp_settings: dict[str, Any],
+    ) -> callback_handler_v2.CallbackHandlerV2:
+        ...
+
+    def unregisterHidDeviceApp(self, callback_id: str) -> None:
+        ...
+
+    def hidDeviceSendReport(self, address: str, report_id: int, data: list[int]) -> bool:
+        ...
+
+    def hidDeviceReplyReport(self, address: str, report_type: int, report_id: int,
+                             data: list[int]) -> bool:
+        ...
+
+    def hidDeviceReportError(self, address: str, error: int) -> bool:
+        ...
+
+    def hidDeviceConnect(self, address: str) -> bool:
+        ...
+
+    def hidDeviceDisconnect(self, address: str) -> bool:
         ...
 
     # HID Host
@@ -565,6 +642,65 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
     def getSupportedDistanceMeasurementMethods(self) -> list[int]:
         ...
 
+    # AICS
+    def registerAicsCallback(self, address: str,
+                             instance_id: int) -> callback_handler_v2.CallbackHandlerV2:
+        ...
+
+    def unregisterAicsCallback(self, callback_id: str) -> None:
+        ...
+
+    def registerVolumeControlCallback(self) -> callback_handler_v2.CallbackHandlerV2:
+        ...
+
+    def unregisterVolumeControlCallback(self, callback_id: str) -> None:
+        ...
+
+    def vcpSetConnectionPolicy(self, address: str, policy: int) -> bool:
+        ...
+
+    def aicsGetAudioInputType(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsGetGainSettingUnit(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsGetGainSettingMin(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsGetGainSettingMax(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsGetDescription(self, address: str, instance_id: int) -> str:
+        ...
+
+    def aicsIsDescriptionWritable(self, address: str, instance_id: int) -> bool:
+        ...
+
+    def aicsSetDescription(self, address: str, instance_id: int, description: str) -> bool:
+        ...
+
+    def aicsGetAudioInputStatus(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsGetGainSetting(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsSetGainSetting(self, address: str, instance_id: int, gain_setting: int) -> bool:
+        ...
+
+    def aicsGetGainMode(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsSetGainMode(self, address: str, instance_id: int, gain_mode: int) -> bool:
+        ...
+
+    def aicsGetMute(self, address: str, instance_id: int) -> int:
+        ...
+
+    def aicsSetMute(self, address: str, instance_id: int, mute: int) -> bool:
+        ...
+
     # HAP Client
     def registerHapClientCallback(self,) -> callback_handler_v2.CallbackHandlerV2:
         ...
@@ -579,4 +715,16 @@ class BluetoothSnippet(snippet_client_v2.SnippetClientV2):
         ...
 
     def selectHapPreset(self, address: str, index: int) -> None:
+        ...
+
+    def selectHapPresetForGroup(self, group_id: int, index: int) -> None:
+        ...
+
+    def getHapGroup(self, address: str) -> int:
+        ...
+
+    def setHapConnectionPolicy(self, address: str, policy: int) -> bool:
+        ...
+
+    def maxConnectedAudioDevices(self) -> int:
         ...

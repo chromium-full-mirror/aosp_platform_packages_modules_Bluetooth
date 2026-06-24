@@ -2,30 +2,10 @@ package: "com.android.bluetooth.flags"
 container: "com.android.bt"
 
 flag {
-    name: "indicate_rfcomm_connection_complete_after_msc"
-    namespace: "bluetooth"
-    description: "Indicate RFCOMM connection complete after sending Modem Status Command"
-    bug: "393594567"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
     name: "rfcomm_fix_mux_collision_handling"
     namespace: "bluetooth"
     description: "Properly handle incoming connections while connecting"
     bug: "399420482"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "donot_collide_with_closed_port"
-    namespace: "bluetooth"
-    description: "Modify PORT_isCollisionDetected to report false when found port is CLOSED"
-    bug: "406250389"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
@@ -46,6 +26,36 @@ flag {
     namespace: "bluetooth"
     description: "relase rfcomm port before reset context"
     bug: "419817851"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "hfp_collision_fix_rfcomm_port_rx_buf_critical_error"
+    namespace: "bluetooth"
+    description: "fix RFCOMM port RX_BUF_CRITICAL error issue caused by HFP collision"
+    bug: "451453504"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "prevent_improper_closure_of_in_use_scn"
+    namespace: "bluetooth"
+    description: "When scn allocation fails, do not close already in use scn"
+    bug: "460151690"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "mark_port_not_in_use_on_release"
+    namespace: "bluetooth"
+    description: "Mark an in use port as not in use when calling port_release_port"
+    bug: "460549793"
     metadata {
         purpose: PURPOSE_BUGFIX
     }

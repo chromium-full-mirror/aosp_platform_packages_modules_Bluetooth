@@ -71,7 +71,7 @@
 #include "stack/include/btm_client_interface.h"
 #include "stack/include/btm_status.h"
 
-using base::Closure;
+using base::OnceClosure;
 using bluetooth::Uuid;
 using bluetooth::csis::ConnectionState;
 using bluetooth::csis::CsisClient;
@@ -135,7 +135,7 @@ class CsisClientImpl : public CsisClient {
                                                   sizeof(uint8_t) /* rank */ + Octet16().size();
 
 public:
-  CsisClientImpl(bluetooth::csis::CsisClientCallbacks* callbacks, Closure initCb)
+  CsisClientImpl(bluetooth::csis::CsisClientCallbacks* callbacks, OnceClosure initCb)
       : gatt_if_(0), callbacks_(callbacks) {
     BTA_GATTC_AppRegister(
             "csis",
@@ -144,8 +144,8 @@ public:
                 instance->GattcCallback(event, p_data);
               }
             },
-            base::Bind(
-                    [](Closure initCb, uint8_t client_id, uint8_t status) {
+            base::BindOnce(
+                    [](OnceClosure initCb, uint8_t client_id, uint8_t status) {
                       if (status != GATT_SUCCESS) {
                         log::error(
                                 "Can't start Coordinated Set Service client profile - no "
@@ -153,12 +153,12 @@ public:
                         return;
                       }
                       instance->gatt_if_ = client_id;
-                      initCb.Run();
+                      std::move(initCb).Run();
 
                       DeviceGroups::Initialize(device_group_callbacks);
                       instance->dev_groups_ = DeviceGroups::Get();
                     },
-                    initCb),
+                    std::move(initCb)),
             true);
 
     BTA_DmSirkSecCbRegister([](tBTA_DM_SEC_EVT event, tBTA_DM_SEC* p_data) {
@@ -332,7 +332,11 @@ public:
     if (device->IsConnected()) {
       BTA_GATTC_Close(device->conn_id);
     } else {
-      BTA_GATTC_CancelOpen(gatt_if_, addr, false);
+      if (com::android::bluetooth::flags::leaudio_cancel_open_with_direct_flag_when_connecting()) {
+        BTA_GATTC_CancelOpen(gatt_if_, addr, true);
+      } else {
+        BTA_GATTC_CancelOpen(gatt_if_, addr, false);
+      }
       DoDisconnectCleanUp(device);
       callbacks_->OnConnectionState(addr, ConnectionState::DISCONNECTED);
     }
@@ -353,6 +357,26 @@ public:
       RemoveCsisDevice(device);
     }
     dev_groups_->RemoveDevice(addr);
+  }
+
+  bool ShallCsisBeUsedForTheDevice(const RawAddress& addr) override {
+    if (!com_android_bluetooth_flags_csis_quirk_for_single_device_with_sirk_all_zeros()) {
+      return true;
+    }
+
+    auto device = FindDeviceByAddress(addr);
+    if (device == nullptr) {
+      return false;
+    }
+
+    /* In case remote device has CSIS service BUT something went wrong with connecting this device,
+     * LeAudio code need to make a decision if LeAudio should be connected or not.
+     * If the CSIS is not connected because of the missconfiguration i.e. Sirk is 0x00 and group
+     * size is 1, that means we can just treat device as it does not have CSIS. If there are other
+     * reasons for device being not connected, we consider it as Valid CSIS device and in case of
+     * error it will not be connected. */
+
+    return !device->sirk_all_zeros_size_one;
   }
 
   int GetGroupId(const RawAddress& addr, Uuid uuid) override {
@@ -465,7 +489,7 @@ public:
 
       if (next_dev) {
         auto next_csis_inst = next_dev->GetCsisInstanceByGroupId(group_id);
-        log::assert_that(csis_instance != nullptr, "csis_instance does not exist!");
+        log::assert_that(next_csis_inst != nullptr, "next_csis_inst does not exist!");
 #if CSIP_UPPER_TESTER_FORCE_TO_SEND_LOCK == FALSE
         if (next_csis_inst->GetLockState() == CsisLockState::CSIS_STATE_LOCKED) {
           /* Somebody else managed to lock it.
@@ -1137,6 +1161,18 @@ private:
       return;
     }
 
+    auto new_size = value[0];
+
+    if (!device->is_gatt_service_valid && device->sirk_all_zeros && new_size == 1) {
+      /* This is incorrectly configured device which has CSIS service with size 1 and SIRK 0.
+       * We disconnect CSIS and not use it.
+       */
+      device->sirk_all_zeros_size_one = true;
+      log::error("Disconnecting due to invalid SIRK, but device is size 1", device->addr);
+      BTA_GATTC_Close(device->conn_id);
+      return;
+    }
+
     auto csis_instance = device->GetCsisInstanceByOwningHandle(handle);
     if (csis_instance == nullptr) {
       log::error("Unknown csis instance");
@@ -1149,7 +1185,6 @@ private:
       return;
     }
 
-    auto new_size = value[0];
     csis_group->SetDesiredSize(new_size);
 
     if (notify_valid_services) {
@@ -1624,8 +1659,17 @@ private:
     /* Verify if sirk is not all zeros */
     Octet16 zero{};
     if (memcmp(zero.data(), value + 1, 16) == 0) {
-      log::error("Received invalid zero SIRK conn_id: 0x{:02x}. Disconnecting", device->conn_id);
-      BTA_GATTC_Close(device->conn_id);
+      log::error("Received invalid zero SIRK for {}, conn_id: {:#x}.", device->addr,
+                 device->conn_id);
+      if (!com_android_bluetooth_flags_csis_quirk_for_single_device_with_sirk_all_zeros() ||
+          device->is_gatt_service_valid ||
+          (csis_instance->svc_data.size_handle.val_hdl == GAP_INVALID_HANDLE)) {
+        log::error("Disconnecting out of spec device {}", device->addr);
+        BTA_GATTC_Close(device->conn_id);
+      } else {
+        device->sirk_all_zeros = true;
+        log::warn("Wait for the set size before disconnect");
+      }
       return;
     }
 
@@ -2345,6 +2389,9 @@ private:
   DeviceGroups* dev_groups_;
   int discovering_group_ = bluetooth::groups::kGroupUnknown;
 
+  // Member variables should appear before the WeakPtrFactory, to ensure
+  // that any WeakPtrs are invalidated before its members
+  // variable's destructors are executed, rendering them invalid.
   base::WeakPtrFactory<CsisClientImpl> weak_factory_{this};
 };
 
@@ -2387,7 +2434,7 @@ DeviceGroupsCallbacksImpl deviceGroupsCallbacksImpl;
 
 }  // namespace
 
-void CsisClient::Initialize(bluetooth::csis::CsisClientCallbacks* callbacks, Closure initCb) {
+void CsisClient::Initialize(bluetooth::csis::CsisClientCallbacks* callbacks, OnceClosure initCb) {
   std::scoped_lock<std::mutex> lock(instance_mutex);
   if (instance) {
     log::info("Already initialized!");
@@ -2395,7 +2442,7 @@ void CsisClient::Initialize(bluetooth::csis::CsisClientCallbacks* callbacks, Clo
   }
 
   device_group_callbacks = &deviceGroupsCallbacksImpl;
-  instance = new CsisClientImpl(callbacks, initCb);
+  instance = new CsisClientImpl(callbacks, std::move(initCb));
 }
 
 bool CsisClient::IsCsisClientRunning() { return instance; }

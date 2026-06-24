@@ -16,11 +16,8 @@
 
 package com.android.bluetooth.avrcpcontroller;
 
-import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
-import static android.bluetooth.BluetoothProfile.STATE_CONNECTING;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
 
-import static java.util.Objects.requireNonNull;
 import static java.util.Objects.requireNonNullElseGet;
 
 import android.bluetooth.BluetoothAdapter;
@@ -35,10 +32,10 @@ import android.util.Log;
 import com.android.bluetooth.BluetoothPrefs;
 import com.android.bluetooth.R;
 import com.android.bluetooth.Utils;
-import com.android.bluetooth.avrcpcontroller.BluetoothMediaBrowserService.BrowseResult;
+import com.android.bluetooth.media_audio.sink.BluetoothMediaBrowserService;
+import com.android.bluetooth.media_audio.sink.BluetoothMediaBrowserService.BrowseResult;
 import com.android.bluetooth.btservice.AdapterService;
-import com.android.bluetooth.btservice.ConnectableProfile;
-import com.android.bluetooth.btservice.ProfileService;
+import com.android.bluetooth.profile.ProfileService;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
@@ -49,7 +46,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Provides Bluetooth AVRCP Controller profile, as a service in the Bluetooth application. */
-public class AvrcpControllerService extends ConnectableProfile {
+public class AvrcpControllerService extends ProfileService {
     private static final String TAG = AvrcpControllerService.class.getSimpleName();
 
     static final int MAXIMUM_CONNECTED_DEVICES = 5;
@@ -139,11 +136,11 @@ public class AvrcpControllerService extends ConnectableProfile {
     @VisibleForTesting
     public AvrcpControllerService(
             AdapterService adapterService, AvrcpControllerNativeInterface nativeInterface) {
-        super(BluetoothProfile.AVRCP_CONTROLLER, requireNonNull(adapterService));
+        super(BluetoothProfile.AVRCP_CONTROLLER, adapterService);
         mNativeInterface =
                 requireNonNullElseGet(
                         nativeInterface,
-                        () -> new AvrcpControllerNativeInterface(mAdapterService, this));
+                        () -> new AvrcpControllerNativeInterface(getAdapterService(), this));
         mNativeInterface.init();
 
         setComponentAvailable(ON_ERROR_SETTINGS_ACTIVITY, true);
@@ -151,12 +148,13 @@ public class AvrcpControllerService extends ConnectableProfile {
         if (mCoverArtEnabled) {
             setComponentAvailable(COVER_ART_PROVIDER, true);
             mCoverArtManager =
-                    new AvrcpCoverArtManager(mAdapterService, this, new ImageDownloadCallback());
+                    new AvrcpCoverArtManager(
+                            getAdapterService(), this, new ImageDownloadCallback());
         } else {
             mCoverArtManager = null;
         }
 
-        mBrowseTree = new BrowseTree(mAdapterService, null);
+        mBrowseTree = new BrowseTree(getAdapterService(), null);
 
         // Start the media browser service.
         Intent startIntent = new Intent(this, BluetoothMediaBrowserService.class);
@@ -202,7 +200,7 @@ public class AvrcpControllerService extends ConnectableProfile {
     @VisibleForTesting
     boolean setActiveDevice(BluetoothDevice device) {
         Log.d(TAG, "setActiveDevice(device=" + device + ")");
-        final var a2dpSink = mAdapterService.getA2dpSinkService();
+        final var a2dpSink = getAdapterService().getA2dpSinkService();
         if (a2dpSink.isEmpty()) {
             Log.w(TAG, "setActiveDevice(device=" + device + "): A2DP Sink not available");
             return false;
@@ -349,17 +347,15 @@ public class AvrcpControllerService extends ConnectableProfile {
 
     @Override
     protected IProfileServiceBinder initBinder() {
-        return new AvrcpControllerServiceBinder(this);
+        return null;
     }
 
     // Called by JNI when a device has connected or disconnected.
     synchronized void onConnectionStateChanged(
             boolean remoteControlConnected, boolean browsingConnected, BluetoothDevice device) {
-        StackEvent event =
-                StackEvent.connectionStateChanged(remoteControlConnected, browsingConnected);
         AvrcpControllerStateMachine stateMachine = getOrCreateStateMachine(device);
         if (remoteControlConnected || browsingConnected) {
-            stateMachine.connect(event);
+            stateMachine.connect(remoteControlConnected, browsingConnected);
             // The first device to connect gets to be the active device
             if (getActiveDevice() == null) {
                 setActiveDevice(device);
@@ -409,11 +405,6 @@ public class AvrcpControllerService extends ConnectableProfile {
         // Make sure the active device isn't changed while we're processing the event so play/pause
         // commands get routed to the correct device
         synchronized (mActiveDeviceLock) {
-            switch (state) {
-                case AudioManager.AUDIOFOCUS_GAIN -> BluetoothMediaBrowserService.setActive(true);
-                case AudioManager.AUDIOFOCUS_LOSS -> BluetoothMediaBrowserService.setActive(false);
-                default -> {} // Nothing to do
-            }
             BluetoothDevice device = getActiveDevice();
             if (device == null) {
                 Log.w(TAG, "No active device set, ignore focus change");
@@ -576,31 +567,8 @@ public class AvrcpControllerService extends ConnectableProfile {
         }
     }
 
-    /* Generic Profile Code */
-
-    /**
-     * Disconnect the given Bluetooth device.
-     *
-     * @return true if disconnect is successful, false otherwise.
-     */
-    @Override
-    public synchronized boolean disconnect(BluetoothDevice device) {
-        Log.d(TAG, "disconnect(device=" + device + ")");
-        AvrcpControllerStateMachine stateMachine = mDeviceStateMap.get(device);
-        // a map state machine instance doesn't exist. maybe it is already gone?
-        if (stateMachine == null) {
-            return false;
-        }
-        int connectionState = stateMachine.getState();
-        if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
-            return false;
-        }
-        stateMachine.disconnect();
-        return true;
-    }
-
     /** Remove state machine from device map once it is no longer needed. */
-    public void removeStateMachine(AvrcpControllerStateMachine stateMachine) {
+    void removeStateMachine(AvrcpControllerStateMachine stateMachine) {
         if (stateMachine == null) {
             return;
         }
@@ -626,11 +594,7 @@ public class AvrcpControllerService extends ConnectableProfile {
     protected AvrcpControllerStateMachine getOrCreateStateMachine(BluetoothDevice device) {
         AvrcpControllerStateMachine newStateMachine =
                 new AvrcpControllerStateMachine(
-                        mAdapterService,
-                        this,
-                        device,
-                        mNativeInterface,
-                        Utils.isAutomotive(getApplicationContext()));
+                        getAdapterService(), this, device, mNativeInterface);
         AvrcpControllerStateMachine existingStateMachine =
                 mDeviceStateMap.putIfAbsent(device, newStateMachine);
         // Given null is not a valid value in our map, ConcurrentHashMap will return null if the
@@ -655,7 +619,7 @@ public class AvrcpControllerService extends ConnectableProfile {
     List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
         Log.d(TAG, "getDevicesMatchingConnectionStates(states=" + Arrays.toString(states) + ")");
         List<BluetoothDevice> deviceList = new ArrayList<>();
-        BluetoothDevice[] bondedDevices = mAdapterService.getBondedDevices();
+        BluetoothDevice[] bondedDevices = getAdapterService().getBondedDevices();
         int connectionState;
         for (BluetoothDevice device : bondedDevices) {
             connectionState = getConnectionState(device);
@@ -674,8 +638,7 @@ public class AvrcpControllerService extends ConnectableProfile {
         return deviceList;
     }
 
-    @Override
-    public synchronized int getConnectionState(BluetoothDevice device) {
+    synchronized int getConnectionState(BluetoothDevice device) {
         AvrcpControllerStateMachine stateMachine = mDeviceStateMap.get(device);
         return (stateMachine == null) ? STATE_DISCONNECTED : stateMachine.getState();
     }

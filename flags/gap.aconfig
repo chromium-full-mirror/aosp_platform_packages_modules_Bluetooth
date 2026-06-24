@@ -30,19 +30,6 @@ flag {
     namespace: "bluetooth"
     description: "Support MSFT HCI extension for LE Scanning. go/bt-msft-aosp-dd"
     bug: "365787977"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "gatt_clear_cache_on_factory_reset"
-    namespace: "bluetooth"
-    description: "Clear GATT cache/hash on factory reset"
-    bug: "373284699"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
 }
 
 flag {
@@ -70,16 +57,6 @@ flag {
     namespace: "bluetooth"
     description: "Makes scan controller operations run on one thread."
     bug: "397863857"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "start_discover_service_changed"
-    namespace: "bluetooth"
-    description: "Start discovery again when service change indication arrives."
-    bug: "400828637"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
@@ -114,40 +91,10 @@ flag {
 }
 
 flag {
-    name: "irk_scan_bond_check_update"
-    namespace: "bluetooth"
-    description: "Update bond state check in IRK scan to cover all identity address types."
-    bug: "406905829"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
     name: "preload_gatt_database"
     namespace: "bluetooth"
     description: "Add API to allow apps to preload GATT databases to allow skipping service discovery on initial connection."
     bug: "407051373"
-}
-
-flag {
-    name: "batch_scan_support_check"
-    namespace: "bluetooth"
-    description: "Add support check for batch scans when scan starts"
-    bug: "411519279"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "continue_queued_command_after_discovery"
-    namespace: "bluetooth"
-    description: "Execute enqueued command exiting discovery state"
-    bug: "411021422"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
 }
 
 flag {
@@ -333,4 +280,72 @@ flag {
     namespace: "bluetooth"
     description: "Delay the transition to the idle state for JV PM connection"
     bug: "440618134"
+}
+
+flag {
+    name: "ignore_service_change_indication"
+    namespace: "bluetooth"
+    description: "Do not handle service change indication for specific devices"
+    bug: "448557918"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "migrate_btm_scan_to_gd"
+    namespace: "bluetooth"
+    description: "Migrate btm scan logic to gd le scanning manager"
+    bug: "452239954"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "use_filter_for_each_manufacturer_data_block"
+    namespace: "bluetooth"
+    description: "When multiple manufacturer data blocks exist for same ID, also try matching each of them in ScanFilter"
+    bug: "453511802"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "gatt_conn_settings"
+    namespace: "bluetooth"
+    description: "GATT connection settings & related APIs"
+    bug: "450085002"
+    is_exported: true
+}
+
+flag {
+    name: "irk_scanning_bond_check_update"
+    namespace: "bluetooth"
+    description: "Update bond state check during IRK scanning to cover all identity address types"
+    bug: "459303393"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "notify_unconditional_disconnect_le"
+    namespace: "bluetooth"
+    description: "Notify connecting clients of an uncoditional disconnect to prevent a stuck connecting state"
+    bug: "458272298"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "rotate_address_when_connected"
+    namespace: "bluetooth"
+    description: "Rotate address whenever a BLE connection is made"
+    bug: "462281358"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }

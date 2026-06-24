@@ -30,8 +30,9 @@ import android.content.AttributionSource;
 import android.os.Bundle;
 import android.util.Log;
 
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
-import com.android.bluetooth.btservice.ProfileService.IProfileServiceBinder;
+import com.android.bluetooth.profile.ProfileService.IProfileServiceBinder;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -61,9 +62,9 @@ class HeadsetClientServiceBinder extends IBluetoothHeadsetClient.Stub
             return service;
         }
 
-        if (!Utils.checkServiceAvailable(service, TAG)
+        if (!Util.checkProfileAvailable(service, TAG)
                 || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
-                || !Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
+                || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
             return null;
         }
 
@@ -302,15 +303,6 @@ class HeadsetClientServiceBinder extends IBluetoothHeadsetClient.Stub
             return false;
         }
         return service.sendDTMF(device, code);
-    }
-
-    @Override
-    public boolean getLastVoiceTagNumber(BluetoothDevice device, AttributionSource source) {
-        HeadsetClientService service = getService(source);
-        if (service == null) {
-            return false;
-        }
-        return service.getLastVoiceTagNumber(device);
     }
 
     @Override

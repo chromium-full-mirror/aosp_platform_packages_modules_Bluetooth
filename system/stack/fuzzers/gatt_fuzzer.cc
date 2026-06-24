@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <string>
 
+#include "btif_status.h"
 #include "osi/include/allocator.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_uuid16.h"
@@ -38,12 +39,12 @@ using bluetooth::Uuid;
 using ::testing::NiceMock;
 using ::testing::Unused;
 
-bt_status_t do_in_main_thread(base::OnceCallback<void()>) {
+BtStatus do_in_main_thread(base::OnceCallback<void()>) {
   // this is not properly mocked, so we use abort to catch if this is used in
   // any test cases
   abort();
 }
-bt_status_t do_in_main_thread_delayed(base::OnceCallback<void()>, std::chrono::microseconds) {
+BtStatus do_in_main_thread_delayed(base::OnceCallback<void()>, std::chrono::microseconds) {
   // this is not properly mocked, so we use abort to catch if this is used in
   // any test cases
   abort();
@@ -66,16 +67,15 @@ namespace {
 
 tL2CAP_FIXED_CHNL_REG fixed_chnl_reg;
 tL2CAP_APPL_INFO appl_info;
-tBTM_SEC_DEV_REC btm_sec_dev_rec;
+BtmDevice btm_device;
 
 class FakeBtStack {
   NiceMock<bluetooth::testing::stack::l2cap::Mock> mock_l2cap_interface;
 
 public:
   FakeBtStack() {
-    test::mock::stack_btm_dev::btm_find_dev.body = [](const RawAddress&) {
-      return &btm_sec_dev_rec;
-    };
+    test::mock::stack_btm_dev::btm_find_dev.body = [](const RawAddress&) { return &btm_device; };
+    test::mock::stack_btm_dev::btm_get_dev.body = [](const RawAddress&) { return &btm_device; };
 
     test::mock::stack_l2cap_ble::L2CA_GetBleConnRole.body = [](const RawAddress&) {
       return HCI_ROLE_CENTRAL;
@@ -124,6 +124,7 @@ public:
 
   ~FakeBtStack() {
     test::mock::stack_btm_dev::btm_find_dev = {};
+    test::mock::stack_btm_dev::btm_get_dev = {};
 
     test::mock::stack_l2cap_ble::L2CA_GetBleConnRole = {};
 

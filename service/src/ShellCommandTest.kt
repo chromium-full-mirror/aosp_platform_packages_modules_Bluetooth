@@ -22,6 +22,7 @@ import android.os.Binder
 import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.platform.test.annotations.EnableFlags
 import android.platform.test.flag.junit.SetFlagsRule
 import androidx.test.filters.SmallTest
 import com.android.bluetooth.flags.Flags
@@ -50,8 +51,8 @@ import org.robolectric.shadows.ShadowBinder
 
 @SmallTest
 @RunWith(ParameterizedRobolectricTestRunner::class)
-class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue: Boolean) {
-    @get:Rule val mSetFlagsRule: SetFlagsRule = SetFlagsRule(flags.flags)
+class ShellCommandTest(flags: FlagsWrapper, private val returnValue: Boolean) {
+    @get:Rule val setFlagsRule: SetFlagsRule = SetFlagsRule(flags.flags)
     @get:Rule val testName = TestName()
 
     private val mockApi: BluetoothManagerServiceApi = mock()
@@ -76,7 +77,13 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
 
         val serviceMessenger =
             ServiceMessenger(handlerThread.looper, mockPermissionChecker, mockApi)
-        shellCommand = ShellCommand(mockBinder, serviceMessenger.messenger, testWaitForState)
+        shellCommand =
+            ShellCommand(
+                mockBinder,
+                handlerThread.looper,
+                serviceMessenger.messenger,
+                testWaitForState,
+            )
 
         shellCommand.init(
             Binder(),
@@ -93,12 +100,11 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
         doReturn(returnValue).whenever(mockApi).enableNoAutoConnect(any())
         doReturn(returnValue).whenever(mockApi).disable(any(), any())
         doReturn(returnValue).whenever(mockApi).disableBle(any(), any())
-        doReturn(returnValue).whenever(mockApi).factoryReset(any())
+        doReturn(returnValue).whenever(mockApi).factoryReset()
         doReturn(returnValue).whenever(mockBinder).enable(any())
         doReturn(returnValue).whenever(mockBinder).disable(any(), any())
         doReturn(returnValue).whenever(mockBinder).enableBle(any(), any())
         doReturn(returnValue).whenever(mockBinder).disableBle(any(), any())
-        doReturn(returnValue).whenever(mockBinder).factoryReset(any())
     }
 
     @After
@@ -125,7 +131,7 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
     @Test
     fun onCommand_enable() {
         assertThat(shellCommand.onCommand("enable")).isEqualTo(if (returnValue) 0 else -1)
-        if (Flags.systemServerMessenger()) {
+        if (Flags.bluetoothSystemServerMessenger()) {
             verify(mockApi).enable(any(), any())
         } else {
             verify(mockBinder).enable(any())
@@ -136,7 +142,7 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
     fun onCommand_enableBle() {
         ShadowBinder.setCallingUid(Process.ROOT_UID)
         assertThat(shellCommand.onCommand("enableBle")).isEqualTo(if (returnValue) 0 else -1)
-        if (Flags.systemServerMessenger()) {
+        if (Flags.bluetoothSystemServerMessenger()) {
             verify(mockApi).enableBle(any(), eq(mockBinder))
         } else {
             verify(mockBinder).enableBle(any(), eq(mockBinder))
@@ -146,7 +152,7 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
     @Test
     fun onCommand_disable() {
         assertThat(shellCommand.onCommand("disable")).isEqualTo(if (returnValue) 0 else -1)
-        if (Flags.systemServerMessenger()) {
+        if (Flags.bluetoothSystemServerMessenger()) {
             verify(mockApi).disable(any(), eq(true))
         } else {
             verify(mockBinder).disable(any(), eq(true))
@@ -157,7 +163,7 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
     fun onCommand_disableBle() {
         ShadowBinder.setCallingUid(Process.ROOT_UID)
         assertThat(shellCommand.onCommand("disableBle")).isEqualTo(if (returnValue) 0 else -1)
-        if (Flags.systemServerMessenger()) {
+        if (Flags.bluetoothSystemServerMessenger()) {
             verify(mockApi).disableBle(any(), eq(mockBinder))
         } else {
             verify(mockBinder).disableBle(any(), eq(mockBinder))
@@ -173,15 +179,12 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
     }
 
     @Test
+    @EnableFlags(Flags.FLAG_BLUETOOTH_SYSTEM_SERVER_MESSENGER)
     fun onCommand_factoryReset() {
         ShadowBinder.setCallingUid(Process.ROOT_UID)
 
         assertThat(shellCommand.onCommand("factoryReset")).isEqualTo(if (returnValue) 0 else -1)
-        if (Flags.systemServerMessenger()) {
-            verify(mockApi).factoryReset(any())
-        } else {
-            verify(mockBinder).factoryReset(any())
-        }
+        verify(mockApi).factoryReset()
     }
 
     @Test
@@ -206,9 +209,10 @@ class ShellCommandTest(private val flags: FlagsWrapper, private val returnValue:
 
     companion object {
         @JvmStatic
-        @Parameters(name = "{0}|{1}")
+        @Parameters(name = "{0}|returnValue={1}")
         fun getParams() =
-            FlagsWrapper.progressionOf(Flags.FLAG_SYSTEM_SERVER_MESSENGER).flatMap { flag ->
+            FlagsWrapper.progressionOf(Flags.FLAG_BLUETOOTH_SYSTEM_SERVER_MESSENGER).flatMap { flag
+                ->
                 listOf(arrayOf(flag, true), arrayOf(flag, false))
             }
     }

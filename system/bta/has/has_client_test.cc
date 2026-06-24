@@ -643,6 +643,7 @@ protected:
     MockCsisClient::SetMockInstanceForTesting(&mock_csis_client_module_);
     ON_CALL(mock_csis_client_module_, Get()).WillByDefault(Return(&mock_csis_client_module_));
     ON_CALL(mock_csis_client_module_, IsCsisClientRunning()).WillByDefault(Return(true));
+    ON_CALL(mock_csis_client_module_, ShallCsisBeUsedForTheDevice(_)).WillByDefault(Return(true));
 
     /* default action for GetCharacteristic function call */
     ON_CALL(gatt_interface, GetCharacteristic(_, _))
@@ -729,11 +730,12 @@ protected:
   void TestAppRegister(void) {
     BtaAppRegisterCallback app_register_callback;
     EXPECT_CALL(gatt_interface, AppRegister(_, _, _, _))
-            .WillOnce(DoAll(SaveArg<1>(&gatt_callback), SaveArg<2>(&app_register_callback)));
+            .WillOnce(DoAll(SaveArg<1>(&gatt_callback),
+                            WithArg<2>([&](auto arg) { app_register_callback = std::move(arg); })));
     HasClient::Initialize(&callbacks, base::DoNothing());
     ASSERT_TRUE(gatt_callback);
     ASSERT_TRUE(app_register_callback);
-    app_register_callback.Run(gatt_if, GATT_SUCCESS);
+    std::move(app_register_callback).Run(gatt_if, GATT_SUCCESS);
     ASSERT_TRUE(HasClient::IsHasClientRunning());
     Mock::VerifyAndClearExpectations(&gatt_interface);
   }
@@ -1121,20 +1123,9 @@ protected:
   bool encryption_result;
 };
 
-class HasClientTest : public HasClientTestBase {
-  void SetUp(void) override {
-    com::android::bluetooth::flags::provider_->reset_flags();
-    com::android::bluetooth::flags::provider_->synchronize_preset_can_timeout(true);
-    HasClientTestBase::SetUp();
-    TestAppRegister();
-  }
-  void TearDown(void) override {
-    TestAppUnregister();
-    HasClientTestBase::TearDown();
-  }
-};
+class HasClientDeathTest : public HasClientTestBase {};
 
-TEST_F(HasClientTestBase, test_get_uninitialized) { ASSERT_DEATH(HasClient::Get(), ""); }
+TEST_F(HasClientDeathTest, get_while_uninitialized) { ASSERT_DEATH(HasClient::Get(), ""); }
 
 TEST_F(HasClientTestBase, test_initialize) {
   HasClient::Initialize(&callbacks, base::DoNothing());
@@ -1165,6 +1156,18 @@ TEST_F(HasClientTestBase, test_app_registration) {
   TestAppRegister();
   TestAppUnregister();
 }
+
+class HasClientTest : public HasClientTestBase {
+  void SetUp(void) override {
+    com::android::bluetooth::flags::provider_->reset_flags();
+    HasClientTestBase::SetUp();
+    TestAppRegister();
+  }
+  void TearDown(void) override {
+    TestAppUnregister();
+    HasClientTestBase::TearDown();
+  }
+};
 
 TEST_F(HasClientTest, test_connect) { TestConnect(GetTestAddress(1)); }
 

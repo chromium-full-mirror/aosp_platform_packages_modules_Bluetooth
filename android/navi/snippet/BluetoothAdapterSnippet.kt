@@ -45,6 +45,7 @@ import com.google.android.bluetooth.snippet.Utils.postSnippetEvent
 import com.google.android.mobly.snippet.Snippet
 import com.google.android.mobly.snippet.rpc.AsyncRpc
 import com.google.android.mobly.snippet.rpc.Rpc
+import com.google.android.mobly.snippet.rpc.RpcDefault
 import com.google.android.mobly.snippet.rpc.RpcOptional
 import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
@@ -55,7 +56,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.timeout
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -133,47 +133,40 @@ class BluetoothAdapterSnippet : Snippet {
         result
     }
 
-    /** Enables Bluetooth, waits for the enabled state and returns the operation result. */
+    /**
+     * Gets the current state of the local Bluetooth adapter defined in
+     * [android.bluetooth.BluetoothAdapter.STATE_*].
+     */
+    @Rpc(description = "Get Bluetooth Adapter state")
+    fun getAdapterState(): Int = bluetoothAdapter.getState()
+
+    /** Enables Bluetooth and returns the operation result. */
     @Suppress("DEPRECATION")
     @Rpc(description = "Enable Bluetooth")
-    fun enable(): Boolean = runBlocking {
-        if (bluetoothAdapter.enable()) {
-            // Wait for Bluetooth on
-            adapterState.timeout(BLUETOOTH_ON_OFF_TIMEOUT).firstOrNull {
-                it == BluetoothAdapter.STATE_ON
-            }
-                ?: throw RuntimeException(
-                    "Bluetooth isn't turned on after ${BLUETOOTH_ON_OFF_TIMEOUT}, " +
-                        "final state=${BluetoothAdapter.nameForState(adapterState.value)}"
-                )
-            true
-        } else {
-            false
-        }
-    }
+    fun enable(): Boolean = bluetoothAdapter.enable()
 
-    /** Disables Bluetooth, waits for the disabled state and returns the operation result. */
-    @Suppress("DEPRECATION")
-    @Rpc(description = "Disable Bluetooth")
-    fun disable(): Boolean = runBlocking {
-        if (bluetoothAdapter.disable()) {
-            // Wait for Bluetooth off
-            adapterState.timeout(BLUETOOTH_ON_OFF_TIMEOUT).firstOrNull {
-                it == BluetoothAdapter.STATE_OFF
+    /** Disables Bluetooth and returns the operation result. */
+    @Rpc(description = "Disable Bluetooth") fun disable(): Boolean = bluetoothAdapter.disable(true)
+
+    @Rpc(description = "Wait for Bluetooth adapter state")
+    fun waitForAdapterState(state: Int) = runBlocking {
+        adapterState
+            .timeout(BLUETOOTH_ON_OFF_TIMEOUT)
+            .catch { exception ->
+                if (exception is TimeoutCancellationException) {
+                    throw RuntimeException(
+                        "Bluetooth isn't at state=${BluetoothAdapter.nameForState(state)} after " +
+                            "${BLUETOOTH_ON_OFF_TIMEOUT}, " +
+                            "final state=${BluetoothAdapter.nameForState(adapterState.value)}"
+                    )
+                }
             }
-                ?: throw RuntimeException(
-                    "Bluetooth isn't turned off after ${BLUETOOTH_ON_OFF_TIMEOUT}, " +
-                        "final state=${BluetoothAdapter.nameForState(adapterState.value)}"
-                )
-            true
-        } else {
-            false
-        }
+            .first { it == state }
     }
 
     /** Creates a [BroadcastReceiver] which redirects intents to the event queue of [callbackId]. */
-    @AsyncRpc(description = "Setup callbacks")
-    fun adapterSetup(callbackId: String) {
+    @AsyncRpc(description = "Register adapter callback")
+    fun registerAdapterCallback(callbackId: String) {
         val intentFilter =
             IntentFilter().apply {
                 addAction(BluetoothDevice.ACTION_PAIRING_REQUEST)
@@ -183,6 +176,7 @@ class BluetoothAdapterSnippet : Snippet {
                 addAction(BluetoothDevice.ACTION_FOUND)
                 addAction(BluetoothDevice.ACTION_BATTERY_LEVEL_CHANGED)
                 addAction(BluetoothDevice.ACTION_UUID)
+                addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             }
         broadcastReceivers[callbackId] =
             object : BroadcastReceiver() {
@@ -204,6 +198,8 @@ class BluetoothAdapterSnippet : Snippet {
                         intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
                     val transport =
                         intent.getIntExtra(BluetoothDevice.EXTRA_TRANSPORT, BluetoothDevice.ERROR)
+                    val adapterState =
+                        intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
                     when (intent.action) {
                         BluetoothDevice.ACTION_PAIRING_REQUEST ->
                             postSnippetEvent(callbackId, SnippetConstants.PAIRING_REQUEST) {
@@ -257,6 +253,10 @@ class BluetoothAdapterSnippet : Snippet {
                                         )
                                     }
                             }
+                        BluetoothAdapter.ACTION_STATE_CHANGED ->
+                            postSnippetEvent(callbackId, SnippetConstants.ADAPTER_STATE_CHANGED) {
+                                putInt(SnippetConstants.FIELD_STATE, adapterState)
+                            }
                     }
                 }
             }
@@ -264,8 +264,8 @@ class BluetoothAdapterSnippet : Snippet {
     }
 
     /** Removes a [BroadcastReceiver] of [callbackId]. */
-    @Rpc(description = "Teardown callbacks")
-    fun adapterTeardown(callbackId: String) {
+    @Rpc(description = "Unregister an adapter callback")
+    fun unregisterAdapterCallback(callbackId: String) {
         broadcastReceivers.remove(callbackId)?.let { context.unregisterReceiver(it) }
     }
 
@@ -297,13 +297,17 @@ class BluetoothAdapterSnippet : Snippet {
     /**
      * Creates bond to a remote device with [address] and [addressType] over [transport], and
      * returns true if successful.
-     *
-     * Note: Mobly Snippet lib cannot invoke Kotlin method with default value, and its @RpcDefault
-     * annotation cannot identify Kotlin primitive types. As a workaround, we use @RpcOptional
-     * annotation and pass a null value here.
      */
     @Rpc(description = "Create bond to a device")
-    fun createBond(address: String, transport: Int, @RpcOptional addressType: Int?): Boolean {
+    fun createBond(
+        address: String,
+        @RpcDefault(
+            BluetoothDevice.TRANSPORT_AUTO.toString(),
+            converter = Utils.IntConverter::class,
+        )
+        transport: Int = BluetoothDevice.TRANSPORT_AUTO,
+        @RpcOptional addressType: Int? = null,
+    ): Boolean {
         return when (transport) {
             BluetoothDevice.TRANSPORT_LE ->
                 bluetoothAdapter.getRemoteLeDevice(
@@ -325,10 +329,14 @@ class BluetoothAdapterSnippet : Snippet {
     @Rpc(description = "Create bond to a device using out of band data")
     fun createBondOutOfBand(
         address: String,
-        transport: Int,
-        @RpcOptional addressType: Int?,
-        @RpcOptional remoteP192data: OobData?,
-        @RpcOptional remoteP256data: OobData?,
+        @RpcDefault(
+            BluetoothDevice.TRANSPORT_AUTO.toString(),
+            converter = Utils.IntConverter::class,
+        )
+        transport: Int = BluetoothDevice.TRANSPORT_AUTO,
+        @RpcOptional addressType: Int? = null,
+        @RpcOptional remoteP192data: OobData? = null,
+        @RpcOptional remoteP256data: OobData? = null,
     ): Boolean {
         return when (transport) {
             BluetoothDevice.TRANSPORT_LE ->
@@ -648,6 +656,16 @@ class BluetoothAdapterSnippet : Snippet {
             bluetoothAdapter.unregisterBluetoothQualityReportReadyCallback(it)
         }
     }
+
+    @Rpc(description = "Get max connected audio devices")
+    fun maxConnectedAudioDevices(): Int {
+        return bluetoothAdapter.getMaxConnectedAudioDevices()
+    }
+
+    /** Returns whether LE Periodic Advertising is supported. */
+    @Rpc(description = "Is LE Periodic Advertising Supported")
+    fun isLePeriodicAdvertisingSupported(): Boolean =
+        bluetoothAdapter.isLePeriodicAdvertisingSupported
 
     companion object {
         const val TAG = "BluetoothAdapterSnippet"

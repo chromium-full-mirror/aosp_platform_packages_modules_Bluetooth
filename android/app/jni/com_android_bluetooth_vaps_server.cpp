@@ -73,15 +73,7 @@
        return;
      }
 
-     ScopedLocalRef<jbyteArray> addr(sCallbackEnv.get(),
-                                     sCallbackEnv->NewByteArray(sizeof(RawAddress)));
-     if (!addr.get()) {
-       log::error("Failed to new bd addr jbyteArray for on start va session");
-       return;
-     }
-
-     sCallbackEnv->SetByteArrayRegion(addr.get(), 0, sizeof(RawAddress),
-                                      reinterpret_cast<const jbyte*>(&bd_addr));
+     ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
      sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onStartVaSession, addr.get());
    }
 
@@ -94,15 +86,7 @@
       return;
     }
 
-    ScopedLocalRef<jbyteArray> addr(sCallbackEnv.get(),
-                                    sCallbackEnv->NewByteArray(sizeof(RawAddress)));
-    if (!addr.get()) {
-      log::error("Failed to new bd addr jbyteArray for on stop va session");
-      return;
-    }
-
-    sCallbackEnv->SetByteArrayRegion(addr.get(), 0, sizeof(RawAddress),
-                                     reinterpret_cast<const jbyte*>(&bd_addr));
+    ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
     sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onStopVaSession, addr.get());
   }
  };
@@ -132,8 +116,7 @@
    }
 
    if ((mCallbacksObj = env->NewGlobalRef(env->GetObjectField(obj, sCallbacksField))) == nullptr) {
-     log::error("Failed to allocate Global Ref for VAPS Server Callbacks");
-     return;
+     log::fatal("Failed to allocate Global Ref for VAPS Server Callbacks");
    }
 
    sVapsServerInterface =
@@ -192,7 +175,8 @@
      vae_name = env->GetStringUTFChars(vaeName, nullptr);
    }
 
-   sVapsServerInterface->SetVaeName(vae_name ? vae_name : "");
+   // Assign a default value "None" if vae_name is null (No VA engine selected)
+   sVapsServerInterface->SetVaeName(vae_name ? vae_name : "None");
 
    if (vae_name) {
      env->ReleaseStringUTFChars(vaeName, vae_name);
@@ -206,17 +190,13 @@
            {"setVaeNameNative", "(Ljava/lang/String;)V", reinterpret_cast<void*>(setVaeNameNative)},
            {"cleanupNative", "()V", reinterpret_cast<void*>(cleanupNative)},
    };
-   const int result = REGISTER_NATIVE_METHODS(
-           env, "com/android/bluetooth/vaps/VapsServerNativeInterface", methods);
+   const char* jniNativeInterfaceClass = "com/android/bluetooth/vaps/VapsServerNativeInterface";
+   const int result = REGISTER_NATIVE_METHODS(env, jniNativeInterfaceClass, methods);
    if (result != 0) {
      return result;
    }
 
-   jclass jniVapsServerNativeInterfaceClass =
-           env->FindClass("com/android/bluetooth/vaps/VapsServerNativeInterface");
-   sCallbacksField = env->GetFieldID(jniVapsServerNativeInterfaceClass, "mVapsServerNativeCallback",
-                                     "Lcom/android/bluetooth/vaps/VapsServerNativeCallback;");
-   env->DeleteLocalRef(jniVapsServerNativeInterfaceClass);
+   sCallbacksField = getNativeCallbackField(env, jniNativeInterfaceClass);
 
    const JNIJavaMethod javaMethods[] = {
            {"onInitialized", "()V", &method_onInitialized},

@@ -16,15 +16,14 @@
 
 package com.android.bluetooth.bass_client;
 
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.PeriodicAdvertisingManager;
 import android.os.Looper;
 import android.util.Log;
 
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.le_scan.ScanController;
 import com.android.internal.annotations.VisibleForTesting;
 
 /** Factory class for object initialization to help with unit testing */
@@ -78,10 +77,16 @@ public class BassObjectsFactory {
             BluetoothDevice device,
             BassClientService service,
             AdapterService adapterService,
+            ScanController scanController,
             PeriodicAdvertisingManager periodicAdvertisingManager,
             Looper looper) {
         return new BassClientStateMachine(
-                device, service, adapterService, periodicAdvertisingManager, looper);
+                device,
+                service,
+                adapterService,
+                scanController,
+                periodicAdvertisingManager,
+                looper);
     }
 
     /**
@@ -91,20 +96,5 @@ public class BassObjectsFactory {
      */
     public void destroyStateMachine(BassClientStateMachine stateMachine) {
         BassClientStateMachine.destroy(stateMachine);
-    }
-
-    /**
-     * Get a {@link BluetoothLeScannerWrapper} object
-     *
-     * @param adapter bluetooth adapter
-     * @return a bluetooth LE scanner
-     */
-    public BluetoothLeScannerWrapper getBluetoothLeScannerWrapper(BluetoothAdapter adapter) {
-        BluetoothLeScanner bluetoothLeScanner = adapter.getBluetoothLeScanner();
-        if (bluetoothLeScanner == null) {
-            return null;
-        } else {
-            return new BluetoothLeScannerWrapper(bluetoothLeScanner);
-        }
     }
 }

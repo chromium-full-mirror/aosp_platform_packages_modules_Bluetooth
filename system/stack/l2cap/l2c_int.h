@@ -188,6 +188,9 @@ typedef enum : uint16_t {
 #define LE_DYNAMIC_PSM_START 0x0080
 #define LE_DYNAMIC_PSM_END 0x00FF
 #define LE_DYNAMIC_PSM_RANGE (LE_DYNAMIC_PSM_END - LE_DYNAMIC_PSM_START + 1)
+#define LECOC_FIXED_PSM_SLOTS_DEFAULT 0x00
+#define LECOC_FIXED_PSM_RANGE_MIN 0x00
+#define LECOC_FIXED_PSM_RANGE_MAX 0x08
 
 /* Return values for l2cu_process_peer_cfg_req() */
 #define L2CAP_PEER_CFG_UNACCEPTABLE 0
@@ -439,7 +442,11 @@ public:
 
 private:
   tHCI_ROLE link_role_{HCI_ROLE_CENTRAL}; /* Central or peripheral */
+  uint16_t subrate_factor_;
+  uint16_t cont_num_;
   uint16_t conn_interval_;
+  uint16_t periph_latency_;
+  uint16_t supervision_tout_;
 
 public:
   tHCI_ROLE LinkRole() const { return link_role_; }
@@ -447,8 +454,16 @@ public:
   bool IsLinkRolePeripheral() const { return link_role_ == HCI_ROLE_PERIPHERAL; }
   void SetLinkRoleAsCentral() { link_role_ = HCI_ROLE_CENTRAL; }
   void SetLinkRoleAsPeripheral() { link_role_ = HCI_ROLE_PERIPHERAL; }
+  uint16_t SubrateFactor() { return subrate_factor_; }
+  void SetSubrateFactor(uint16_t subrate_factor) { subrate_factor_ = subrate_factor; }
+  uint16_t ContNumber() const { return cont_num_; }
+  void SetContNumber(uint16_t cont_num) { cont_num_ = cont_num; }
   uint16_t ConnInterval() const { return conn_interval_; }
   void SetConnInterval(uint16_t conn_interval) { conn_interval_ = conn_interval; }
+  uint16_t PeriphLatency() const { return periph_latency_; }
+  void SetPeriphLatency(uint16_t periph_latency) { periph_latency_ = periph_latency; }
+  uint16_t SupervisionTimeout() const { return supervision_tout_; }
+  void SetSupervisionTimeout(uint16_t supervision_tout) { supervision_tout_ = supervision_tout; }
 
   uint8_t signal_id;     /* Signalling channel id */
   uint8_t cur_echo_id;   /* Current id value for echo request */
@@ -545,6 +560,7 @@ public:
 #define L2C_BLE_SUBRATE_REQ_DISABLE 0x1  // disable subrate req
 #define L2C_BLE_NEW_SUBRATE_PARAM 0x2    // new subrate req parameter to be set
 #define L2C_BLE_SUBRATE_REQ_PENDING 0x4  // waiting for subrate to be completed
+#define L2C_BLE_RESET_SUBRATE_PARAM 0x8  // reset subrate parameter because of timeout
 
   /* subrate req params */
   uint16_t subrate_min;

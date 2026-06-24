@@ -2,58 +2,10 @@ package: "com.android.bluetooth.flags"
 container: "com.android.bt"
 
 flag {
-    name: "allow_switching_hid_and_hogp"
-    is_exported: true
-    namespace: "bluetooth"
-    description: "Allow switching between HID and HOGP supported on the same device"
-    bug: "320762367"
-}
-
-flag {
-    name: "early_incoming_hid_connection"
-    namespace: "bluetooth"
-    description: "Allow early incoming HID connection"
-    bug: "398105207"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
     name: "hh_state_update_race_fix"
     namespace: "bluetooth"
     description: "Fix stuck in connecting state due to race when updating state"
     bug: "403420458"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "simpler_hid_connection_policy"
-    namespace: "bluetooth"
-    description: "Simplify native HID host connection policy enforcement"
-    bug: "404590499"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "hogp_encryption_collision"
-    namespace: "bluetooth"
-    description: "HOGP host may not be able to proceed with connection if the link is getting encrypted"
-    bug: "405437978"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "reconnect_on_hogp_connection_failure"
-    namespace: "bluetooth"
-    description: "Put the added HOGP device in the background connection list if the connection attempt failed"
-    bug: "406399172"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
@@ -110,10 +62,110 @@ flag {
 }
 
 flag {
+    name: "hidd_bump_version_to_111"
+    namespace: "bluetooth"
+    description: "Set HID Device version to v1.1.1 on SDP record"
+    bug: "443625090"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
     name: "hid_connection_timeout_in_jni_thread"
     namespace: "bluetooth"
     description: "Handle incoming HID connection timeout in JNI thread"
     bug: "440091360"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "hid_dont_reconnect_on_uhid_timeout"
+    namespace: "bluetooth"
+    description: "Set connection policy off if we timed out waiting for uhid open"
+    bug: "445363297"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "hogp_mtu_exchange"
+    namespace: "bluetooth"
+    description: "HOGP host must exchange ATT MTU on GATT connection"
+    bug: "444476206"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "hogp_fix_reconnection"
+    namespace: "bluetooth"
+    description: "Always remove background connection when hogp disconnected so it can be re-armed later"
+    bug: "444365103"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "not_set_l2cap_idle_timeout_0_when_disconnect_hid"
+    namespace: "bluetooth"
+    description: "remove l2cap idle timeout to 0 when disconnect HID host"
+    bug: "458592689"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "hogp_cancel_gatt_if_policy_forbidden"
+    namespace: "bluetooth"
+    description: "Take out the bonded-but-not-connected HoGP device from the accept list when policy is changed to forbidden"
+    bug: "459303232"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "le_hid_connection_policy_suspend"
+    namespace: "bluetooth"
+    description: "Change connection policy for LE hid to forbid reconnect and restore the policy after resume"
+    bug: "459908685"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "hid_always_unbond_on_virtual_unplug"
+    namespace: "bluetooth"
+    description: "Don't do additional checks of whether CoD is HID device when unbonding from VUP"
+    bug: "460703858"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "headtracker_connection_policy"
+    namespace: "bluetooth"
+    description: "Link Android Headtracker Service connection policy to the LE Audio connection policy"
+    bug: "462191804"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "hid_propagate_idle_handshake"
+    namespace: "bluetooth"
+    description: "Propagate the handshake reply of get_idle and set_idle to the java layer"
+    bug: "464973851"
     metadata {
         purpose: PURPOSE_BUGFIX
     }

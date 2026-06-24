@@ -33,6 +33,9 @@
 #include "bta/le_audio/le_audio_types.h"
 #include "bta/le_audio/mock_codec_manager.h"
 #include "btif/include/btif_common.h"
+#include "btif_status.h"
+#include "btm_iso_api_types.h"
+#include "gd/common/utils.h"
 #include "hci/controller_mock.h"
 #include "stack/include/btm_iso_api.h"
 #include "stack/include/main_thread.h"
@@ -86,9 +89,9 @@ struct alarm_t {
   }
 };
 
-static base::Callback<void(BT_OCTET8)> generator_cb;
+static base::OnceCallback<void(Octet8)> generator_cb;
 
-void btsnd_hcic_ble_rand(base::Callback<void(BT_OCTET8)> cb) { generator_cb = cb; }
+void btsnd_hcic_ble_rand(base::OnceCallback<void(Octet8)> cb) { generator_cb = std::move(cb); }
 
 std::atomic<int> num_async_tasks;
 bluetooth::common::MessageLoopThread message_loop_thread(
@@ -96,7 +99,7 @@ bluetooth::common::MessageLoopThread message_loop_thread(
 bluetooth::common::MessageLoopThread* get_main_thread() { return &message_loop_thread; }
 void invoke_switch_buffer_size_cb(bool /*is_low_latency_buffer_size*/) {}
 
-bt_status_t do_in_main_thread(base::OnceClosure task) {
+BtStatus do_in_main_thread(base::OnceClosure task) {
   // Wrap the task with task counter so we could later know if there are
   // any callbacks scheduled and we should wait before performing some actions
   if (!message_loop_thread.DoInThread(base::BindOnce(
@@ -106,10 +109,10 @@ bt_status_t do_in_main_thread(base::OnceClosure task) {
               },
               std::move(task), std::ref(num_async_tasks)))) {
     log::error("failed to post task to task runner!");
-    return BT_STATUS_FAIL;
+    return BtifStatus(FAIL);
   }
   num_async_tasks++;
-  return BT_STATUS_SUCCESS;
+  return BtifStatus();
 }
 
 static void init_message_loop_thread() {
@@ -127,6 +130,12 @@ static void init_message_loop_thread() {
 static void cleanup_message_loop_thread() { message_loop_thread.ShutDown(); }
 
 bool LeAudioClient::IsLeAudioClientRunning(void) { return false; }
+
+namespace bluetooth::common {
+// Test-only mock for IsPtsTestMode
+bool g_is_pts_test_mode = false;
+bool IsPtsTestMode() { return g_is_pts_test_mode; }
+}  // namespace bluetooth::common
 
 namespace bluetooth::le_audio {
 namespace broadcaster {
@@ -167,7 +176,7 @@ BroadcastConfiguration GetBroadcastConfig(
 class MockAudioHalClientEndpoint;
 MockAudioHalClientEndpoint* mock_audio_source_;
 bool is_audio_hal_acquired;
-void (*iso_active_callback)(bool);
+std::function<void(bool)> iso_active_callback;
 
 std::unique_ptr<LeAudioSourceAudioHalClient> LeAudioSourceAudioHalClient::AcquireBroadcast() {
   if (mock_audio_source_) {
@@ -304,12 +313,14 @@ protected:
     iso_manager_->Start();
 
     mock_iso_manager_ = MockIsoManager::GetInstance();
-    ON_CALL(*mock_iso_manager_, RegisterBigCallbacks(_)).WillByDefault(SaveArg<0>(&big_callbacks_));
-
+    EXPECT_CALL(*mock_iso_manager_, RegisterCallbacks(_))
+            .WillOnce([this](bluetooth::hci::iso_manager::IsoManagerCallbacks callbacks) {
+              this->big_callbacks_ = callbacks.big_callbacks;
+              iso_active_callback = callbacks.iso_traffic_active_callback;
+              constexpr bluetooth::hci::iso_manager::IsoClientHandle kIsoClientHandle = 1;
+              return kIsoClientHandle;
+            });
     ConfigAudioHalClientMock();
-
-    EXPECT_CALL(*MockIsoManager::GetInstance(), RegisterOnIsoTrafficActiveCallbacks)
-            .WillOnce(SaveArg<0>(&iso_active_callback));
 
     ASSERT_FALSE(LeAudioBroadcaster::IsLeAudioBroadcasterRunning());
     LeAudioBroadcaster::Initialize(&mock_broadcaster_callbacks_,
@@ -319,8 +330,8 @@ protected:
     ContentControlIdKeeper::GetInstance()->SetCcid(LeAudioContextType::MEDIA, media_ccid);
 
     /* Simulate random generator */
-    uint8_t random[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
-    generator_cb.Run(random);
+    Octet8 random = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    std::move(generator_cb).Run(random);
 
     ConfigCodecManagerMock(types::CodecLocation::HOST);
 
@@ -336,6 +347,7 @@ protected:
                               bluetooth::le_audio::broadcaster::GetBroadcastConfig(
                                       requirements.subgroup_quality));
                     }));
+    bluetooth::common::g_is_pts_test_mode = false;
   }
 
   void ConfigAudioHalClientMock() {
@@ -359,6 +371,7 @@ protected:
   }
 
   void TearDown() override {
+    bluetooth::common::g_is_pts_test_mode = false;
     // Message loop cleanup should wait for all the 'till now' scheduled calls
     // so it should be called right at the very begginning of teardown.
     cleanup_message_loop_thread();
@@ -376,7 +389,6 @@ protected:
     ContentControlIdKeeper::GetInstance()->Stop();
 
     bluetooth::hci::testing::mock_controller_.release();
-    delete mock_audio_source_;
     iso_active_callback = nullptr;
     delete mock_audio_source_;
     iso_manager_->Stop();
@@ -417,12 +429,12 @@ protected:
     return broadcast_id;
   }
 
-  void InjectBigCreateComplete(uint8_t big_id, uint8_t status) {
+  void InjectBigCreateComplete(uint8_t big_handle, uint8_t status) {
     std::vector<uint16_t> conn_handles = {0x10, 0x12};
 
     hci::iso_manager::big_create_cmpl_evt evt = {
             .status = status,
-            .big_id = big_id,
+            .big_handle = big_handle,
             .big_sync_delay = 1231,
             .transport_latency_big = 1234,
             .phy = 2,
@@ -435,12 +447,14 @@ protected:
             .conn_handles = conn_handles,
     };
 
-    big_callbacks_->OnBigEvent(bluetooth::hci::iso_manager::kIsoEventBigOnCreateCmpl, &evt);
+    big_callbacks_->OnBigSourceEvent(bluetooth::hci::iso_manager::BigSourceEvent::kCreateCmpl,
+                                     &evt);
   }
 
-  void InjectBigTerminateComplete(uint8_t big_id, uint8_t reason) {
-    hci::iso_manager::big_terminate_cmpl_evt evt = {.big_id = big_id, .reason = reason};
-    big_callbacks_->OnBigEvent(bluetooth::hci::iso_manager::kIsoEventBigOnTerminateCmpl, &evt);
+  void InjectBigTerminateComplete(uint8_t big_handle, uint8_t reason) {
+    hci::iso_manager::big_terminate_cmpl_evt evt = {.big_handle = big_handle, .reason = reason};
+    big_callbacks_->OnBigSourceEvent(bluetooth::hci::iso_manager::BigSourceEvent::kTerminateCmpl,
+                                     &evt);
   }
 
 protected:
@@ -508,6 +522,21 @@ TEST_F(BroadcasterTest, CreateAudioBroadcastInvalidBroadcastCode) {
                                                   default_subgroup_qualities, metadata_array);
 
   Mock::VerifyAndClearExpectations(&mock_broadcaster_callbacks_);
+}
+
+TEST_F(BroadcasterTest, CreateAudioBroadcastPtsMode) {
+  bluetooth::common::g_is_pts_test_mode = true;
+
+  auto broadcast_id = InstantiateBroadcast();
+  ASSERT_NE(broadcast_id, LeAudioBroadcaster::kInstanceIdUndefined);
+  ASSERT_EQ(broadcast_id, MockBroadcastStateMachine::GetLastInstance()->GetBroadcastId());
+
+  auto& instance_config = MockBroadcastStateMachine::GetLastInstance()->cfg;
+
+  // Default features are defined in `test_public_broadcast_features`.
+  // In PTS mode, reserved bits are set to `test_public_broadcast_features | 0xF8`.
+  uint8_t expected_features = test_public_broadcast_features | 0xF8;
+  ASSERT_EQ(instance_config.public_announcement.features, expected_features);
 }
 
 TEST_F(BroadcasterTest, CreateAudioBroadcastMultiGroups) {
@@ -585,7 +614,7 @@ TEST_F(BroadcasterTest, StartAudioBroadcast) {
   //         IsoManager to prepare one (and that's good since IsoManager is also
   //         a mocked one).
   BigConfig big_cfg;
-  big_cfg.big_id = MockBroadcastStateMachine::GetLastInstance()->GetAdvertisingSid();
+  big_cfg.big_handle = MockBroadcastStateMachine::GetLastInstance()->GetAdvertisingSid();
   big_cfg.connection_handles = {0x10, 0x12};
   big_cfg.max_pdu = 128;
   MockBroadcastStateMachine::GetLastInstance()->SetExpectedBigConfig(big_cfg);
@@ -636,7 +665,7 @@ TEST_F(BroadcasterTest, StartAudioBroadcastMedia) {
 
   auto mock_state_machine = MockBroadcastStateMachine::GetLastInstance();
   BigConfig big_cfg;
-  big_cfg.big_id = mock_state_machine->GetAdvertisingSid();
+  big_cfg.big_handle = mock_state_machine->GetAdvertisingSid();
   big_cfg.connection_handles = {0x10, 0x12};
   big_cfg.max_pdu = 128;
   mock_state_machine->SetExpectedBigConfig(big_cfg);
@@ -667,12 +696,12 @@ TEST_F(BroadcasterTest, StopAudioBroadcast) {
 
   auto mock_state_machine = MockBroadcastStateMachine::GetLastInstance();
   BigConfig big_cfg;
-  big_cfg.big_id = mock_state_machine->GetAdvertisingSid();
+  big_cfg.big_handle = mock_state_machine->GetAdvertisingSid();
   big_cfg.connection_handles = {0x10, 0x12};
   big_cfg.max_pdu = 128;
   mock_state_machine->SetExpectedBigConfig(big_cfg);
 
-  InjectBigCreateComplete(big_cfg.big_id, 0x00);
+  InjectBigCreateComplete(big_cfg.big_handle, 0x00);
   EXPECT_CALL(mock_broadcaster_callbacks_,
               OnBroadcastStateChanged(broadcast_id, BroadcastState::STOPPED))
           .Times(1);
@@ -680,7 +709,7 @@ TEST_F(BroadcasterTest, StopAudioBroadcast) {
   EXPECT_CALL(*mock_audio_source_, Stop).Times(AtLeast(1));
   LeAudioBroadcaster::Get()->StopAudioBroadcast(broadcast_id);
 
-  InjectBigTerminateComplete(big_cfg.big_id, 0x16);
+  InjectBigTerminateComplete(big_cfg.big_handle, 0x16);
   Mock::VerifyAndClearExpectations(mock_codec_manager_);
 }
 

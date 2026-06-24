@@ -59,6 +59,11 @@ constexpr uint8_t kScanResponseBit = 3;
 constexpr uint8_t kLegacyBit = 4;
 constexpr uint8_t kDataStatusBits = 5;
 
+// Flags for keeping state information of different types of scan
+constexpr uint8_t kLeJavaScanActive = 0x10;   // 0b00010000
+constexpr uint8_t kLeCsisScanActive = 0x20;   // 0b00100000
+constexpr uint8_t kLeDiscoveryActive = 0x40;  // 0b01000000
+
 constexpr uint8_t k1mPhyMask = 1;
 constexpr uint8_t kCodedPhyMask = 1 << 2;
 
@@ -217,12 +222,6 @@ struct LeScanningManagerImpl::impl : public LeAddressManagerCallback {
       } else {
         le_address_manager_->Unregister(this);
       }
-    }
-
-    if (!com_android_bluetooth_flags_same_handler_for_all_modules()) {
-      handler_->Clear();
-      handler_->WaitUntilStopped(std::chrono::milliseconds(2000));
-      delete handler_;
     }
   }
 
@@ -727,14 +726,18 @@ struct LeScanningManagerImpl::impl : public LeAddressManagerCallback {
   }
 
   bool is_bonded(Address target_address) {
-    for (auto device : storage_module_->GetBondedDevices()) {
-      if (device.GetAddress() == target_address) {
-        log::debug("Addresses match!");
-        return true;
+    if (com::android::bluetooth::flags::irk_scanning_bond_check_update()) {
+      return BTM_IsBonded(RawAddress(target_address.address), BT_TRANSPORT_LE);
+    } else {
+      for (auto device : storage_module_->GetBondedDevices()) {
+        if (device.GetAddress() == target_address) {
+          log::debug("Addresses match!");
+          return true;
+        }
       }
+      log::debug("Addresses don't match!");
+      return false;
     }
-    log::debug("Addresses don't match!");
-    return false;
   }
 
   void scan_filter_parameter_setup(ApcfAction action, uint8_t filter_index,
@@ -903,6 +906,7 @@ struct LeScanningManagerImpl::impl : public LeAddressManagerCallback {
 
         // Now replace it with a new one
         std::array<uint8_t, 16> empty_irk;
+        log::verbose("irk scan start process: add device to resolving list");
         le_address_manager_->AddDeviceToResolvingList(static_cast<PeerAddressType>(address_type),
                                                       address, irk, empty_irk);
         remove_me_later_map_.emplace(
@@ -1641,6 +1645,19 @@ struct LeScanningManagerImpl::impl : public LeAddressManagerCallback {
     le_address_manager_->AckResume(this);
   }
 
+  bool is_le_java_scan_active() { return scan_activity_ & kLeJavaScanActive; }
+  bool is_le_csis_scan_active() { return scan_activity_ & kLeCsisScanActive; }
+  bool is_le_discovery_active() { return scan_activity_ & kLeDiscoveryActive; }
+  bool is_le_scan_active() { return scan_activity_ != 0; }
+
+  void set_le_java_scan_active() { scan_activity_ |= kLeJavaScanActive; }
+  void set_le_csis_scan_active() { scan_activity_ |= kLeCsisScanActive; }
+  void set_le_discovery_active() { scan_activity_ |= kLeDiscoveryActive; }
+
+  void reset_le_java_scan() { scan_activity_ &= ~kLeJavaScanActive; }
+  void reset_le_csis_scan() { scan_activity_ &= ~kLeCsisScanActive; }
+  void reset_le_discovery() { scan_activity_ &= ~kLeDiscoveryActive; }
+
   os::Handler* handler_;
   HciInterface* hci_layer_;
   Controller* controller_;
@@ -1673,6 +1690,7 @@ struct LeScanningManagerImpl::impl : public LeAddressManagerCallback {
   OwnAddressType own_address_type_{OwnAddressType::PUBLIC_DEVICE_ADDRESS};
   LeScanningFilterPolicy filter_policy_{LeScanningFilterPolicy::ACCEPT_ALL};
   BatchScanConfig batch_scan_config_;
+  uint8_t scan_activity_;  // LE scan activity mask
   std::map<ScannerId, std::vector<uint8_t>> batch_scan_result_cache_;
   std::unordered_map<uint8_t, ScannerId> tracker_id_map_;
   uint16_t total_num_of_advt_tracked_ = 0x00;

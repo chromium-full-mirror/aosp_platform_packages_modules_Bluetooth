@@ -56,7 +56,17 @@ public:
   virtual void CreateBig(uint8_t big_handle,
                          struct bluetooth::hci::iso_manager::big_create_params big_params) = 0;
 
+  virtual void SetBigChannelMapClassificationByConnHandles(
+          uint8_t action, uint8_t big_handle, const std::vector<uint16_t>& handles) = 0;
+
   virtual void TerminateBig(uint8_t big_handle, uint8_t reason) = 0;
+
+  virtual void BigCreateSync(uint8_t big_handle, uint16_t sync_handle, uint8_t encryption,
+                             const std::array<uint8_t, 16>& bcast_code, uint8_t mse,
+                             uint16_t sync_timeout, const std::vector<uint8_t>& bis) = 0;
+
+  virtual void BigTerminateSync(uint8_t big_handle,
+                                base::OnceCallback<void(uint8_t*, uint16_t)> cb) = 0;
 
   virtual ~HcicInterface() = default;
 };
@@ -99,6 +109,19 @@ public:
               (override));
 
   MOCK_METHOD((void), TerminateBig, (uint8_t big_handle, uint8_t reason), (override));
+
+  MOCK_METHOD((void), SetBigChannelMapClassificationByConnHandles,
+              (uint8_t action, uint8_t big_handle, const std::vector<uint16_t>& conn_handles),
+              (override));
+
+  MOCK_METHOD((void), BigCreateSync,
+              (uint8_t big_handle, uint16_t sync_handle, uint8_t encryption,
+               (const std::array<uint8_t, 16>& bcast_code), uint8_t mse, uint16_t sync_timeout,
+               const std::vector<uint8_t>& bis),
+              (override));
+
+  MOCK_METHOD((void), BigTerminateSync,
+              (uint8_t big_handle, base::OnceCallback<void(uint8_t*, uint16_t)> cb), (override));
 };
 
 void SetMockHcicInterface(MockHcicInterface* mock_hcic_interface);

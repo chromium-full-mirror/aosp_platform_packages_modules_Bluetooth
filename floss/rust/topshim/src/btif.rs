@@ -16,7 +16,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::vec::Vec;
 use std::{cmp, mem};
-use topshim_macros::{cb_variant, gen_cxx_extern_trivial};
+use topshim_macros::{cb_variant, gen_cxx_extern_trivial, gen_cxx_extern_trivial_tuple};
 
 #[derive(Clone, Debug, FromPrimitive, ToPrimitive, PartialEq, PartialOrd)]
 #[repr(u32)]
@@ -39,27 +39,67 @@ pub enum BtTransport {
     Le,
 }
 
-impl From<i32> for BtTransport {
-    fn from(item: i32) -> Self {
-        BtTransport::from_i32(item).unwrap_or(BtTransport::Auto)
+#[gen_cxx_extern_trivial_tuple]
+pub(crate) struct CxxBtTransport(pub bindings::tBT_TRANSPORT);
+
+impl From<CxxBtTransport> for BtTransport {
+    fn from(item: CxxBtTransport) -> Self {
+        match item.0 {
+            bindings::tBT_TRANSPORT_BT_TRANSPORT_AUTO => BtTransport::Auto,
+            bindings::tBT_TRANSPORT_BT_TRANSPORT_BR_EDR => BtTransport::Bredr,
+            bindings::tBT_TRANSPORT_BT_TRANSPORT_LE => BtTransport::Le,
+            _ => unreachable!(),
+        }
     }
 }
 
-impl From<BtTransport> for i32 {
+impl From<BtTransport> for CxxBtTransport {
     fn from(item: BtTransport) -> Self {
-        item.to_i32().unwrap_or(0)
+        let i = match item {
+            BtTransport::Auto => bindings::tBT_TRANSPORT_BT_TRANSPORT_AUTO,
+            BtTransport::Bredr => bindings::tBT_TRANSPORT_BT_TRANSPORT_BR_EDR,
+            BtTransport::Le => bindings::tBT_TRANSPORT_BT_TRANSPORT_LE,
+        };
+        CxxBtTransport(i)
     }
 }
 
 impl From<u8> for BtTransport {
-    fn from(transport: u8) -> Self {
-        BtTransport::from_u8(transport).unwrap_or(BtTransport::Auto)
+    fn from(item: u8) -> Self {
+        BtTransport::from_u8(item).unwrap()
     }
 }
 
-impl Into<u8> for BtTransport {
-    fn into(self) -> u8 {
-        self.to_u8().unwrap_or(0)
+#[derive(Clone, Debug, FromPrimitive, ToPrimitive, PartialEq, PartialOrd)]
+#[repr(u32)]
+pub enum BtAddrType {
+    Public,
+    Random,
+    PublicId,
+    RandomId,
+    Unknown = 0xfe,
+    Anonymous = 0xff,
+}
+
+#[gen_cxx_extern_trivial_tuple]
+pub(crate) struct CxxBtAddrType(pub bindings::tBLE_ADDR_TYPE);
+
+// TODO(@sarveshkalwit): Update once tBLE_ADDR_TYPE is updated to an enum
+impl From<CxxBtAddrType> for BtAddrType {
+    fn from(item: CxxBtAddrType) -> Self {
+        BtAddrType::from_u8(item.0).unwrap_or(BtAddrType::Unknown)
+    }
+}
+
+impl From<BtAddrType> for CxxBtAddrType {
+    fn from(item: BtAddrType) -> Self {
+        CxxBtAddrType(item.to_u8().unwrap_or(0))
+    }
+}
+
+impl From<u8> for BtAddrType {
+    fn from(item: u8) -> Self {
+        BtAddrType::from_u8(item).unwrap_or(BtAddrType::Unknown)
     }
 }
 
@@ -158,17 +198,23 @@ pub enum BtPropertyType {
     RemoteRssi,
     RemoteVersionInfo,
     LocalLeFeatures,
-    LocalIoCaps,
-    LocalIoCapsBle,
+    Reserved0E,
+    Reserved0F,
     DynamicAudioBuffer,
     RemoteIsCoordinatedSetMember,
     Appearance,
     VendorProductInfo,
+    Reserved14,
     // Unimplemented:
     //  BT_PROPERTY_REMOTE_ASHA_CAPABILITY,
     //  BT_PROPERTY_REMOTE_ASHA_TRUNCATED_HISYNCID,
     //  BT_PROPERTY_REMOTE_MODEL_NUM,
     RemoteAddrType = 0x18,
+    // Unimplemented:
+    // BT_PROPERTY_REMOTE_HOST_SECURE_CONNECTIONS_SUPPORTED,
+    // BT_PROPERTY_REMOTE_MAX_SESSION_KEY_SIZE,
+    // BT_PROPERTY_LPP_OFFLOAD_FEATURES,
+    UuidsLe = 0x1C,
 
     Unknown = 0xFE,
     RemoteDeviceTimestamp = 0xFF,
@@ -247,10 +293,10 @@ pub fn ascii_to_string(data: &[u8], length: usize) -> String {
         .iter()
         .enumerate()
         .take_while(|&(pos, &c)| c != 0 && pos < length)
-        .map(|(_pos, &x)| x.clone())
+        .map(|(_pos, &x)| x)
         .collect::<Vec<u8>>();
 
-    return String::from_utf8(ascii).unwrap_or_default();
+    String::from_utf8(ascii).unwrap_or_default()
 }
 
 fn u32_from_bytes(item: &[u8]) -> u32 {
@@ -263,7 +309,7 @@ fn u32_from_bytes(item: &[u8]) -> u32 {
 fn u16_from_bytes(item: &[u8]) -> u16 {
     let mut u: [u8; 2] = [0; 2];
     let len = std::cmp::min(item.len(), 2);
-    u[0..len].copy_from_slice(&item);
+    u[0..len].copy_from_slice(item);
     u16::from_ne_bytes(u)
 }
 
@@ -276,15 +322,15 @@ impl From<bindings::bt_status_t> for BtStatus {
     }
 }
 
-impl Into<u32> for BtStatus {
-    fn into(self) -> u32 {
-        self.to_u32().unwrap_or_default()
+impl From<BtStatus> for u32 {
+    fn from(val: BtStatus) -> Self {
+        val.to_u32().unwrap_or_default()
     }
 }
 
-impl Into<i32> for BtStatus {
-    fn into(self) -> i32 {
-        self.to_i32().unwrap_or_default()
+impl From<BtStatus> for i32 {
+    fn from(val: BtStatus) -> Self {
+        val.to_i32().unwrap_or_default()
     }
 }
 
@@ -303,7 +349,7 @@ pub struct BtServiceRecord {
 
 impl From<bindings::bt_service_record_t> for BtServiceRecord {
     fn from(item: bindings::bt_service_record_t) -> Self {
-        let name = item.name.iter().map(|&x| x.clone() as u8).collect::<Vec<u8>>();
+        let name = item.name.iter().map(|&x| x as u8).collect::<Vec<u8>>();
 
         BtServiceRecord {
             uuid: item.uuid,
@@ -328,9 +374,9 @@ impl From<bindings::bt_scan_mode_t> for BtScanMode {
     }
 }
 
-impl Into<bindings::bt_scan_mode_t> for BtScanMode {
-    fn into(self) -> bindings::bt_scan_mode_t {
-        BtScanMode::to_u32(&self).unwrap_or_default()
+impl From<BtScanMode> for bindings::bt_scan_mode_t {
+    fn from(val: BtScanMode) -> Self {
+        BtScanMode::to_u32(&val).unwrap_or_default()
     }
 }
 
@@ -349,9 +395,9 @@ impl From<u32> for BtDiscMode {
     }
 }
 
-impl Into<u32> for BtDiscMode {
-    fn into(self) -> u32 {
-        self.to_u32().unwrap_or(0)
+impl From<BtDiscMode> for u32 {
+    fn from(val: BtDiscMode) -> Self {
+        val.to_u32().unwrap_or(0)
     }
 }
 
@@ -368,68 +414,16 @@ impl From<bindings::bt_cb_thread_evt> for BtThreadEvent {
     }
 }
 
-#[derive(Clone, Debug, FromPrimitive, ToPrimitive, PartialEq, PartialOrd)]
-#[repr(u32)]
-pub enum BtIoCap {
-    Out,
-    InOut,
-    In,
-    None_,
-    KbDisp,
-    Max,
-    Unknown = 0xff,
-}
-
-impl From<bindings::bt_io_cap_t> for BtIoCap {
-    fn from(item: bindings::bt_io_cap_t) -> Self {
-        BtIoCap::from_u32(item).unwrap_or(BtIoCap::Unknown)
-    }
-}
-
-#[derive(Clone, Debug, FromPrimitive, ToPrimitive, PartialEq, PartialOrd)]
-#[repr(u32)]
-pub enum BtAddrType {
-    Public,
-    Random,
-    PublicId,
-    RandomId,
-    Unknown = 0xfe,
-    Anonymous = 0xff,
-}
-
-impl From<u32> for BtAddrType {
-    fn from(num: u32) -> Self {
-        BtAddrType::from_u32(num).unwrap_or(BtAddrType::Unknown)
-    }
-}
-
-impl Into<u32> for BtAddrType {
-    fn into(self) -> u32 {
-        self.to_u32().unwrap_or(0)
-    }
-}
-
-impl From<u8> for BtAddrType {
-    fn from(address_type: u8) -> Self {
-        BtAddrType::from_u8(address_type).unwrap_or(BtAddrType::Unknown)
-    }
-}
-
-impl Into<u8> for BtAddrType {
-    fn into(self) -> u8 {
-        self.to_u8().unwrap_or(0)
-    }
-}
-
 pub type BtHciErrorCode = u8;
 pub type BtLocalLeFeatures = bindings::bt_local_le_features_t;
 pub type BtPinCode = bindings::bt_pin_code_t;
 pub type BtRemoteVersion = bindings::bt_remote_version_t;
 pub type BtVendorProductInfo = bindings::bt_vendor_product_info_t;
 
-impl ToString for BtVendorProductInfo {
-    fn to_string(&self) -> String {
-        format!(
+impl Display for BtVendorProductInfo {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(
+            f,
             "{}:v{:04X}p{:04X}d{:04X}",
             match self.vendor_id_src {
                 1 => "bluetooth",
@@ -447,7 +441,7 @@ impl TryFrom<Uuid> for Vec<u8> {
     type Error = &'static str;
 
     fn try_from(value: Uuid) -> std::result::Result<Self, Self::Error> {
-        Ok((&value.uu).to_vec())
+        Ok(value.uu.to_vec())
     }
 }
 
@@ -512,7 +506,7 @@ impl Uuid {
     pub fn from_string<S: Into<String>>(raw: S) -> Option<Self> {
         let raw: String = raw.into();
 
-        let raw = raw.chars().filter(|c| c.is_digit(16)).collect::<String>();
+        let raw = raw.chars().filter(|c| c.is_ascii_hexdigit()).collect::<String>();
         let s = raw.as_str();
         if s.len() != 32 {
             return None;
@@ -569,7 +563,7 @@ impl Display for Uuid {
 
 /// UUID that is safe to display in logs.
 pub struct DisplayUuid<'a>(pub &'a Uuid);
-impl<'a> Display for DisplayUuid<'a> {
+impl Display for DisplayUuid<'_> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         write!(
             f,
@@ -601,8 +595,6 @@ pub enum BluetoothProperty {
     RemoteRssi(i8),
     RemoteVersionInfo(BtRemoteVersion),
     LocalLeFeatures(BtLocalLeFeatures),
-    LocalIoCaps(BtIoCap),
-    LocalIoCapsBle(BtIoCap),
     DynamicAudioBuffer(),
     RemoteIsCoordinatedSetMember(bool),
     Appearance(u16),
@@ -624,6 +616,11 @@ pub const INVALID_RSSI: i8 = 127;
 /// arrays are 256. Keep one extra byte for null termination.
 const PROPERTY_NAME_MAX: usize = 255;
 
+/// This is the length of tBLE_BD_ADDR_SERIALIZED, the prop format of AdapterBondedDevices.
+/// Instead of using mem::size_of::<bindings::tBLE_BD_ADDR_SERIALIZED>(), we hardcode this so that
+/// we can discover this easier (crash!) when the layout is changed.
+const TYPED_ADDR_LENGTH: usize = bindings::RawAddress_kLength as usize + 1;
+
 impl BluetoothProperty {
     pub fn get_type(&self) -> BtPropertyType {
         match &*self {
@@ -641,8 +638,6 @@ impl BluetoothProperty {
             BluetoothProperty::RemoteRssi(_) => BtPropertyType::RemoteRssi,
             BluetoothProperty::RemoteVersionInfo(_) => BtPropertyType::RemoteVersionInfo,
             BluetoothProperty::LocalLeFeatures(_) => BtPropertyType::LocalLeFeatures,
-            BluetoothProperty::LocalIoCaps(_) => BtPropertyType::LocalIoCaps,
-            BluetoothProperty::LocalIoCapsBle(_) => BtPropertyType::LocalIoCapsBle,
             BluetoothProperty::DynamicAudioBuffer() => BtPropertyType::DynamicAudioBuffer,
             BluetoothProperty::RemoteIsCoordinatedSetMember(_) => {
                 BtPropertyType::RemoteIsCoordinatedSetMember
@@ -655,8 +650,9 @@ impl BluetoothProperty {
         }
     }
 
+    /// Returns the length when converted to bt_property_t
     fn get_len(&self) -> usize {
-        match &*self {
+        match self {
             BluetoothProperty::BdName(name) => cmp::min(PROPERTY_NAME_MAX, name.len() + 1),
             BluetoothProperty::BdAddr(addr) => addr.address.len(),
             BluetoothProperty::Uuids(uulist) => uulist.len() * mem::size_of::<Uuid>(),
@@ -665,9 +661,7 @@ impl BluetoothProperty {
             BluetoothProperty::ServiceRecord(rec) => {
                 mem::size_of::<BtServiceRecord>() + cmp::min(PROPERTY_NAME_MAX, rec.name.len() + 1)
             }
-            BluetoothProperty::AdapterBondedDevices(devlist) => {
-                devlist.len() * mem::size_of::<RawAddress>()
-            }
+            BluetoothProperty::AdapterBondedDevices(devlist) => devlist.len() * TYPED_ADDR_LENGTH,
             BluetoothProperty::AdapterDiscoverableTimeout(_) => mem::size_of::<u32>(),
             BluetoothProperty::RemoteFriendlyName(name) => {
                 cmp::min(PROPERTY_NAME_MAX, name.len() + 1)
@@ -675,8 +669,6 @@ impl BluetoothProperty {
             BluetoothProperty::RemoteRssi(_) => mem::size_of::<i8>(),
             BluetoothProperty::RemoteVersionInfo(_) => mem::size_of::<BtRemoteVersion>(),
             BluetoothProperty::LocalLeFeatures(_) => mem::size_of::<BtLocalLeFeatures>(),
-            BluetoothProperty::LocalIoCaps(_) => mem::size_of::<BtIoCap>(),
-            BluetoothProperty::LocalIoCapsBle(_) => mem::size_of::<BtIoCap>(),
             BluetoothProperty::RemoteIsCoordinatedSetMember(_) => mem::size_of::<bool>(),
             BluetoothProperty::Appearance(_) => mem::size_of::<u16>(),
             BluetoothProperty::VendorProductInfo(_) => mem::size_of::<BtVendorProductInfo>(),
@@ -695,7 +687,7 @@ impl BluetoothProperty {
     /// The lifetime of the returned pointer is tied to that of the slice given.
     fn get_data_ptr<'a>(&'a self, data: &'a mut [u8]) -> LTCheckedPtrMut<'a, u8> {
         let len = self.get_len();
-        match &*self {
+        match self {
             BluetoothProperty::BdName(name) => {
                 let copy_len = len - 1;
                 data[0..copy_len].copy_from_slice(&name.as_bytes()[0..copy_len]);
@@ -734,9 +726,15 @@ impl BluetoothProperty {
             }
             BluetoothProperty::AdapterBondedDevices(devlist) => {
                 for (idx, &dev) in devlist.iter().enumerate() {
-                    let start = idx * mem::size_of::<RawAddress>();
-                    let end = idx + mem::size_of::<RawAddress>();
+                    let start = idx * TYPED_ADDR_LENGTH;
+                    let end = start + mem::size_of::<RawAddress>();
                     data[start..end].copy_from_slice(&dev.address);
+                    // 0 is public address. We never pass this prop from Rust to LibBluetooth so
+                    // this shouldn't matter for now.
+                    log::error!(
+                        "Converting BluetoothProperty::AdapterBondedDevices to bt_property_t"
+                    );
+                    data[end] = 0;
                 }
             }
             BluetoothProperty::AdapterDiscoverableTimeout(timeout) => {
@@ -763,12 +761,6 @@ impl BluetoothProperty {
                     std::slice::from_raw_parts(ptr as *mut u8, mem::size_of::<BtLocalLeFeatures>())
                 };
                 data.copy_from_slice(&slice);
-            }
-            BluetoothProperty::LocalIoCaps(iocap) => {
-                data.copy_from_slice(&BtIoCap::to_u32(iocap).unwrap_or_default().to_ne_bytes());
-            }
-            BluetoothProperty::LocalIoCapsBle(iocap) => {
-                data.copy_from_slice(&BtIoCap::to_u32(iocap).unwrap_or_default().to_ne_bytes());
             }
             BluetoothProperty::RemoteIsCoordinatedSetMember(icsm) => {
                 data[0] = *icsm as u8;
@@ -816,7 +808,7 @@ impl From<bindings::bt_property_t> for BluetoothProperty {
             BtPropertyType::BdAddr => {
                 BluetoothProperty::BdAddr(RawAddress::from_bytes(slice).unwrap_or_default())
             }
-            BtPropertyType::Uuids => {
+            BtPropertyType::Uuids | BtPropertyType::UuidsLe => {
                 let count = len / mem::size_of::<Uuid>();
                 BluetoothProperty::Uuids(ptr_to_vec(prop.val as *const Uuid, count))
             }
@@ -832,11 +824,25 @@ impl From<bindings::bt_property_t> for BluetoothProperty {
                 BluetoothProperty::ServiceRecord(BtServiceRecord::from(v))
             }
             BtPropertyType::AdapterBondedDevices => {
-                let count = len / mem::size_of::<RawAddress>();
-                BluetoothProperty::AdapterBondedDevices(ptr_to_vec(
-                    prop.val as *const RawAddress,
-                    count,
-                ))
+                assert!(
+                    len % TYPED_ADDR_LENGTH == 0,
+                    "Invalid AdapterBondedDevices prop len: {}",
+                    len
+                );
+                let count = len / TYPED_ADDR_LENGTH;
+                BluetoothProperty::AdapterBondedDevices(
+                    (0..count)
+                        .map(|idx| {
+                            // The prop is an array of tBLE_BD_ADDR_SERIALIZED which has length
+                            // TYPED_ADDR_LENGTH. The first 6 bytes are the RawAddress and the 7th
+                            // is the address type (public / random / etc), while we don't care
+                            // about it for now.
+                            let start = idx * TYPED_ADDR_LENGTH;
+                            let end = start + mem::size_of::<RawAddress>();
+                            RawAddress::from_bytes(&slice[start..end]).unwrap_or_default()
+                        })
+                        .collect(),
+                )
             }
             BtPropertyType::AdapterDiscoverableTimeout => {
                 BluetoothProperty::AdapterDiscoverableTimeout(u32_from_bytes(slice))
@@ -847,18 +853,12 @@ impl From<bindings::bt_property_t> for BluetoothProperty {
             BtPropertyType::RemoteRssi => BluetoothProperty::RemoteRssi(slice[0] as i8),
             BtPropertyType::RemoteVersionInfo => {
                 let v = unsafe { (prop.val as *const BtRemoteVersion).read_unaligned() };
-                BluetoothProperty::RemoteVersionInfo(v.clone())
+                BluetoothProperty::RemoteVersionInfo(v)
             }
             BtPropertyType::LocalLeFeatures => {
                 let v = unsafe { (prop.val as *const BtLocalLeFeatures).read_unaligned() };
-                BluetoothProperty::LocalLeFeatures(v.clone())
+                BluetoothProperty::LocalLeFeatures(v)
             }
-            BtPropertyType::LocalIoCaps => BluetoothProperty::LocalIoCaps(
-                BtIoCap::from_u32(u32_from_bytes(slice)).unwrap_or(BtIoCap::Unknown),
-            ),
-            BtPropertyType::LocalIoCapsBle => BluetoothProperty::LocalIoCapsBle(
-                BtIoCap::from_u32(u32_from_bytes(slice)).unwrap_or(BtIoCap::Unknown),
-            ),
             BtPropertyType::RemoteIsCoordinatedSetMember => {
                 BluetoothProperty::RemoteIsCoordinatedSetMember(slice[0] != 0)
             }
@@ -867,9 +867,9 @@ impl From<bindings::bt_property_t> for BluetoothProperty {
                 let v = unsafe { (prop.val as *const BtVendorProductInfo).read_unaligned() };
                 BluetoothProperty::VendorProductInfo(BtVendorProductInfo::from(v))
             }
-            BtPropertyType::RemoteAddrType => BluetoothProperty::RemoteAddrType(
-                BtAddrType::from_u32(u32_from_bytes(slice)).unwrap_or(BtAddrType::Unknown),
-            ),
+            BtPropertyType::RemoteAddrType => {
+                BluetoothProperty::RemoteAddrType(BtAddrType::from(CxxBtAddrType(slice[0])))
+            }
             // TODO(abps) - Figure out if these values should actually have contents
             BtPropertyType::DynamicAudioBuffer => BluetoothProperty::DynamicAudioBuffer(),
             BtPropertyType::RemoteDeviceTimestamp => BluetoothProperty::RemoteDeviceTimestamp(),
@@ -900,7 +900,6 @@ pub enum SupportedProfiles {
     Sdp,
     Socket,
     HfClient,
-    AvrcpCtrl,
     LeAudio,
     VolumeControl,
     CoordinatedSet,
@@ -916,7 +915,6 @@ impl From<SupportedProfiles> for Vec<u8> {
             SupportedProfiles::Sdp => "sdp",
             SupportedProfiles::Socket => "socket",
             SupportedProfiles::HfClient => "handsfree_client",
-            SupportedProfiles::AvrcpCtrl => "avrcp_ctrl",
             SupportedProfiles::LeAudio => "le_audio",
             SupportedProfiles::VolumeControl => "volume_control",
             SupportedProfiles::CoordinatedSet => "csis_client",
@@ -958,9 +956,10 @@ impl Hash for RawAddress {
     }
 }
 
-impl ToString for RawAddress {
-    fn to_string(&self) -> String {
-        format!(
+impl Display for RawAddress {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(
+            f,
             "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
             self.address[0],
             self.address[1],
@@ -980,7 +979,7 @@ impl RawAddress {
         }
         let mut raw: [u8; 6] = [0; 6];
         raw.copy_from_slice(raw_addr);
-        return Some(RawAddress { address: raw });
+        Some(RawAddress { address: raw })
     }
 
     pub fn from_string<S: Into<String>>(addr: S) -> Option<RawAddress> {
@@ -1005,7 +1004,7 @@ impl RawAddress {
     }
 
     pub fn to_byte_arr(&self) -> [u8; 6] {
-        self.address.clone()
+        self.address
     }
 
     pub fn empty() -> RawAddress {
@@ -1015,7 +1014,7 @@ impl RawAddress {
 
 /// Address that is safe to display in logs.
 pub struct DisplayAddress<'a>(pub &'a RawAddress);
-impl<'a> Display for DisplayAddress<'a> {
+impl Display for DisplayAddress<'_> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         if self.0.address.iter().all(|&x| x == 0x00) {
             write!(f, "00:00:00:00:00:00")
@@ -1027,16 +1026,16 @@ impl<'a> Display for DisplayAddress<'a> {
     }
 }
 
-pub type AclLinkSpec = bindings::tAclLinkSpec;
+pub type AclLinkSpec = bindings::AclLinkSpec;
 pub type OobData = bindings::bt_oob_data_s;
 
 /// An enum representing `bt_callbacks_t` from btif.
 #[derive(Clone, Debug)]
 pub enum BaseCallbacks {
     AdapterState(BtState),
-    AdapterProperties(BtStatus, i32, Vec<BluetoothProperty>),
-    RemoteDeviceProperties(BtStatus, RawAddress, u8, i32, Vec<BluetoothProperty>),
-    DeviceFound(i32, Vec<BluetoothProperty>),
+    AdapterProperties(BtStatus, Vec<BluetoothProperty>),
+    RemoteDeviceProperties(BtStatus, RawAddress, u8, Vec<BluetoothProperty>),
+    DeviceFound(Vec<BluetoothProperty>),
     DiscoveryState(BtDiscoveryState),
     PinRequest(RawAddress, String, u32, bool),
     SspRequest(RawAddress, BtSspVariant, u32),
@@ -1066,57 +1065,64 @@ type BaseCb = Arc<Mutex<BaseCallbacksDispatcher>>;
 
 cb_variant!(BaseCb, adapter_state_cb -> BaseCallbacks::AdapterState, u32 -> BtState);
 cb_variant!(BaseCb, adapter_properties_cb -> BaseCallbacks::AdapterProperties,
-u32 -> BtStatus, i32, *mut bindings::bt_property_t, {
-    let _2 = ptr_to_vec(_2, _1 as usize);
-});
+    u32 -> BtStatus, i32 -> _, *mut bindings::bt_property_t, {
+        let _2 = ptr_to_vec(_2, _1 as usize);
+    }
+);
 cb_variant!(BaseCb, remote_device_properties_cb -> BaseCallbacks::RemoteDeviceProperties,
-u32 -> BtStatus, *mut RawAddress -> RawAddress, u8, i32, *mut bindings::bt_property_t, {
-    let _1 = unsafe { *(_1 as *const RawAddress) };
-    let _4 = ptr_to_vec(_4, _3 as usize);
-});
+    u32 -> BtStatus, RawAddress, u8, i32 -> _, *mut bindings::bt_property_t, {
+        let _4 = ptr_to_vec(_4, _3 as usize);
+    }
+);
 cb_variant!(BaseCb, device_found_cb -> BaseCallbacks::DeviceFound,
-i32, *mut bindings::bt_property_t, {
-    let _1 = ptr_to_vec(_1, _0 as usize);
-});
+    i32 -> _, *mut bindings::bt_property_t, {
+        let _1 = ptr_to_vec(_1, _0 as usize);
+    }
+);
 cb_variant!(BaseCb, discovery_state_cb -> BaseCallbacks::DiscoveryState,
-    bindings::bt_discovery_state_t -> BtDiscoveryState);
+    bindings::bt_discovery_state_t -> BtDiscoveryState
+);
 cb_variant!(BaseCb, pin_request_cb -> BaseCallbacks::PinRequest,
-*mut RawAddress, *mut bindings::bt_bdname_t, u32, bool, {
-    let _0 = unsafe { *(_0 as *const RawAddress)};
-    let _1 = String::from(unsafe{*_1});
-});
+    RawAddress, *mut bindings::bt_bdname_t, u32, bool, bindings::PairingAlgorithm -> _, {
+        let _1 = String::from(unsafe{*_1});
+    }
+);
 cb_variant!(BaseCb, ssp_request_cb -> BaseCallbacks::SspRequest,
-*mut RawAddress, bindings::bt_ssp_variant_t -> BtSspVariant, u32, {
-    let _0 = unsafe { *(_0 as *const RawAddress) };
-});
+    RawAddress,
+    bindings::bt_ssp_variant_t -> BtSspVariant,
+    u32,
+    bindings::PairingAlgorithm -> _
+);
 cb_variant!(BaseCb, bond_state_cb -> BaseCallbacks::BondState,
-u32 -> BtStatus, *mut RawAddress, bindings::bt_bond_state_t -> BtBondState, i32, {
-    let _1 = unsafe { *(_1 as *const RawAddress) };
-});
-
+    u32 -> BtStatus,
+    RawAddress,
+    bindings::tBT_TRANSPORT -> _,
+    bindings::bt_bond_state_t -> BtBondState,
+    bindings::PairingType -> _,
+    i32
+);
 cb_variant!(BaseCb, address_consolidate_cb -> BaseCallbacks::AddressConsolidate,
-*mut RawAddress, *mut RawAddress, {
-    let _0 = unsafe { *(_0 as *const RawAddress) };
-    let _1 = unsafe { *(_1 as *const RawAddress) };
-});
-
+    RawAddress, RawAddress
+);
 cb_variant!(BaseCb, le_address_associate_cb -> BaseCallbacks::LeAddressAssociate,
-*mut RawAddress, *mut RawAddress, u8, {
-    let _0 = unsafe { *(_0 as *const RawAddress) };
-    let _1 = unsafe { *(_1 as *const RawAddress) };
-});
-
+    RawAddress, RawAddress, u8
+);
 cb_variant!(BaseCb, thread_evt_cb -> BaseCallbacks::ThreadEvent, u32 -> BtThreadEvent);
-
 cb_variant!(BaseCb, acl_state_cb -> BaseCallbacks::AclState,
-u32 -> BtStatus, *mut AclLinkSpec, bindings::bt_acl_state_t -> BtAclState, bindings::bt_hci_error_code_t -> BtHciErrorCode, bindings::bt_conn_direction_t -> BtConnectionDirection, u16 -> u16, {
-    let _1 = unsafe { *(_1 as *const AclLinkSpec) };
-});
-
-cb_variant!(BaseCb, generate_local_oob_data_cb -> BaseCallbacks::GenerateLocalOobData, u8, OobData -> Box::<OobData>);
-
+    u32 -> BtStatus,
+    *mut AclLinkSpec,
+    bindings::bt_acl_state_t -> BtAclState,
+    bindings::bt_hci_error_code_t -> BtHciErrorCode,
+    bindings::bt_conn_direction_t -> BtConnectionDirection,
+    u16 -> u16,
+    {
+        let _1 = unsafe { *(_1 as *const AclLinkSpec) };
+    }
+);
+cb_variant!(BaseCb, generate_local_oob_data_cb -> BaseCallbacks::GenerateLocalOobData,
+    bindings::tBT_TRANSPORT, OobData -> Box::<OobData>
+);
 cb_variant!(BaseCb, le_rand_cb -> BaseCallbacks::LeRandCallback, u64);
-
 cb_variant!(BaseCb, key_missing_cb -> BaseCallbacks::KeyMissing, RawAddress, u8);
 
 struct RawInterfaceWrapper {
@@ -1198,6 +1204,9 @@ pub struct BluetoothInterface {
     callbacks: Option<Box<bindings::bt_callbacks_t>>,
     os_callouts: Option<Box<bindings::bt_os_callouts_t>>,
 }
+
+#[gen_cxx_extern_trivial]
+pub(crate) type CxxBluetoothInterface = bindings::bt_interface_t;
 
 impl BluetoothInterface {
     pub fn is_initialized(&self) -> bool {
@@ -1314,35 +1323,23 @@ impl BluetoothInterface {
         ccall!(self, set_scan_mode, mode.into())
     }
 
-    pub fn get_remote_device_properties(&self, addr: &mut RawAddress) -> i32 {
-        let addr_ptr = LTCheckedPtrMut::from_ref(addr);
-        ccall!(self, get_remote_device_properties, addr_ptr.into())
+    pub fn get_remote_device_properties(&self, addr: RawAddress) -> i32 {
+        ccall!(self, get_remote_device_properties, addr)
     }
 
-    pub fn get_remote_device_property(
-        &self,
-        addr: &mut RawAddress,
-        prop_type: BtPropertyType,
-    ) -> i32 {
-        let addr_ptr = LTCheckedPtrMut::from_ref(addr);
+    pub fn get_remote_device_property(&self, addr: RawAddress, prop_type: BtPropertyType) -> i32 {
         let converted_type = bindings::bt_property_type_t::from(prop_type);
-        ccall!(self, get_remote_device_property, addr_ptr.into(), converted_type)
+        ccall!(self, get_remote_device_property, addr, converted_type)
     }
 
-    pub fn set_remote_device_property(
-        &self,
-        addr: &mut RawAddress,
-        prop: BluetoothProperty,
-    ) -> i32 {
+    pub fn set_remote_device_property(&self, addr: RawAddress, prop: BluetoothProperty) -> i32 {
         let prop_pair: (Box<[u8]>, bindings::bt_property_t) = prop.into();
         let prop_ptr = LTCheckedPtr::from_ref(&prop_pair.1);
-        let addr_ptr = LTCheckedPtrMut::from_ref(addr);
-        ccall!(self, set_remote_device_property, addr_ptr.into(), prop_ptr.into())
+        ccall!(self, set_remote_device_property, addr, prop_ptr.into())
     }
 
-    pub fn get_remote_services(&self, addr: &mut RawAddress, transport: BtTransport) -> i32 {
-        let addr_ptr = LTCheckedPtrMut::from_ref(addr);
-        ccall!(self, get_remote_services, addr_ptr.into(), transport.to_i32().unwrap())
+    pub fn get_remote_services(&self, addr: RawAddress, transport: BtTransport) -> i32 {
+        ccall!(self, get_remote_services, addr, transport.to_i32().unwrap())
     }
 
     pub fn start_discovery(&self) -> i32 {
@@ -1357,49 +1354,42 @@ impl BluetoothInterface {
         ccall!(self, pairing_is_busy)
     }
 
-    pub fn create_bond(&self, addr: &RawAddress, transport: BtTransport) -> i32 {
-        let ctransport: i32 = transport.into();
-        let addr_ptr = LTCheckedPtr::from_ref(addr);
-        ccall!(self, create_bond, addr_ptr.into(), ctransport)
+    pub fn create_bond(&self, addr: RawAddress, transport: BtTransport) -> i32 {
+        ccall!(self, create_bond, addr, transport as i32)
     }
 
-    pub fn remove_bond(&self, addr: &RawAddress) -> i32 {
-        let addr_ptr = LTCheckedPtr::from_ref(addr);
-        ccall!(self, remove_bond, addr_ptr.into())
+    pub fn remove_bond(&self, addr: RawAddress) -> i32 {
+        ccall!(self, remove_bond, addr)
     }
 
-    pub fn cancel_bond(&self, addr: &RawAddress) -> i32 {
-        let addr_ptr = LTCheckedPtr::from_ref(addr);
-        ccall!(self, cancel_bond, addr_ptr.into())
+    pub fn cancel_bond(&self, addr: RawAddress) -> i32 {
+        ccall!(self, cancel_bond, addr)
     }
 
-    pub fn get_connection_state(&self, addr: &RawAddress) -> BtConnectionState {
-        let addr_ptr = LTCheckedPtr::from_ref(addr);
-        ccall!(self, get_connection_state, addr_ptr.into()).into()
+    pub fn get_connection_state(&self, addr: RawAddress) -> BtConnectionState {
+        ccall!(self, get_connection_state, addr).into()
     }
 
     pub fn pin_reply(
         &self,
-        addr: &RawAddress,
+        addr: RawAddress,
         accept: u8,
         pin_len: u8,
         pin_code: &mut BtPinCode,
     ) -> i32 {
-        let addr_ptr = LTCheckedPtr::from_ref(addr);
         let pin_code_ptr = LTCheckedPtrMut::from_ref(pin_code);
-        ccall!(self, pin_reply, addr_ptr.into(), accept, pin_len, pin_code_ptr.into())
+        ccall!(self, pin_reply, addr, accept, pin_len, pin_code_ptr.into())
     }
 
     pub fn ssp_reply(
         &self,
-        addr: &RawAddress,
+        addr: RawAddress,
         variant: BtSspVariant,
         accept: u8,
         passkey: u32,
     ) -> i32 {
-        let addr_ptr = LTCheckedPtr::from_ref(addr);
         let cvariant = bindings::bt_ssp_variant_t::from(variant);
-        ccall!(self, ssp_reply, addr_ptr.into(), cvariant, accept, passkey)
+        ccall!(self, ssp_reply, addr, cvariant, accept, passkey)
     }
 
     pub fn clear_event_filter(&self) -> i32 {
@@ -1438,7 +1428,7 @@ impl BluetoothInterface {
         ccall!(self, le_rand)
     }
 
-    pub fn generate_local_oob_data(&self, transport: i32) -> i32 {
+    pub fn generate_local_oob_data(&self, transport: BtTransport) -> i32 {
         ccall!(self, generate_local_oob_data, transport as u8)
     }
 
@@ -1467,8 +1457,16 @@ impl BluetoothInterface {
         ccall!(self, get_profile_interface, cprofile_ptr.cast_into::<std::os::raw::c_char>())
     }
 
+    // TODO(@sarveshkalwit): Remove once all modules have been updated with FFI
     pub(crate) fn as_raw_ptr(&self) -> *const u8 {
         self.internal.raw as *const u8
+    }
+
+    pub(crate) fn as_raw_btif(&self) -> &CxxBluetoothInterface {
+        // SAFETY: The pointer `self.internal.raw` is a pointer to a static,
+        // thread-safe interface provided by the Bluetooth stack. It is
+        // guaranteed to be valid for the lifetime of the program.
+        unsafe { &*self.internal.raw }
     }
 
     pub fn dump(&self, fd: RawFd) {
@@ -1521,7 +1519,7 @@ mod tests {
         let mut bdname = bindings::bt_bdname_t { name: [128; 249] };
 
         for (i, v) in slice.iter().enumerate() {
-            bdname.name[i] = v.clone();
+            bdname.name[i] = *v;
         }
 
         bdname

@@ -137,7 +137,7 @@ bool BTM_UseLeLink(const RawAddress& bd_addr) {
   return dev_type == BT_DEVICE_TYPE_BLE;
 }
 
-static void read_phy_cb(base::Callback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb,
+static void read_phy_cb(base::OnceCallback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb,
                         uint8_t* data, uint16_t len) {
   uint8_t status, tx_phy, rx_phy;
   uint16_t handle;
@@ -150,7 +150,7 @@ static void read_phy_cb(base::Callback<void(uint8_t tx_phy, uint8_t rx_phy, uint
   STREAM_TO_UINT8(tx_phy, pp);
   STREAM_TO_UINT8(rx_phy, pp);
 
-  cb.Run(tx_phy, rx_phy, status);
+  std::move(cb).Run(tx_phy, rx_phy, status);
 }
 
 /*******************************************************************************
@@ -169,7 +169,7 @@ bool BTM_GetRemoteDeviceName(const RawAddress& bd_addr, BD_NAME bd_name) {
   bt_property_t prop_name;
   BTIF_STORAGE_FILL_PROPERTY(&prop_name, BT_PROPERTY_BDNAME, sizeof(bt_bdname_t), &bdname);
 
-  if (btif_storage_get_remote_device_property(&bd_addr, &prop_name) == BT_STATUS_SUCCESS) {
+  if (btif_storage_get_remote_device_property(bd_addr, &prop_name) == BT_STATUS_SUCCESS) {
     bd_name_copy(bd_name, bdname.name);
     ret = true;
   }
@@ -197,7 +197,7 @@ bool BTM_GetRemoteDeviceName(const RawAddress& bd_addr, BD_NAME bd_name) {
 void BTM_BleSetPrefConnParams(const RawAddress& bd_addr, uint16_t min_conn_int,
                               uint16_t max_conn_int, uint16_t peripheral_latency,
                               uint16_t supervision_tout) {
-  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(bd_addr);
+  BtmDevice* p_device = btm_get_dev(bd_addr);
 
   log::verbose("min:{},max:{},latency:{},tout:{}", min_conn_int, max_conn_int, peripheral_latency,
                supervision_tout);
@@ -208,33 +208,33 @@ void BTM_BleSetPrefConnParams(const RawAddress& bd_addr, uint16_t min_conn_int,
                             BTM_BLE_CONN_SUP_TOUT_MAX) &&
       (peripheral_latency <= BTM_BLE_CONN_LATENCY_MAX ||
        peripheral_latency == BTM_BLE_CONN_PARAM_UNDEF)) {
-    if (p_dev_rec) {
+    if (p_device) {
       /* expect conn int and stout and peripheral latency to be updated all
        * together
        */
       if (min_conn_int != BTM_BLE_CONN_PARAM_UNDEF || max_conn_int != BTM_BLE_CONN_PARAM_UNDEF) {
         if (min_conn_int != BTM_BLE_CONN_PARAM_UNDEF) {
-          p_dev_rec->conn_params.min_conn_int = min_conn_int;
+          p_device->conn_params.min_conn_int = min_conn_int;
         } else {
-          p_dev_rec->conn_params.min_conn_int = max_conn_int;
+          p_device->conn_params.min_conn_int = max_conn_int;
         }
 
         if (max_conn_int != BTM_BLE_CONN_PARAM_UNDEF) {
-          p_dev_rec->conn_params.max_conn_int = max_conn_int;
+          p_device->conn_params.max_conn_int = max_conn_int;
         } else {
-          p_dev_rec->conn_params.max_conn_int = min_conn_int;
+          p_device->conn_params.max_conn_int = min_conn_int;
         }
 
         if (peripheral_latency != BTM_BLE_CONN_PARAM_UNDEF) {
-          p_dev_rec->conn_params.peripheral_latency = peripheral_latency;
+          p_device->conn_params.peripheral_latency = peripheral_latency;
         } else {
-          p_dev_rec->conn_params.peripheral_latency = BTM_BLE_CONN_PERIPHERAL_LATENCY_DEF;
+          p_device->conn_params.peripheral_latency = BTM_BLE_CONN_PERIPHERAL_LATENCY_DEF;
         }
 
         if (supervision_tout != BTM_BLE_CONN_PARAM_UNDEF) {
-          p_dev_rec->conn_params.supervision_tout = supervision_tout;
+          p_device->conn_params.supervision_tout = supervision_tout;
         } else {
-          p_dev_rec->conn_params.supervision_tout = BTM_BLE_CONN_TIMEOUT_DEF;
+          p_device->conn_params.supervision_tout = BTM_BLE_CONN_TIMEOUT_DEF;
         }
       }
 
@@ -260,12 +260,12 @@ void BTM_BleSetPrefConnParams(const RawAddress& bd_addr, uint16_t min_conn_int,
  ******************************************************************************/
 void BTM_ReadDevInfo(const RawAddress& remote_bda, tBT_DEVICE_TYPE* p_dev_type,
                      tBLE_ADDR_TYPE* p_addr_type) {
-  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(remote_bda);
+  BtmDevice* p_device = btm_get_dev(remote_bda);
   tBTM_INQ_INFO* p_inq_info = BTM_InqDbRead(remote_bda);
 
   *p_addr_type = BLE_ADDR_PUBLIC;
 
-  if (!p_dev_rec) {
+  if (!p_device) {
     *p_dev_type = BT_DEVICE_TYPE_BREDR;
     /* Check with the BT manager if details about remote device are known */
     if (p_inq_info != NULL) {
@@ -279,9 +279,9 @@ void BTM_ReadDevInfo(const RawAddress& remote_bda, tBT_DEVICE_TYPE* p_dev_type,
   {
     /* new inquiry result, merge device type in security device record */
     if (p_inq_info) {
-      p_dev_rec->device_type |= p_inq_info->results.device_type;
+      p_device->device_type |= p_inq_info->results.device_type;
       if (is_ble_addr_type_known(p_inq_info->results.ble_addr_type)) {
-        p_dev_rec->ble.SetAddressType(p_inq_info->results.ble_addr_type);
+        p_device->ble.SetAddressType(p_inq_info->results.ble_addr_type);
       } else {
         log::warn(
                 "Please do not update device record from anonymous le "
@@ -289,15 +289,15 @@ void BTM_ReadDevInfo(const RawAddress& remote_bda, tBT_DEVICE_TYPE* p_dev_type,
       }
     }
 
-    if (p_dev_rec->bd_addr == remote_bda && p_dev_rec->ble.pseudo_addr == remote_bda) {
-      *p_dev_type = p_dev_rec->device_type;
-      *p_addr_type = p_dev_rec->ble.AddressType();
-    } else if (p_dev_rec->ble.pseudo_addr == remote_bda) {
+    if (p_device->bd_addr == remote_bda && p_device->ble.pseudo_addr == remote_bda) {
+      *p_dev_type = p_device->device_type;
+      *p_addr_type = p_device->ble.AddressType();
+    } else if (p_device->ble.pseudo_addr == remote_bda) {
       *p_dev_type = BT_DEVICE_TYPE_BLE;
-      *p_addr_type = p_dev_rec->ble.AddressType();
+      *p_addr_type = p_device->ble.AddressType();
     } else /* matching static address only */ {
-      if (p_dev_rec->device_type != BT_DEVICE_TYPE_UNKNOWN) {
-        *p_dev_type = p_dev_rec->device_type;
+      if (p_device->device_type != BT_DEVICE_TYPE_UNKNOWN) {
+        *p_dev_type = p_device->device_type;
       } else {
         log::warn("device_type not set; assuming BR/EDR");
         *p_dev_type = BT_DEVICE_TYPE_BREDR;
@@ -324,19 +324,19 @@ void BTM_ReadDevInfo(const RawAddress& remote_bda, tBT_DEVICE_TYPE* p_dev_type,
  *
  ******************************************************************************/
 bool BTM_ReadConnectedTransportAddress(RawAddress* remote_bda, tBT_TRANSPORT transport) {
-  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(*remote_bda);
+  const BtmDevice* p_device = btm_find_dev(*remote_bda);
 
   /* if no device can be located, return */
-  if (p_dev_rec == nullptr) {
+  if (p_device == nullptr) {
     return false;
   }
 
   if (transport == BT_TRANSPORT_BR_EDR) {
-    if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(p_dev_rec->bd_addr, transport)) {
-      *remote_bda = p_dev_rec->bd_addr;
+    if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(p_device->bd_addr, transport)) {
+      *remote_bda = p_device->bd_addr;
       return true;
-    } else if (p_dev_rec->device_type & BT_DEVICE_TYPE_BREDR) {
-      *remote_bda = p_dev_rec->bd_addr;
+    } else if (p_device->device_type & BT_DEVICE_TYPE_BREDR) {
+      *remote_bda = p_device->bd_addr;
     } else {
       *remote_bda = RawAddress::kEmpty;
     }
@@ -344,8 +344,8 @@ bool BTM_ReadConnectedTransportAddress(RawAddress* remote_bda, tBT_TRANSPORT tra
   }
 
   if (transport == BT_TRANSPORT_LE) {
-    *remote_bda = p_dev_rec->ble.pseudo_addr;
-    if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(p_dev_rec->ble.pseudo_addr,
+    *remote_bda = p_device->ble.pseudo_addr;
+    if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(p_device->ble.pseudo_addr,
                                                               transport)) {
       return true;
     } else {
@@ -369,22 +369,23 @@ bool BTM_ReadConnectedTransportAddress(RawAddress* remote_bda, tBT_TRANSPORT tra
  *
  ******************************************************************************/
 std::pair<RawAddress, RawAddress> BTM_GetConnectedTransportAddress(RawAddress remote_bda) {
-  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(remote_bda);
-  std::pair<RawAddress, RawAddress> pseudo_identity_addr_pair;
+  const BtmDevice* p_device = btm_find_dev(remote_bda);
+  std::pair<RawAddress, RawAddress> pseudo_identity_addr_pair =
+          std::make_pair(RawAddress::kEmpty, RawAddress::kEmpty);
 
   /* if no device can be located, return */
-  if (p_dev_rec == nullptr) {
+  if (p_device == nullptr) {
     return pseudo_identity_addr_pair;
   }
 
   // Get pseudo address
-  pseudo_identity_addr_pair.first = p_dev_rec->ble.pseudo_addr;
+  pseudo_identity_addr_pair.first = p_device->ble.pseudo_addr;
 
   // Get the identity address
-  if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(p_dev_rec->bd_addr,
+  if (get_btm_client_interface().peer.BTM_IsAclConnectionUp(p_device->bd_addr,
                                                             BT_TRANSPORT_BR_EDR) ||
-      (p_dev_rec->device_type & BT_DEVICE_TYPE_BREDR)) {
-    pseudo_identity_addr_pair.second = p_dev_rec->bd_addr;
+      (p_device->device_type & BT_DEVICE_TYPE_BREDR)) {
+    pseudo_identity_addr_pair.second = p_device->bd_addr;
   }
 
   return pseudo_identity_addr_pair;
@@ -399,8 +400,8 @@ tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr, uint16_t tx_pdu_leng
 
   log::info("bd_addr:{}, tx_pdu_length:{}", bd_addr, tx_pdu_length);
 
-  auto p_dev_rec = btm_find_dev(bd_addr);
-  if (p_dev_rec == nullptr) {
+  auto p_device = btm_get_dev(bd_addr);
+  if (p_device == nullptr) {
     log::error("Device {} not found", bd_addr);
     return tBTM_STATUS::BTM_UNKNOWN_ADDR;
   }
@@ -422,16 +423,16 @@ tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr, uint16_t tx_pdu_leng
     log::info(
             "Data length set by prev client can't be overridden by non-privileged clienit, "
             "currently set to {}",
-            p_dev_rec->get_suggested_tx_octets());
+            p_device->get_suggested_tx_octets());
     return tBTM_STATUS::BTM_MODE_UNSUPPORTED;
   }
 
   /* privileged client can override to have lesser Data length & this can happen
    * multiple times from privileged clients.
    */
-  if (p_dev_rec->get_suggested_tx_octets() >= tx_pdu_length && !is_privileged_client) {
+  if (p_device->get_suggested_tx_octets() >= tx_pdu_length && !is_privileged_client) {
     log::info("Suggested TX octet already set to controller {} >= {}",
-              p_dev_rec->get_suggested_tx_octets(), tx_pdu_length);
+              p_device->get_suggested_tx_octets(), tx_pdu_length);
     return tBTM_STATUS::BTM_SUCCESS;
   }
 
@@ -466,7 +467,7 @@ tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr, uint16_t tx_pdu_leng
             tx_time, bd_addr);
 
   btsnd_hcic_ble_set_data_length(hci_handle, tx_pdu_length, tx_time);
-  p_dev_rec->set_suggested_tx_octect(tx_pdu_length);
+  p_device->set_suggested_tx_octect(tx_pdu_length);
   if (is_privileged_client) {
     p_lcb->set_is_datalen_set_by_privileged_client(true);
   }
@@ -485,10 +486,10 @@ tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr, uint16_t tx_pdu_leng
  *
  ******************************************************************************/
 void BTM_BleReadPhy(const RawAddress& bd_addr,
-                    base::Callback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb) {
+                    base::OnceCallback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb) {
   if (!get_btm_client_interface().peer.BTM_IsAclConnectionUp(bd_addr, BT_TRANSPORT_LE)) {
     log::error("Wrong mode: no LE link exist or LE not supported");
-    cb.Run(0, 0, HCI_ERR_NO_CONNECTION);
+    std::move(cb).Run(0, 0, HCI_ERR_NO_CONNECTION);
     return;
   }
 
@@ -496,17 +497,18 @@ void BTM_BleReadPhy(const RawAddress& bd_addr,
   // neither LE_2M nor LE_CODED PHYs.
   if (!bluetooth::shim::GetController()->SupportsBle2mPhy() &&
       !bluetooth::shim::GetController()->SupportsBleCodedPhy()) {
-    cb.Run(1, 1, HCI_SUCCESS);
+    std::move(cb).Run(1, 1, HCI_SUCCESS);
     return;
   }
 
   uint16_t handle = get_btm_client_interface().peer.BTM_GetHCIConnHandle(bd_addr, BT_TRANSPORT_LE);
 
-  const uint8_t len = HCIC_PARAM_SIZE_BLE_READ_PHY;
-  uint8_t data[len];
+  constexpr uint8_t kLen = HCIC_PARAM_SIZE_BLE_READ_PHY;
+  uint8_t data[kLen];
   uint8_t* pp = data;
   UINT16_TO_STREAM(pp, handle);
-  btu_hcif_send_cmd_with_cb(HCI_BLE_READ_PHY, data, len, base::Bind(&read_phy_cb, std::move(cb)));
+  btu_hcif_send_cmd_with_cb(HCI_BLE_READ_PHY, data, kLen,
+                            base::BindOnce(&read_phy_cb, std::move(cb)));
 }
 
 void BTM_BleSetPhy(const RawAddress& bd_addr, uint8_t tx_phys, uint8_t rx_phys,
@@ -544,13 +546,13 @@ void BTM_BleSetPhy(const RawAddress& bd_addr, uint8_t tx_phys, uint8_t rx_phys,
     return;
   }
 
-  const uint8_t len = HCIC_PARAM_SIZE_BLE_SET_PHY;
-  uint8_t data[len];
+  constexpr uint8_t kLen = HCIC_PARAM_SIZE_BLE_SET_PHY;
+  uint8_t data[kLen];
   uint8_t* pp = data;
   UINT16_TO_STREAM(pp, handle);
   UINT8_TO_STREAM(pp, all_phys);
   UINT8_TO_STREAM(pp, tx_phys);
   UINT8_TO_STREAM(pp, rx_phys);
   UINT16_TO_STREAM(pp, phy_options);
-  btu_hcif_send_cmd_with_cb(HCI_BLE_SET_PHY, data, len, base::Bind([](uint8_t*, uint16_t) {}));
+  btu_hcif_send_cmd_with_cb(HCI_BLE_SET_PHY, data, kLen, base::BindOnce([](uint8_t*, uint16_t) {}));
 }

@@ -57,22 +57,23 @@ typedef struct {
 
 /* Client callback function events */
 typedef enum : uint8_t {
-  BTA_GATTC_DEREG_EVT = 1,          /* GATT client deregistered event */
-  BTA_GATTC_OPEN_EVT = 2,           /* GATTC open request status  event */
-  BTA_GATTC_CLOSE_EVT = 5,          /* GATTC  close request status event */
-  BTA_GATTC_SEARCH_CMPL_EVT = 6,    /* GATT discovery complete event */
-  BTA_GATTC_SEARCH_RES_EVT = 7,     /* GATT discovery result event */
-  BTA_GATTC_SRVC_DISC_DONE_EVT = 8, /* GATT service discovery done event */
-  BTA_GATTC_NOTIF_EVT = 10,         /* GATT attribute notification event */
-  BTA_GATTC_EXEC_EVT = 12,          /* execute write complete event */
-  BTA_GATTC_CANCEL_OPEN_EVT = 14,   /* cancel open event */
-  BTA_GATTC_SRVC_CHG_EVT = 15,      /* service change event */
-  BTA_GATTC_ENC_CMPL_CB_EVT = 17,   /* encryption complete callback event */
-  BTA_GATTC_CFG_MTU_EVT = 18,       /* configure MTU complete event */
-  BTA_GATTC_CONGEST_EVT = 24,       /* Congestion event */
-  BTA_GATTC_PHY_UPDATE_EVT = 25,    /* PHY change event */
-  BTA_GATTC_CONN_UPDATE_EVT = 26,   /* Connection parameters update event */
-  BTA_GATTC_SUBRATE_CHG_EVT = 27,   /* Subrate Change event */
+  BTA_GATTC_DEREG_EVT = 1,                        /* GATT client deregistered event */
+  BTA_GATTC_OPEN_EVT = 2,                         /* GATTC open request status  event */
+  BTA_GATTC_CLOSE_EVT = 5,                        /* GATTC  close request status event */
+  BTA_GATTC_SEARCH_CMPL_EVT = 6,                  /* GATT discovery complete event */
+  BTA_GATTC_SEARCH_RES_EVT = 7,                   /* GATT discovery result event */
+  BTA_GATTC_SRVC_DISC_DONE_EVT = 8,               /* GATT service discovery done event */
+  BTA_GATTC_NOTIF_EVT = 10,                       /* GATT attribute notification event */
+  BTA_GATTC_EXEC_EVT = 12,                        /* execute write complete event */
+  BTA_GATTC_CANCEL_OPEN_EVT = 14,                 /* cancel open event */
+  BTA_GATTC_SRVC_CHG_EVT = 15,                    /* service change event */
+  BTA_GATTC_ENC_CMPL_CB_EVT = 17,                 /* encryption complete callback event */
+  BTA_GATTC_CFG_MTU_EVT = 18,                     /* configure MTU complete event */
+  BTA_GATTC_CONGEST_EVT = 24,                     /* Congestion event */
+  BTA_GATTC_PHY_UPDATE_EVT = 25,                  /* PHY change event */
+  BTA_GATTC_CONN_UPDATE_EVT = 26,                 /* Connection parameters update event */
+  BTA_GATTC_SUBRATE_CHG_EVT = 27,                 /* Subrate Change event */
+  BTA_GATTC_CHARACTERISTICS_UNOFFLOADED_EVT = 28, /* Characteristics unoffloaded event */
 } tBTA_GATTC_EVT;
 
 inline std::string gatt_client_event_text(const tBTA_GATTC_EVT& event) {
@@ -93,6 +94,7 @@ inline std::string gatt_client_event_text(const tBTA_GATTC_EVT& event) {
     CASE_RETURN_TEXT(BTA_GATTC_PHY_UPDATE_EVT);
     CASE_RETURN_TEXT(BTA_GATTC_CONN_UPDATE_EVT);
     CASE_RETURN_TEXT(BTA_GATTC_SUBRATE_CHG_EVT);
+    CASE_RETURN_TEXT(BTA_GATTC_CHARACTERISTICS_UNOFFLOADED_EVT);
     default:
       return std::format("UNKNOWN[{}]", static_cast<uint8_t>(event));
   }
@@ -243,8 +245,15 @@ typedef struct {
   uint16_t latency;
   uint16_t cont_num;
   uint16_t timeout;
+  tGATT_SUBRATE_MODE subrate_mode;
   tGATT_STATUS status;
 } tBTA_GATTC_SUBRATE_CHG;
+
+typedef struct {
+  tCONN_ID conn_id;
+  uint32_t session_id;
+  tGATT_STATUS status;
+} tBTA_GATTC_CHARACTERISTICS_UNOFFLOADED;
 
 typedef union {
   tGATT_STATUS status;
@@ -266,6 +275,7 @@ typedef union {
   tBTA_GATTC_SERVICE_CHANGED service_changed;
   tBTA_GATTC_SERVICE_DISCOVERY_DONE service_discovery_done;
   tBTA_GATTC_SUBRATE_CHG subrate_chg;
+  tBTA_GATTC_CHARACTERISTICS_UNOFFLOADED characteristics_unoffloaded;
 } tBTA_GATTC;
 
 /* GATTC enable callback function */
@@ -296,6 +306,7 @@ typedef void(tBTA_GATTC_CBACK)(tBTA_GATTC_EVT event, tBTA_GATTC* p_data);
 #define BTA_GATTS_PHY_UPDATE_EVT 21
 #define BTA_GATTS_CONN_UPDATE_EVT 22
 #define BTA_GATTS_SUBRATE_CHG_EVT 23
+#define BTA_GATTS_CHARACTERISTICS_UNOFFLOADED_EVT 24
 
 typedef uint8_t tBTA_GATTS_EVT;
 
@@ -321,6 +332,7 @@ inline std::string gatt_server_event_text(const tBTA_GATTS_EVT& event) {
     CASE_RETURN_TEXT(BTA_GATTS_PHY_UPDATE_EVT);
     CASE_RETURN_TEXT(BTA_GATTS_CONN_UPDATE_EVT);
     CASE_RETURN_TEXT(BTA_GATTS_SUBRATE_CHG_EVT);
+    CASE_RETURN_TEXT(BTA_GATTS_CHARACTERISTICS_UNOFFLOADED_EVT);
     default:
       return std::format("UNKNOWN[{}]", event);
   }
@@ -415,8 +427,15 @@ typedef struct {
   uint16_t latency;
   uint16_t cont_num;
   uint16_t timeout;
+  tGATT_SUBRATE_MODE subrate_mode;
   tGATT_STATUS status;
 } tBTA_GATTS_SUBRATE_CHG;
+
+typedef struct {
+  tCONN_ID conn_id;
+  uint32_t session_id;
+  tGATT_STATUS status;
+} tBTA_GATTS_CHARACTERISTICS_UNOFFLOADED;
 
 /* GATTS callback data */
 typedef union {
@@ -431,6 +450,8 @@ typedef union {
   tBTA_GATTS_PHY_UPDATE phy_update;   /* BTA_GATTS_PHY_UPDATE_EVT callback data */
   tBTA_GATTS_CONN_UPDATE conn_update; /* BTA_GATTS_CONN_UPDATE_EVT callback data */
   tBTA_GATTS_SUBRATE_CHG subrate_chg; /* BTA_GATTS_SUBRATE_CHG_EVT */
+  tBTA_GATTS_CHARACTERISTICS_UNOFFLOADED
+          characteristics_unoffloaded; /* BTA_GATTS_CHARACTERISTICS_UNOFFLOADED_EVT */
 } tBTA_GATTS;
 
 /* GATTS enable callback function */
@@ -460,7 +481,7 @@ typedef void(tBTA_GATTS_CBACK)(tBTA_GATTS_EVT event, tBTA_GATTS* p_data);
  ******************************************************************************/
 void BTA_GATTC_Disable(void);
 
-using BtaAppRegisterCallback = base::Callback<void(uint8_t /* app_id */, uint8_t /* status */)>;
+using BtaAppRegisterCallback = base::OnceCallback<void(uint8_t /* app_id */, uint8_t /* status */)>;
 
 /**
  * This function is called to register application callbacks with BTA GATTC
@@ -494,14 +515,16 @@ void BTA_GATTC_AppDeregister(tGATT_IF client_if);
  * Parameters       client_if: server interface.
  *                  remote_bda: remote device BD address.
  *                  connection_type: connection type used for the peer device
- *                  initiating_phys: LE PHY to use, optional
  *
  ******************************************************************************/
 void BTA_GATTC_Open(tGATT_IF client_if, const RawAddress& remote_bda,
                     tBTM_BLE_CONN_TYPE connection_type, bool opportunistic);
 void BTA_GATTC_Open(tGATT_IF client_if, const RawAddress& remote_bda, tBLE_ADDR_TYPE addr_type,
                     tBTM_BLE_CONN_TYPE connection_type, tBT_TRANSPORT transport, bool opportunistic,
-                    uint8_t initiating_phys, uint16_t preferred_mtu, bool prefer_relax_mode);
+                    uint16_t preferred_mtu, bool prefer_relax_mode);
+void BTA_GATTC_Open(tGATT_IF client_if, const RawAddress& remote_bda, tBLE_ADDR_TYPE addr_type,
+                    tBTM_BLE_CONN_TYPE connection_type, tBT_TRANSPORT transport, bool opportunistic,
+                    uint16_t preferred_mtu, bool prefer_relax_mode, bool auto_mtu_enabled);
 
 /*******************************************************************************
  *
@@ -849,6 +872,69 @@ void BTA_GATTC_ConfigureMTU(tCONN_ID conn_id, uint16_t mtu, GATT_CONFIGURE_MTU_O
                             void* cb_data);
 
 /*******************************************************************************
+ *
+ * Function         BTA_GATTC_OffloadCharacteristics
+ *
+ * Description      This function is called to offload characteristics.
+ *
+ * Parameters       conn_id - connection ID.
+ *                  service - vector describing service.
+ *                  endpoint_id - ID of the hub end point.
+ *                  hub_id - ID of the hub to which the end point belongs.
+ *                  promise - object used to signal the completion status.
+ *
+ ******************************************************************************/
+void BTA_GATTC_OffloadCharacteristics(tCONN_ID conn_id, std::vector<btgatt_db_element_t> service,
+                                      uint64_t endpoint_id, uint64_t hub_id,
+                                      std::promise<btgatt_offload_result_t> promise);
+
+/*******************************************************************************
+ *
+ * Function         BTA_GATTC_UnoffloadCharacteristics
+ *
+ * Description      This function is called to unoffload characteristics.
+ *
+ * Parameters       conn_id - connection ID.
+ *                  session_id - session ID.
+ *
+ ******************************************************************************/
+void BTA_GATTC_UnoffloadCharacteristics(tCONN_ID conn_id, int session_id);
+
+/*******************************************************************************
+ * Function         BTA_GATTC_SubrateModeRequest
+ *
+ * Description      subrate mode request, can only be used when connection is up.
+ *
+ * Parameters:      client_if     - client interface.
+ *                  bd_addr       - BD address of the peer
+ *                  subrate_mode  - subrate mode [none/low/balanced/high/lea]
+ *
+ * Returns          tGATT_STATUS
+ *
+ ******************************************************************************/
+tGATT_STATUS BTA_GATTC_SubrateModeRequest(tGATT_IF client_if, const RawAddress& bd_addr,
+                              tGATT_SUBRATE_MODE subrate_mode);
+
+/*******************************************************************************
+ * Function         BTA_GATTC_SubrateModeRequest
+ *
+ * Description      Update fixed subrate parameters of subrate mode in config.
+ *                  Subrate mode request, can only be used when connection is up.
+ *
+ * Parameters:      client_if     - client interface.
+ *                  bd_addr       - BD address of the peer
+ *                  subrate_mode  - subrate mode [none/low/balanced/high/lea]
+ *                  Subrate parameters
+ *
+ * Returns          tGATT_STATUS
+ *
+ ******************************************************************************/
+tGATT_STATUS BTA_GATTC_SubrateModeRequest(tGATT_IF client_if, const RawAddress& bd_addr,
+                                          tGATT_SUBRATE_MODE subrate_mode,
+                                          uint16_t subrate_max, uint16_t subrate_min,
+                                          uint16_t cont_num);
+
+/*******************************************************************************
  *  BTA GATT Server API
  ******************************************************************************/
 
@@ -923,8 +1009,8 @@ void BTA_GATTS_AppDeregister(tGATT_IF server_if);
  *                  service cannot be added.
  *
  ******************************************************************************/
-typedef base::Callback<void(tGATT_STATUS status, int server_if,
-                            std::vector<btgatt_db_element_t> service)>
+typedef base::OnceCallback<void(tGATT_STATUS status, int server_if,
+                                std::vector<btgatt_db_element_t> service)>
         BTA_GATTS_AddServiceCb;
 
 void BTA_GATTS_AddService(tGATT_IF server_if, std::vector<btgatt_db_element_t> service,
@@ -1043,6 +1129,35 @@ void BTA_GATTS_Close(tCONN_ID conn_id);
 
 // Adds bonded device for GATT server tracking service changes
 void BTA_GATTS_InitBonded(void);
+
+/*******************************************************************************
+ *
+ * Function         BTA_GATTS_OffloadCharacteristics
+ *
+ * Description      This function is called to offload a service.
+ *
+ * Parameters       conn_id - connection ID.
+ *                  service - vector describing service.
+ *                  endpoint_id - ID of the hub end point.
+ *                  hub_id - ID of the hub to which the end point belongs.
+ *                  promise - object used to signal the completion status.
+ *
+ ******************************************************************************/
+void BTA_GATTS_OffloadCharacteristics(tCONN_ID conn_id, std::vector<btgatt_db_element_t> service,
+                                      uint64_t endpoint_id, uint64_t hub_id,
+                                      std::promise<btgatt_offload_result_t> promise);
+
+/*******************************************************************************
+ *
+ * Function         BTA_GATTS_UnoffloadCharacteristics
+ *
+ * Description      This function is called to unoffload a session.
+ *
+ * Parameters       conn_id - connection ID.
+ *                  session_id - session ID.
+ *
+ ******************************************************************************/
+void BTA_GATTS_UnoffloadCharacteristics(tCONN_ID conn_id, int session_id);
 
 namespace std {
 template <>

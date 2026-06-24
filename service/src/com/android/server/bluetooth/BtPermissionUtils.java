@@ -26,7 +26,6 @@ import static android.permission.PermissionManager.PERMISSION_HARD_DENIED;
 import static com.android.server.bluetooth.ChangeIds.RESTRICT_ENABLE_DISABLE;
 
 import android.annotation.RequiresPermission;
-import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
@@ -41,8 +40,6 @@ import android.os.Process;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.permission.PermissionManager;
-
-import com.android.bluetooth.flags.Flags;
 
 import java.util.Objects;
 
@@ -79,7 +76,6 @@ class BtPermissionUtils {
      *
      * <p>Should be used in situations where the app op should not be noted.
      */
-    @SuppressLint("AndroidFrameworkRequiresPermission") // This method enforces the permission
     @RequiresPermission(BLUETOOTH_CONNECT)
     static boolean checkConnectPermissionForDataDelivery(
             Context ctx,
@@ -121,7 +117,7 @@ class BtPermissionUtils {
             PermissionManager permissionManager,
             String message,
             boolean requireForeground) {
-        if (isBluetoothDisallowed(userManager)) {
+        if (!BluetoothRestriction.isBluetoothAllowed()) {
             return "Bluetooth is not allowed";
         }
 
@@ -172,7 +168,7 @@ class BtPermissionUtils {
         return callingAppId == mSystemUiUid;
     }
 
-    @SuppressLint("AndroidFrameworkRequiresPermission") // Permission is not enforced, only checked
+    @SuppressWarnings("IncorrectRequiresPermissionPropagation") // No permission enforcement
     private static boolean isPrivileged(Context ctx, int pid, int uid) {
         return (ctx.checkPermission(BLUETOOTH_PRIVILEGED, pid, uid) == PERMISSION_GRANTED)
                 || (ctx.getPackageManager().checkSignatures(uid, SYSTEM_UID) == SIGNATURE_MATCH);
@@ -243,19 +239,6 @@ class BtPermissionUtils {
             return false;
         } finally {
             Binder.restoreCallingIdentity(ident);
-        }
-    }
-
-    private static boolean isBluetoothDisallowed(UserManager userManager) {
-        if (Flags.userRestrictionRefactor()) {
-            return !BluetoothRestriction.isBluetoothAllowed();
-        }
-        final long callingIdentity = Binder.clearCallingIdentity();
-        try {
-            return userManager.hasUserRestrictionForUser(
-                    UserManager.DISALLOW_BLUETOOTH, UserHandle.SYSTEM);
-        } finally {
-            Binder.restoreCallingIdentity(callingIdentity);
         }
     }
 

@@ -20,23 +20,23 @@ import static android.bluetooth.BluetoothDevice.TRANSPORT_AUTO;
 
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.OobData;
-import android.os.ParcelUuid;
 
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 
 import java.io.FileDescriptor;
+import java.lang.annotation.Native;
 
 /** Native interface to be used by AdapterService */
 public class AdapterNativeInterface {
-    private static final String TAG =
-            Utils.BT_PREFIX + AdapterNativeInterface.class.getSimpleName();
+    private static final String TAG = Util.BT_PREFIX + AdapterNativeInterface.class.getSimpleName();
 
-    private JniCallbacks mJniCallbacks;
+    @Native private AdapterNativeCallback mNativeCallback;
 
     AdapterNativeInterface() {}
 
-    JniCallbacks getCallbacks() {
-        return mJniCallbacks;
+    AdapterNativeCallback getCallbacks() {
+        return mNativeCallback;
     }
 
     boolean init(
@@ -47,7 +47,7 @@ public class AdapterNativeInterface {
             int configCompareResult,
             boolean isAtvDevice,
             String hciInstanceName) {
-        mJniCallbacks = new JniCallbacks(service, adapterProperties);
+        mNativeCallback = new AdapterNativeCallback(service, adapterProperties);
         return initNative(
                 startRestricted,
                 isCommonCriteriaMode,
@@ -60,8 +60,8 @@ public class AdapterNativeInterface {
         cleanupNative();
     }
 
-    boolean enable() {
-        return enableNative();
+    boolean enable(String localName) {
+        return enableNative(localName);
     }
 
     boolean disable() {
@@ -70,6 +70,10 @@ public class AdapterNativeInterface {
 
     boolean setScanMode(int mode) {
         return setScanModeNative(mode);
+    }
+
+    void setLocalName(String localName) {
+        setLocalNameNative(localName);
     }
 
     boolean setAdapterProperty(int type, byte[] val) {
@@ -150,10 +154,6 @@ public class AdapterNativeInterface {
 
     int readEnergyInfo() {
         return readEnergyInfoNative();
-    }
-
-    boolean factoryReset() {
-        return factoryResetNative();
     }
 
     void dump(FileDescriptor fd, String[] arguments) {
@@ -248,18 +248,6 @@ public class AdapterNativeInterface {
         return pbapPseDynamicVersionUpgradeIsEnabledNative();
     }
 
-    int getSocketL2capLocalChannelId(ParcelUuid connectionUuid) {
-        return getSocketL2capLocalChannelIdNative(
-                connectionUuid.getUuid().getLeastSignificantBits(),
-                connectionUuid.getUuid().getMostSignificantBits());
-    }
-
-    int getSocketL2capRemoteChannelId(ParcelUuid connectionUuid) {
-        return getSocketL2capRemoteChannelIdNative(
-                connectionUuid.getUuid().getLeastSignificantBits(),
-                connectionUuid.getUuid().getMostSignificantBits());
-    }
-
     boolean setDefaultEventMaskExcept(long mask, long leMask) {
         return setDefaultEventMaskExceptNative(mask, leMask);
     }
@@ -292,16 +280,6 @@ public class AdapterNativeInterface {
         return restoreFilterAcceptListNative();
     }
 
-    /**********************************************************************************************/
-    /*********************************** callbacks from native ************************************/
-    /**********************************************************************************************/
-
-    // See JniCallbacks.java
-
-    /**********************************************************************************************/
-    /******************************************* native *******************************************/
-    /**********************************************************************************************/
-
     private native boolean initNative(
             boolean startRestricted,
             boolean isCommonCriteriaMode,
@@ -311,11 +289,13 @@ public class AdapterNativeInterface {
 
     private native void cleanupNative();
 
-    private native boolean enableNative();
+    private native boolean enableNative(String localName);
 
     private native boolean disableNative();
 
     private native boolean setScanModeNative(int mode);
+
+    private native void setLocalNameNative(String localName);
 
     private native boolean setAdapterPropertyNative(int type, byte[] val);
 
@@ -357,8 +337,6 @@ public class AdapterNativeInterface {
     private native boolean getRemoteMasInstancesNative(byte[] address);
 
     private native int readEnergyInfoNative();
-
-    private native boolean factoryResetNative();
 
     private native void dumpNative(FileDescriptor fd, String[] arguments);
 
@@ -411,12 +389,6 @@ public class AdapterNativeInterface {
     private native int getRemotePbapPceVersionNative(String address);
 
     private native boolean pbapPseDynamicVersionUpgradeIsEnabledNative();
-
-    private native int getSocketL2capLocalChannelIdNative(
-            long connectionUuidLsb, long connectionUuidMsb);
-
-    private native int getSocketL2capRemoteChannelIdNative(
-            long connectionUuidLsb, long connectionUuidMsb);
 
     private native boolean setDefaultEventMaskExceptNative(long mask, long leMask);
 

@@ -41,9 +41,9 @@ class BluetoothHfpAgSnippet : Snippet {
         instrumentation.uiAutomation.adoptShellPermissionIdentity()
     }
 
-    /** Setup a HFP AG callback with ID [callbackId]. */
-    @AsyncRpc(description = "Setup HFP AG callbacks.")
-    fun hfpAgSetup(callbackId: String) {
+    /** Register a HFP AG callback with ID [callbackId]. */
+    @AsyncRpc(description = "Register HFP AG callbacks.")
+    fun registerHfpAgCallback(callbackId: String) {
         val intentFilter =
             IntentFilter().apply {
                 addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
@@ -90,9 +90,9 @@ class BluetoothHfpAgSnippet : Snippet {
         context.registerReceiver(broadcastReceivers[callbackId], intentFilter)
     }
 
-    /** Teardown a HFP AG callback with ID [callbackId]. */
-    @Rpc(description = "Teardown HFP AG callbacks.")
-    fun hfpAgTeardown(callbackId: String) {
+    /** Unregister a HFP AG callback with ID [callbackId]. */
+    @Rpc(description = "Unregister HFP AG callbacks.")
+    fun unregisterHfpAgCallback(callbackId: String) {
         broadcastReceivers.remove(callbackId)?.let { context.unregisterReceiver(it) }
     }
 
@@ -125,6 +125,16 @@ class BluetoothHfpAgSnippet : Snippet {
         return BluetoothHeadset::class.java.getMethod("isInbandRingingEnabled").invoke(proxy)
             as Boolean
     }
+
+    /** Starts voice recognition. */
+    @Rpc(description = "Start voice recognition")
+    fun hfpAgStartVoiceRecognition(address: String): Boolean =
+        proxy.startVoiceRecognition(bluetoothAdapter.getRemoteDevice(address))
+
+    /** Stops voice recognition. */
+    @Rpc(description = "Stop voice recognition")
+    fun hfpAgStopVoiceRecognition(address: String): Boolean =
+        proxy.stopVoiceRecognition(bluetoothAdapter.getRemoteDevice(address))
 
     /** Gets SCO connection state. */
     @Rpc(description = "Get SCO connection state")

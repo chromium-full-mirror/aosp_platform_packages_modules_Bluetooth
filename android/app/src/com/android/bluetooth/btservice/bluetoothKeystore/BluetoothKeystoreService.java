@@ -21,10 +21,10 @@ import static java.util.Objects.requireNonNullElseGet;
 import android.annotation.Nullable;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
-import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
 import com.android.bluetooth.BluetoothKeystoreProto;
+import com.android.bluetooth.flags.Flags;
 import com.android.internal.annotations.VisibleForTesting;
 
 import com.google.protobuf.ByteString;
@@ -62,8 +62,6 @@ import javax.crypto.spec.GCMParameterSpec;
 /** Service used for handling encryption and decryption of the bt_config.conf */
 public class BluetoothKeystoreService {
     private static final String TAG = BluetoothKeystoreService.class.getSimpleName();
-
-    private static BluetoothKeystoreService sBluetoothKeystoreService;
 
     private static final String CIPHER_ALGORITHM = "AES/GCM/NoPadding";
     private static final int GCM_TAG_LENGTH = 128;
@@ -131,11 +129,6 @@ public class BluetoothKeystoreService {
         debugLog("start");
         KeyStore keyStore;
 
-        if (sBluetoothKeystoreService != null) {
-            errorLog("start() called twice");
-            return;
-        }
-
         keyStore = getKeyStore();
 
         // Confirm whether to enable Common Criteria mode for the first time.
@@ -162,7 +155,7 @@ public class BluetoothKeystoreService {
     public void cleanup() {
         debugLog("cleanup");
 
-        if (sBluetoothKeystoreService == null) {
+        if (!Flags.mainlineBetaStorage()) {
             debugLog("cleanup() called before start()");
             return;
         }
@@ -205,10 +198,6 @@ public class BluetoothKeystoreService {
     public void loadConfigData() {
         try {
             debugLog("loadConfigData");
-
-            if (BluetoothProperties.factory_reset().orElse(false)) {
-                cleanupAll();
-            }
 
             if (Files.exists(Paths.get(CONFIG_CHECKSUM_ENCRYPTION_PATH))) {
                 debugLog("Load encryption file.");
@@ -300,7 +289,7 @@ public class BluetoothKeystoreService {
 
     /** Clean up memory and all files. */
     @VisibleForTesting
-    public void cleanupAll() throws IOException {
+    void cleanupAll() throws IOException {
         cleanupFile();
         cleanupMemory();
     }

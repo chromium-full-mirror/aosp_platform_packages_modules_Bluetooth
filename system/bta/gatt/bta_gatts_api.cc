@@ -127,13 +127,13 @@ static void bta_gatts_add_service_impl(tGATT_IF server_if, std::vector<btgatt_db
   log::info("rcb_idx={}", rcb_idx);
 
   if (rcb_idx == BTA_GATTS_INVALID_APP) {
-    cb.Run(GATT_ERROR, server_if, std::move(service));
+    std::move(cb).Run(GATT_ERROR, server_if, std::move(service));
     return;
   }
 
   uint8_t srvc_idx = bta_gatts_alloc_srvc_cb(&bta_gatts_cb, rcb_idx);
   if (srvc_idx == BTA_GATTS_INVALID_APP) {
-    cb.Run(GATT_ERROR, server_if, std::move(service));
+    std::move(cb).Run(GATT_ERROR, server_if, std::move(service));
     return;
   }
 
@@ -141,7 +141,7 @@ static void bta_gatts_add_service_impl(tGATT_IF server_if, std::vector<btgatt_db
   if (status != GATT_SERVICE_STARTED) {
     memset(&bta_gatts_cb.srvc_cb[srvc_idx], 0, sizeof(tBTA_GATTS_SRVC_CB));
     log::error("service creation failed.");
-    cb.Run(GATT_ERROR, server_if, std::move(service));
+    std::move(cb).Run(GATT_ERROR, server_if, std::move(service));
     return;
   }
 
@@ -151,7 +151,7 @@ static void bta_gatts_add_service_impl(tGATT_IF server_if, std::vector<btgatt_db
   bta_gatts_cb.srvc_cb[srvc_idx].service_id = service[0].attribute_handle;
   bta_gatts_cb.srvc_cb[srvc_idx].idx = srvc_idx;
 
-  cb.Run(GATT_SUCCESS, server_if, std::move(service));
+  std::move(cb).Run(GATT_SUCCESS, server_if, std::move(service));
   return;
 }
 
@@ -373,4 +373,39 @@ void BTA_GATTS_InitBonded(void) {
   BT_HDR_RIGID* p_buf = (BT_HDR_RIGID*)osi_malloc(sizeof(BT_HDR_RIGID));
   p_buf->event = BTA_GATTS_API_INIT_BONDED_EVT;
   bta_sys_sendmsg(p_buf);
+}
+
+/*******************************************************************************
+ *
+ * Function         BTA_GATTS_OffloadCharacteristics
+ *
+ * Description      This function is called to offload a service.
+ *
+ * Parameters       conn_id - connection ID.
+ *                  service - vector describing service.
+ *                  endpoint_id - ID of the hub end point.
+ *                  hub_id - ID of the hub to which the end point belongs.
+ *                  promise - object used to signal the completion status.
+ *
+ ******************************************************************************/
+void BTA_GATTS_OffloadCharacteristics(tCONN_ID conn_id, std::vector<btgatt_db_element_t> service,
+                                      uint64_t endpoint_id, uint64_t hub_id,
+                                      std::promise<btgatt_offload_result_t> promise) {
+  log::verbose("conn_id: {}, endpoint_id: {}, hub_id: {}", conn_id, endpoint_id, hub_id);
+  GATTS_OffloadCharacteristics(conn_id, service.data(), service.size(), endpoint_id, hub_id,
+                               std::move(promise));
+}
+
+/*******************************************************************************
+ *
+ * Function         BTA_GATTS_UnoffloadCharacteristics
+ *
+ * Description      This function is called to unoffload a session.
+ *
+ * Parameters       conn_id - connection ID.
+ *                  session_id - session ID.
+ *
+ ******************************************************************************/
+void BTA_GATTS_UnoffloadCharacteristics(tCONN_ID conn_id, int session_id) {
+  do_in_main_thread(base::BindOnce(&GATTS_UnoffloadCharacteristics, conn_id, session_id));
 }

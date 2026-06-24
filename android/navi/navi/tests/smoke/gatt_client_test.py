@@ -15,12 +15,13 @@
 import asyncio
 import datetime
 import secrets
+import struct
 import uuid
 
 from bumble import device
 from bumble import gatt
 from bumble import hci
-from mobly import asserts
+from bumble.profiles import gatt_service
 from mobly import test_runner
 from mobly import signals
 from typing_extensions import override
@@ -28,6 +29,8 @@ from typing_extensions import override
 from navi.tests import navi_test_base
 from navi.utils import android_constants
 from navi.utils import bl4a_api
+
+_DEFAULT_TIMEOUT = 10.0
 
 
 class GattClientTest(navi_test_base.TwoDevicesTestBase):
@@ -56,12 +59,15 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
         services = await gatt_client.discover_services()
 
         self.logger.info("[DUT] Check services.")
-        asserts.assert_true(
-            any(service.uuid == service_uuid for service in services),
-            "Cannot find service UUID?",
-        )
+        service_uuids = [service.uuid for service in services]
+        self.assertIn(service_uuid, service_uuids)
 
-    async def test_write_characteristic(self) -> None:
+    @navi_test_base.named_parameterized(
+        no_requirements=gatt.Characteristic.Permissions.WRITEABLE,
+        insufficient_authentication=gatt.Characteristic.Permissions.WRITE_REQUIRES_AUTHENTICATION,
+        insufficient_encryption=gatt.Characteristic.Permissions.WRITE_REQUIRES_ENCRYPTION,
+    )
+    async def test_write_characteristic(self, permissions: gatt.Characteristic.Permissions) -> None:
         """Test write value to characteristics.
 
     Test steps:
@@ -71,6 +77,9 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
       4. Discover GATT services from DUT.
       5. Write characteristic value on REF from DUT.
       6. Check written value.
+
+    Args:
+      permissions: The permissions of the characteristic.
     """
         service_uuid = str(uuid.uuid4())
         characteristic_uuid = str(uuid.uuid4())
@@ -88,14 +97,15 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
                     gatt.Characteristic(
                         uuid=characteristic_uuid,
                         properties=gatt.Characteristic.Properties.WRITE,
-                        permissions=gatt.Characteristic.Permissions.WRITEABLE,
+                        permissions=permissions,
                         value=gatt.CharacteristicValue(write=on_write),
                     )
                 ],
             ))
 
         self.logger.info("[REF] Start advertising.")
-        await self.ref.device.start_advertising(own_address_type=hci.OwnAddressType.RANDOM)
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT):
+            await self.ref.device.start_advertising(own_address_type=hci.OwnAddressType.RANDOM)
         self.logger.info("[DUT] Connect to REF.")
         gatt_client = await self.dut.bl4a.connect_gatt_client(
             str(self.ref.random_address),
@@ -108,17 +118,38 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
         if not characteristic.handle:
             self.fail("Cannot find characteristic.")
 
-        self.logger.info("[DUT] Write characteristic.")
         expected_value = secrets.token_bytes(16)
-        await gatt_client.write_characteristic(
-            characteristic.handle,
-            expected_value,
-            android_constants.GattWriteType.DEFAULT,
-        )
-        self.logger.info("[REF] Check write value.")
-        asserts.assert_equal(expected_value, await write_future)
+        # When receiving insufficient_authentication or insufficient_encryption
+        # error, Android should start pairing process.
+        if permissions > gatt.Characteristic.Permissions.WRITEABLE:
+            with self.dut.bl4a.register_callback(bl4a_api.Module.ADAPTER) as adapter_cb:
+                self.logger.info("[DUT] Write characteristic.")
+                write_task = asyncio.create_task(
+                    gatt_client.write_characteristic(
+                        characteristic.handle,
+                        expected_value,
+                        android_constants.GattWriteType.DEFAULT,
+                    ))
+                self.test_case_context.callback(write_task.cancel)
+                self.logger.info("[DUT] Wait for pairing request.")
+                await adapter_cb.wait_for_event(bl4a_api.PairingRequest)
+        else:
+            self.logger.info("[DUT] Write characteristic.")
+            await gatt_client.write_characteristic(
+                characteristic.handle,
+                expected_value,
+                android_constants.GattWriteType.DEFAULT,
+            )
+            self.logger.info("[REF] Check write value.")
+            async with self.assert_not_timeout(_DEFAULT_TIMEOUT):
+                self.assertEqual(expected_value, await write_future)
 
-    async def test_characteristic_notification(self) -> None:
+    @navi_test_base.named_parameterized(
+        no_requirements=gatt.Characteristic.Permissions.READABLE,
+        insufficient_authentication=gatt.Characteristic.Permissions.READ_REQUIRES_AUTHENTICATION,
+        insufficient_encryption=gatt.Characteristic.Permissions.READ_REQUIRES_ENCRYPTION,
+    )
+    async def test_read_characteristic(self, permissions: gatt.Characteristic.Permissions) -> None:
         """Test read value from characteristics.
 
     Test steps:
@@ -128,6 +159,9 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
       4. Discover GATT services from DUT.
       5. Read characteristic value on REF from DUT.
       6. Check read value.
+
+    Args:
+      permissions: The permissions of the characteristic.
     """
         service_uuid = str(uuid.uuid4())
         characteristic_uuid = str(uuid.uuid4())
@@ -140,14 +174,15 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
                     gatt.Characteristic(
                         uuid=characteristic_uuid,
                         properties=gatt.Characteristic.Properties.READ,
-                        permissions=gatt.Characteristic.Permissions.READABLE,
+                        permissions=permissions,
                         value=expected_value,
                     )
                 ],
             ))
 
         self.logger.info("[REF] Start advertising.")
-        await self.ref.device.start_advertising(own_address_type=hci.OwnAddressType.RANDOM)
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT):
+            await self.ref.device.start_advertising(own_address_type=hci.OwnAddressType.RANDOM)
         self.logger.info("[DUT] Connect to REF.")
         gatt_client = await self.dut.bl4a.connect_gatt_client(
             str(self.ref.random_address),
@@ -160,10 +195,21 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
         if not characteristic.handle:
             self.fail("Cannot find characteristic.")
 
-        self.logger.info("[DUT] Read characteristic.")
-        actual_value = await gatt_client.read_characteristic(characteristic.handle)
-        self.logger.info("Check read value.")
-        asserts.assert_equal(expected_value, actual_value)
+        # When receiving insufficient_authentication or insufficient_encryption
+        # error, Android should start pairing process.
+        if permissions > gatt.Characteristic.Permissions.READABLE:
+            with self.dut.bl4a.register_callback(bl4a_api.Module.ADAPTER) as adapter_cb:
+                self.logger.info("[DUT] Read characteristic.")
+                read_task = asyncio.create_task(
+                    gatt_client.read_characteristic(characteristic.handle))
+                self.test_case_context.callback(read_task.cancel)
+                self.logger.info("[DUT] Wait for pairing request.")
+                await adapter_cb.wait_for_event(bl4a_api.PairingRequest)
+        else:
+            self.logger.info("[DUT] Read characteristic.")
+            actual_value = await gatt_client.read_characteristic(characteristic.handle)
+            self.logger.info("Check read value.")
+            self.assertEqual(expected_value, actual_value)
 
     async def test_subscribe_characteristic(self) -> None:
         """Test subscribe value from characteristics.
@@ -221,7 +267,47 @@ class GattClientTest(navi_test_base.TwoDevicesTestBase):
             lambda e: (e.handle == characteristic.handle),
             datetime.timedelta(seconds=10),
         )
-        asserts.assert_equal(expected_value, notification.value)
+        self.assertEqual(expected_value, notification.value)
+
+    async def test_service_changed_indication(self) -> None:
+        """Test service changed indication.
+
+    Test steps:
+      1. Connect GATT to REF from DUT.
+      2. Discover services from DUT.
+      3. Notify service changed from REF.
+      4. Wait for service changed indication from DUT.
+    """
+        ref_gatt_service = self.ref.device.gatt_service
+        assert isinstance(ref_gatt_service, gatt_service.GenericAttributeProfileService)
+        ref_service_changed_characteristic = (ref_gatt_service.service_changed_characteristic)
+        assert isinstance(ref_service_changed_characteristic, gatt.Characteristic)
+
+        self.logger.info("[REF] Start advertising.")
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT):
+            await self.ref.device.start_advertising(own_address_type=hci.OwnAddressType.RANDOM)
+        self.logger.info("[DUT] Connect to REF.")
+        gatt_client = await self.dut.bl4a.connect_gatt_client(
+            str(self.ref.random_address),
+            android_constants.Transport.LE,
+            android_constants.AddressTypeStatus.RANDOM,
+        )
+        self.logger.info("[DUT] Discover services.")
+        await gatt_client.discover_services()
+
+        self.logger.info("[REF] Notify service changed.")
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT):
+            for connection in self.ref.device.connections.values():
+                # This is a workaround - Currently, Android doesn't always subscribe to
+                # the service changed characteristic after connection.
+                await self.ref.device.indicate_subscriber(
+                    connection=connection,
+                    attribute=ref_service_changed_characteristic,
+                    value=struct.pack("<HH", 0x0000, 0xFFFF),
+                    force=True,
+                )
+        self.logger.info("[DUT] Wait for service changed.")
+        await gatt_client.wait_for_event(bl4a_api.GattServiceChanged)
 
 
 if __name__ == "__main__":

@@ -32,7 +32,9 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Log;
 
+import com.android.bluetooth.ActionOnDeathRecipient;
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.flags.Flags;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.Collections;
@@ -44,9 +46,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /** Manages Bluetooth LE Periodic scans */
-@VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
 public class PeriodicScanManager {
-    private static final String TAG = PeriodicScanManager.class.getSimpleName();
+    private static final String TAG =
+            ScanUtil.TAG_PREFIX + PeriodicScanManager.class.getSimpleName();
 
     @VisibleForTesting int mTempRegistrationId = -1;
 
@@ -66,8 +68,10 @@ public class PeriodicScanManager {
         mAdapterService = requireNonNull(service);
         mAdapter = mAdapterService.getSystemService(BluetoothManager.class).getAdapter();
         mScanController = scanController;
+        var nativeCallback = new PeriodicScanNativeCallback(mAdapterService, this);
         mNativeInterface =
-                requireNonNullElseGet(nativeInterface, () -> new PeriodicScanNativeInterface(this));
+                requireNonNullElseGet(
+                        nativeInterface, () -> new PeriodicScanNativeInterface(nativeCallback));
         mNativeInterface.init();
     }
 
@@ -88,22 +92,8 @@ public class PeriodicScanManager {
             String address,
             Integer skip,
             Integer timeout,
-            SyncDeathRecipient deathRecipient,
+            ActionOnDeathRecipient deathRecipient,
             IPeriodicAdvertisingCallback callback) {}
-
-    private final class SyncDeathRecipient implements IBinder.DeathRecipient {
-        private final IPeriodicAdvertisingCallback mCallback;
-
-        SyncDeathRecipient(IPeriodicAdvertisingCallback callback) {
-            mCallback = callback;
-        }
-
-        @Override
-        public void binderDied() {
-            Log.d(TAG, "Binder is dead - unregistering advertising set");
-            stopSync(mCallback);
-        }
-    }
 
     private Map.Entry<IBinder, SyncTransferInfo> findSyncTransfer(String address) {
         return mSyncTransfers.entrySet().stream()
@@ -180,6 +170,9 @@ public class PeriodicScanManager {
                                             status));
 
                 } else {
+                    if (Flags.leaudioBroadcastImproveSourceOperations()) {
+                        it.remove();
+                    }
                     callbackToApp(
                             () ->
                                     callback.onSyncEstablished(
@@ -191,7 +184,9 @@ public class PeriodicScanManager {
                                             status));
                     IBinder binder = e.getKey();
                     binder.unlinkToDeath(e.getValue().deathRecipient, 0);
-                    it.remove();
+                    if (!Flags.leaudioBroadcastImproveSourceOperations()) {
+                        it.remove();
+                    }
                 }
             }
         }
@@ -243,7 +238,17 @@ public class PeriodicScanManager {
     public void startSync(
             ScanResult scanResult, int skip, int timeout, IPeriodicAdvertisingCallback callback) {
         mScanController.enforceScanThread();
-        SyncDeathRecipient deathRecipient = new SyncDeathRecipient(callback);
+        startSync(scanResult.getDevice(), scanResult.getAdvertisingSid(), skip, timeout, callback);
+    }
+
+    public void startSync(
+            BluetoothDevice device,
+            int sid,
+            int skip,
+            int timeout,
+            IPeriodicAdvertisingCallback callback) {
+        mScanController.enforceScanThread();
+        var deathRecipient = syncDeathRecipient(callback);
         IBinder binder = callback.asBinder();
         try {
             binder.linkToDeath(deathRecipient, 0);
@@ -251,9 +256,8 @@ public class PeriodicScanManager {
             throw new IllegalArgumentException("Can't link to periodic scanner death");
         }
 
-        String address = scanResult.getDevice().getAddress();
-        int addressType = scanResult.getDevice().getAddressType();
-        int sid = scanResult.getAdvertisingSid();
+        String address = device.getAddress();
+        int addressType = device.getAddressType();
         Log.d(
                 TAG,
                 "startSync for Device: "
@@ -301,7 +305,7 @@ public class PeriodicScanManager {
                 binder, new SyncInfo(cbId, sid, address, skip, timeout, deathRecipient, callback));
 
         Log.d(TAG, "startSync() - reg_id=" + cbId + ", callback: " + binder);
-        mNativeInterface.startSync(sid, address, skip, timeout, cbId);
+        mNativeInterface.startSync(sid, address, addressType, skip, timeout, cbId);
     }
 
     public void stopSync(IPeriodicAdvertisingCallback callback) {
@@ -371,11 +375,10 @@ public class PeriodicScanManager {
             int advHandle,
             IPeriodicAdvertisingCallback callback) {
         mScanController.enforceScanThread();
-        SyncDeathRecipient deathRecipient = new SyncDeathRecipient(callback);
         IBinder binder = callback.asBinder();
         Log.d(TAG, "transferSetInfo() " + binder);
         try {
-            binder.linkToDeath(deathRecipient, 0);
+            binder.linkToDeath(syncDeathRecipient(callback), 0);
         } catch (RemoteException e) {
             throw new IllegalArgumentException("Can't link to periodic scanner death");
         }
@@ -385,5 +388,11 @@ public class PeriodicScanManager {
 
     void doOnScanThread(Runnable r) {
         mScanController.doOnScanThread(r);
+    }
+
+    private ActionOnDeathRecipient syncDeathRecipient(IPeriodicAdvertisingCallback callback) {
+        var message = "Unregistering advertising set for " + callback;
+        Runnable onDeathAction = () -> doOnScanThread(() -> stopSync(callback));
+        return new ActionOnDeathRecipient(TAG, message, onDeathAction);
     }
 }

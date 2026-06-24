@@ -113,7 +113,7 @@ struct codec_manager_impl {
 public:
   codec_manager_impl() {
     offload_enable_ = osi_property_get_bool("ro.bluetooth.leaudio_offload.supported", false) &&
-                      !osi_property_get_bool("persist.bluetooth.leaudio_offload.disabled", true);
+                      !osi_property_get_bool("persist.bluetooth.leaudio_offload.disabled", false);
     if (offload_enable_ == false) {
       log::info("offload disabled");
       return;
@@ -601,7 +601,7 @@ public:
     log::info("UpdateSupportedBroadcastConfig");
 
     for (const auto& adsp_audio_set_conf : adsp_capabilities) {
-      if (adsp_audio_set_conf.confs.sink.empty() || !adsp_audio_set_conf.confs.source.empty()) {
+      if (adsp_audio_set_conf.confs.sink.empty()) {
         continue;
       }
 
@@ -645,7 +645,8 @@ public:
                 sample_rate, frame_duration);
       }
 
-      log::info("broadcast_config sampling_rate: {}", broadcast_config.sampling_rate);
+      log::info("broadcast_config sampling_rate: {}, {}", broadcast_config.sampling_rate,
+                broadcast_config.stream_map.size() == 1 ? "MONO" : "STEREO");
     }
   }
 
@@ -1179,11 +1180,6 @@ private:
 
         // Check for number of ASEs mismatch
         if (adsp_set_ase_confs.size() != software_set_ase_confs.size()) {
-          log::error("{}: ADSP config size mismatches the software: {} != {}",
-                     direction == types::kLeAudioDirectionSink ? "Sink" : "Source",
-                     adsp_set_ase_confs.size(), software_set_ase_confs.size());
-          log::error("software: {}, adsp: {}", software_audio_set_conf->name,
-                     adsp_audio_set_conf.name);
           continue;
         }
 
@@ -1336,8 +1332,8 @@ private:
       for (const auto& software_audio_set_conf : *software_audio_set_confs) {
         if (IsAudioSetConfigurationMatched(software_audio_set_conf, offload_preference_set,
                                            adsp_capabilities.unicast_offload_capabilities)) {
-          log::info("Offload supported conf, context type: {}, settings -> {}", (int)ctx_type,
-                    software_audio_set_conf->name);
+          log::info("Offload supported conf, context type: {}, settings -> {}",
+                    common::ToString(ctx_type), software_audio_set_conf->name);
           if (dual_bidirection_swb_supported_ &&
               AudioSetConfigurationProvider::Get()->CheckConfigurationIsDualBiDirSwb(
                       *software_audio_set_conf)) {

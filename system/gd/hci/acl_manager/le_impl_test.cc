@@ -17,6 +17,7 @@
 #include "hci/acl_manager/le_impl.h"
 
 #include <bluetooth/log.h>
+#include <bluetooth/types/bt_octets.h>
 #include <com_android_bluetooth_flags.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -33,7 +34,6 @@
 #include "hci/controller_mock.h"
 #include "hci/hci_layer_fake.h"
 #include "hci/hci_packets.h"
-#include "hci/octets.h"
 #include "os/handler.h"
 #include "packet/bit_inserter.h"
 #include "packet/raw_builder.h"
@@ -43,7 +43,6 @@ using namespace bluetooth;
 using namespace std::chrono_literals;
 
 using ::bluetooth::common::BidiQueue;
-using ::bluetooth::common::Callback;
 using ::bluetooth::os::Handler;
 using ::bluetooth::os::Thread;
 using ::bluetooth::packet::BitInserter;
@@ -62,7 +61,7 @@ using ::testing::WithArg;
 namespace {
 constexpr bool kCrashOnUnknownHandle = true;
 constexpr char kFixedAddress[] = "c0:aa:bb:cc:dd:ee";
-constexpr char kLocalRandomAddress[] = "04:c0:aa:bb:cc:dd:ee";
+constexpr char kLocalRandomAddress[] = "04:c0:aa:bb:cc:dd";
 constexpr char kRemoteRandomAddress[] = "04:11:22:33:44:55";
 constexpr char kRemoteAddress[] = "00:11:22:33:44:55";
 constexpr uint16_t kHciHandle = 123;
@@ -70,7 +69,7 @@ constexpr uint16_t kHciHandle = 123;
 [[maybe_unused]] constexpr bool kSkipFilterAcceptList = !kAddToFilterAcceptList;
 [[maybe_unused]] constexpr bool kIsDirectConnection = true;
 [[maybe_unused]] constexpr bool kIsBackgroundConnection = !kIsDirectConnection;
-constexpr hci::Octet16 kRotationIrk = {};
+constexpr Octet16 kRotationIrk = {};
 constexpr std::chrono::milliseconds kMinimumRotationTime(14 * 1000);
 constexpr std::chrono::milliseconds kMaximumRotationTime(16 * 1000);
 constexpr uint16_t kIntervalMax = 0x40;
@@ -255,22 +254,20 @@ protected:
                                          kCrashOnUnknownHandle, *classic_acl_count_provider_);
     le_impl_->handle_register_le_callbacks(&mock_le_connection_callbacks_, handler_);
 
-    Address address;
-    Address::FromString(kFixedAddress, address);
-    fixed_address_ = AddressWithType(address, AddressType::PUBLIC_DEVICE_ADDRESS);
+    fixed_address_ = AddressWithType(Address::FromString(kFixedAddress).value(),
+                                     AddressType::PUBLIC_DEVICE_ADDRESS);
 
-    Address::FromString(kRemoteAddress, remote_address_);
+    remote_address_ = Address::FromString(kRemoteAddress).value();
     remote_public_address_with_type_ =
             AddressWithType(remote_address_, AddressType::PUBLIC_DEVICE_ADDRESS);
 
-    Address::FromString(kLocalRandomAddress, local_rpa_);
-    Address::FromString(kRemoteRandomAddress, remote_rpa_);
+    local_rpa_ = Address::FromString(kLocalRandomAddress).value();
+    remote_rpa_ = Address::FromString(kRemoteRandomAddress).value();
   }
 
   void set_random_device_address_policy() {
     // Set address policy
-    hci::Address address;
-    Address::FromString("D0:05:04:03:02:01", address);
+    hci::Address address = Address::FromString("D0:05:04:03:02:01").value();
     hci::AddressWithType address_with_type(address, hci::AddressType::RANDOM_DEVICE_ADDRESS);
     Octet16 rotation_irk{};
     auto minimum_rotation_time = std::chrono::milliseconds(7 * 60 * 1000);
@@ -287,8 +284,7 @@ protected:
                                                               int handle) {
     std::unique_ptr<LeAclConnection> connection;
 
-    hci::Address remote_address;
-    Address::FromString(remote_address_string, remote_address);
+    hci::Address remote_address = Address::FromString(remote_address_string).value();
     hci::AddressWithType address_with_type(remote_address, hci::AddressType::PUBLIC_DEVICE_ADDRESS);
     le_impl_->create_le_connection(address_with_type, true, false, false);
     sync_handler();
@@ -329,8 +325,7 @@ protected:
 
   LeExtendedCreateConnectionView get_view_from_creating_connection(
           std::string remote_address_string) {
-    hci::Address remote_address;
-    Address::FromString(remote_address_string, remote_address);
+    hci::Address remote_address = Address::FromString(remote_address_string).value();
     hci::AddressWithType address_with_type(remote_address, hci::AddressType::PUBLIC_DEVICE_ADDRESS);
 
     // Create connection
@@ -552,8 +547,7 @@ TEST_F(LeImplTest, connection_complete_with_periperal_role) {
   ASSERT_EQ(ConnectabilityState::ARMED, le_impl_->connectability_state_);
 
   // Receive connection complete of incoming connection (Role::PERIPHERAL)
-  hci::Address remote_address;
-  Address::FromString("D0:05:04:03:02:01", remote_address);
+  hci::Address remote_address = Address::FromString("D0:05:04:03:02:01").value();
   hci::AddressWithType address_with_type(remote_address, hci::AddressType::PUBLIC_DEVICE_ADDRESS);
   EXPECT_CALL(mock_le_connection_callbacks_, OnLeConnectSuccess(address_with_type, _));
   hci_layer_->IncomingLeMetaEvent(LeConnectionCompleteBuilder::Create(
@@ -585,8 +579,7 @@ TEST_F(LeImplTest, enhanced_connection_complete_with_periperal_role) {
   ASSERT_EQ(ConnectabilityState::ARMED, le_impl_->connectability_state_);
 
   // Receive connection complete of incoming connection (Role::PERIPHERAL)
-  hci::Address remote_address;
-  Address::FromString("D0:05:04:03:02:01", remote_address);
+  hci::Address remote_address = Address::FromString("D0:05:04:03:02:01").value();
   hci::AddressWithType address_with_type(remote_address, hci::AddressType::PUBLIC_DEVICE_ADDRESS);
   EXPECT_CALL(mock_le_connection_callbacks_, OnLeConnectSuccess(address_with_type, _));
   hci_layer_->IncomingLeMetaEvent(LeEnhancedConnectionCompleteBuilder::Create(
@@ -602,8 +595,7 @@ TEST_F(LeImplTest, enhanced_connection_complete_with_periperal_role) {
 TEST_F(LeImplTest, connection_complete_with_central_role) {
   set_random_device_address_policy();
 
-  hci::Address remote_address;
-  Address::FromString("D0:05:04:03:02:01", remote_address);
+  hci::Address remote_address = Address::FromString("D0:05:04:03:02:01").value();
   hci::AddressWithType address_with_type(remote_address, hci::AddressType::PUBLIC_DEVICE_ADDRESS);
   // Create connection
   le_impl_->create_le_connection(address_with_type, true, false, false);
@@ -632,8 +624,7 @@ TEST_F(LeImplTest, enhanced_connection_complete_with_central_role) {
   set_random_device_address_policy();
 
   controller_->AddSupported(OpCode::LE_EXTENDED_CREATE_CONNECTION);
-  hci::Address remote_address;
-  Address::FromString("D0:05:04:03:02:01", remote_address);
+  hci::Address remote_address = Address::FromString("D0:05:04:03:02:01").value();
   hci::AddressWithType address_with_type(remote_address, hci::AddressType::PUBLIC_DEVICE_ADDRESS);
   // Create connection
   le_impl_->create_le_connection(address_with_type, true, false, false);
@@ -1359,8 +1350,7 @@ TEST_P(LeImplTestParameterizedByConnectionCompleteEventType,
 
   auto advertising_set_id = 13;
 
-  hci::Address advertiser_address;
-  Address::FromString("A0:A1:A2:A3:A4:A5", advertiser_address);
+  hci::Address advertiser_address = Address::FromString("A0:A1:A2:A3:A4:A5").value();
   hci::AddressWithType advertiser_address_with_type(advertiser_address,
                                                     hci::AddressType::PUBLIC_DEVICE_ADDRESS);
 

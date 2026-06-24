@@ -16,10 +16,10 @@
 
 package android.bluetooth;
 
+import android.annotation.Hide;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresNoPermission;
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.Binder;
 import android.os.Parcel;
@@ -37,7 +37,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-/** @hide */
+@Hide
 public final class BluetoothUtils {
     private static final String TAG = BluetoothUtils.class.getSimpleName();
 
@@ -95,8 +95,8 @@ public final class BluetoothUtils {
      * <p>The format is defined in Bluetooth 4.1 specification, Volume 3, Part C, Section 11 and 18.
      *
      * @param rawBytes raw bytes of Length-Value-Entry array
-     * @hide
      */
+    @Hide
     @SuppressWarnings("MixedMutabilityReturnType") // TODO(b/314811467)
     public static List<TypeValueEntry> parseLengthTypeValueBytes(byte[] rawBytes) {
         if (rawBytes == null) {
@@ -237,8 +237,8 @@ public final class BluetoothUtils {
      *
      * @throws IllegalArgumentException if the format string or arguments don't match the supported
      *     grammar described above.
-     * @hide
      */
+    @Hide
     public static @NonNull String formatSimple(@NonNull String format, Object... args) {
         final StringBuilder sb = new StringBuilder(format);
         int j = 0;
@@ -328,18 +328,14 @@ public final class BluetoothUtils {
      * <p>ErrorProne wants us to use writeString8 but it is not exposed outside of fwk/base. The
      * alternative to deactivate entirely AndroidFrameworkEfficientParcelable is not good because
      * there are other error reported by it
-     *
-     * @hide
      */
+    @Hide
     public static void writeStringToParcel(@NonNull Parcel out, @Nullable String str) {
         out.writeString(str);
     }
 
-    /**
-     * Execute the callback without UID / PID information
-     *
-     * @hide
-     */
+    /** Execute the callback without UID / PID information */
+    @Hide
     public static void executeFromBinder(@NonNull Executor executor, @NonNull Runnable callback) {
         final long identity = Binder.clearCallingIdentity();
         try {
@@ -350,10 +346,25 @@ public final class BluetoothUtils {
     }
 
     /**
-     * A {@link Runnable} that automatically logs {@link RemoteException}
+     * Utility class for keeping compatibility with old API that doesn't force the executor and
+     * doesn't document that the fallback is to use the main looper.
      *
-     * @hide
+     * <p>See more https://source.android.com/docs/setup/contribute/api-guidelines#provide-executor
+     *
+     * @deprecated Use a provided executor or post even on the main looper
      */
+    @Hide
+    @Deprecated
+    public static class SynchronousExecutor implements Executor {
+        @RequiresNoPermission
+        @Override
+        public void execute(Runnable r) {
+            r.run();
+        }
+    }
+
+    /** A {@link Runnable} that automatically logs {@link RemoteException} */
+    @Hide
     @FunctionalInterface
     public interface RemoteExceptionIgnoringRunnable {
         /** Called by {@code accept}. */
@@ -369,11 +380,8 @@ public final class BluetoothUtils {
         }
     }
 
-    /**
-     * A {@link Consumer} that automatically logs {@link RemoteException}
-     *
-     * @hide
-     */
+    /** A {@link Consumer} that automatically logs {@link RemoteException} */
+    @Hide
     @FunctionalInterface
     public interface RemoteExceptionIgnoringConsumer<T> {
         /** Called by {@code accept}. */
@@ -389,11 +397,8 @@ public final class BluetoothUtils {
         }
     }
 
-    /**
-     * A {@link Function} that automatically logs {@link RemoteException}
-     *
-     * @hide
-     */
+    /** A {@link Function} that automatically logs {@link RemoteException} */
+    @Hide
     @FunctionalInterface
     public interface RemoteExceptionIgnoringFunction<T, R> {
         R applyOrThrow(T t) throws RemoteException;
@@ -412,6 +417,24 @@ public final class BluetoothUtils {
     public static <S, R> R callService(
             S service, RemoteExceptionIgnoringFunction<S, R> function, R defaultValue) {
         return function.apply(service, defaultValue);
+    }
+
+    public static <S, R> R callServiceIfEnabling(
+            BluetoothAdapter adapter,
+            Supplier<S> provider,
+            RemoteExceptionIgnoringFunction<S, R> function,
+            R defaultValue) {
+        int state = adapter.getState();
+        if (state != BluetoothAdapter.STATE_ON && state != BluetoothAdapter.STATE_TURNING_ON) {
+            Log.d(TAG, "Invalid Bluetooth state " + BluetoothAdapter.nameForState(state));
+            return defaultValue;
+        }
+        final S service = provider.get();
+        if (service == null) {
+            Log.d(TAG, "Proxy not attached to service");
+            return defaultValue;
+        }
+        return callService(service, function, defaultValue);
     }
 
     public static <S, R> R callServiceIfEnabled(
@@ -447,11 +470,8 @@ public final class BluetoothUtils {
         consumer.accept(service);
     }
 
-    /**
-     * return the current stack trace as a string without new line
-     *
-     * @hide
-     */
+    /** return the current stack trace as a string without new line */
+    @Hide
     public static String inlineStackTrace() {
         StringBuilder sb = new StringBuilder();
         Arrays.stream(new Throwable().getStackTrace())
@@ -460,11 +480,8 @@ public final class BluetoothUtils {
         return sb.toString();
     }
 
-    /**
-     * Gracefully print a RemoteException as a one line warning
-     *
-     * @hide
-     */
+    /** Gracefully print a RemoteException as a one line warning */
+    @Hide
     public static void logRemoteException(String tag, RemoteException ex) {
         Log.w(tag, ex.toString() + ": " + inlineStackTrace());
     }
@@ -480,10 +497,8 @@ public final class BluetoothUtils {
      * not be notified of the missing permission.
      *
      * <p>This check doesn't replace the permissions check when reaching the Bluetooth binder.
-     *
-     * @hide
      */
-    @SuppressLint("AndroidFrameworkRequiresPermission") // Enforcement in framework is never valid
+    @Hide
     public static void enforcePermissionInFramework(Context context, String... permissions) {
         final int pid = Process.myPid();
         final int uid = Process.myUid();

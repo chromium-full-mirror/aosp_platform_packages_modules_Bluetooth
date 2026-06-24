@@ -144,9 +144,9 @@ public:
     parse_gap_data(advertise_data, config.advertisement);
     parse_gap_data(scan_response_data, config.scan_response);
 
-    bluetooth::shim::GetAdvertising()->StartAdvertising(
-            advertiser_id, config, timeout_s * 100, cb, timeout_cb, scan_callback,
-            set_terminated_callback, bluetooth::shim::GetGdShimHandler());
+    bluetooth::shim::GetAdvertising()->StartAdvertising(advertiser_id, config, timeout_s * 100, cb,
+                                                        timeout_cb,
+                                                        bluetooth::shim::GetGdShimHandler());
   }
 
   // ::BleAdvertiserInterface
@@ -182,8 +182,8 @@ public:
     }
 
     bluetooth::shim::GetAdvertising()->ExtendedCreateAdvertiser(
-            client_id, reg_id, config, scan_callback, set_terminated_callback, duration,
-            maxExtAdvEvents, bluetooth::shim::GetGdShimHandler());
+            client_id, reg_id, config, duration, maxExtAdvEvents,
+            bluetooth::shim::GetGdShimHandler());
 
     log::info("create advertising set, client_id:{}, reg_id:{}", client_id, reg_id);
     BTM_LogHistory(kBtmLogTag, RawAddress::kEmpty, "Le advert started",
@@ -231,22 +231,6 @@ public:
     native_adv_callbacks_map_[client_id] = callbacks;
   }
 
-  void on_scan(Address /* address */, AddressType /* address_type */) {
-    log::info("in shim layer");
-  }
-
-  void on_set_terminated(ErrorCode /* error_code */, uint8_t, uint8_t) {
-    log::info("in shim layer");
-  }
-
-  const bluetooth::common::Callback<void(Address, AddressType)> scan_callback =
-          bluetooth::common::Bind(&BleAdvertiserInterfaceImpl::on_scan,
-                                  bluetooth::common::Unretained(this));
-
-  const bluetooth::common::Callback<void(ErrorCode, uint8_t, uint8_t)> set_terminated_callback =
-          bluetooth::common::Bind(&BleAdvertiserInterfaceImpl::on_set_terminated,
-                                  bluetooth::common::Unretained(this));
-
   // bluetooth::hci::AdvertisingCallback
   void OnAdvertisingSetStarted(int reg_id, uint8_t advertiser_id, int8_t tx_power,
                                AdvertisingCallback::AdvertisingStatus status) override {
@@ -258,9 +242,9 @@ public:
     uint8_t client_id = is_native_advertiser(reg_id);
     if (client_id != kAdvertiserClientIdJni) {
       // Invoke callback for native client
-      do_in_main_thread(base::Bind(&::AdvertisingCallbacks::OnAdvertisingSetStarted,
-                                   base::Unretained(native_adv_callbacks_map_[client_id]), reg_id,
-                                   advertiser_id, tx_power, status));
+      do_in_main_thread(base::BindOnce(&::AdvertisingCallbacks::OnAdvertisingSetStarted,
+                                       base::Unretained(native_adv_callbacks_map_[client_id]),
+                                       reg_id, advertiser_id, tx_power, status));
       return;
     }
 
@@ -286,9 +270,9 @@ public:
     uint8_t client_id = is_native_advertiser(reg_id);
     if (client_id != kAdvertiserClientIdJni) {
       // Invoke callback for native client
-      do_in_main_thread(base::Bind(&::AdvertisingCallbacks::OnAdvertisingEnabled,
-                                   base::Unretained(native_adv_callbacks_map_[client_id]),
-                                   advertiser_id, enable, status));
+      do_in_main_thread(base::BindOnce(&::AdvertisingCallbacks::OnAdvertisingEnabled,
+                                       base::Unretained(native_adv_callbacks_map_[client_id]),
+                                       advertiser_id, enable, status));
       return;
     }
     do_in_jni_thread(base::BindOnce(&::AdvertisingCallbacks::OnAdvertisingEnabled,
@@ -303,9 +287,9 @@ public:
     uint8_t client_id = is_native_advertiser(reg_id);
     if (client_id != kAdvertiserClientIdJni) {
       // Invoke callback for native client
-      do_in_main_thread(base::Bind(&::AdvertisingCallbacks::OnAdvertisingDataSet,
-                                   base::Unretained(native_adv_callbacks_map_[client_id]),
-                                   advertiser_id, status));
+      do_in_main_thread(base::BindOnce(&::AdvertisingCallbacks::OnAdvertisingDataSet,
+                                       base::Unretained(native_adv_callbacks_map_[client_id]),
+                                       advertiser_id, status));
       return;
     }
     do_in_jni_thread(base::BindOnce(&::AdvertisingCallbacks::OnAdvertisingDataSet,
@@ -344,9 +328,9 @@ public:
     uint8_t client_id = is_native_advertiser(reg_id);
     if (client_id != kAdvertiserClientIdJni) {
       // Invoke callback for native client
-      do_in_main_thread(base::Bind(&::AdvertisingCallbacks::OnPeriodicAdvertisingDataSet,
-                                   base::Unretained(native_adv_callbacks_map_[client_id]),
-                                   advertiser_id, status));
+      do_in_main_thread(base::BindOnce(&::AdvertisingCallbacks::OnPeriodicAdvertisingDataSet,
+                                       base::Unretained(native_adv_callbacks_map_[client_id]),
+                                       advertiser_id, status));
       return;
     }
     do_in_jni_thread(base::BindOnce(&::AdvertisingCallbacks::OnPeriodicAdvertisingDataSet,

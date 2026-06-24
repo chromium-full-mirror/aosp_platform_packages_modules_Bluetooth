@@ -28,7 +28,10 @@ import static com.android.bluetooth.TestUtils.getTestDevice;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -68,7 +71,6 @@ public class A2dpSinkStateMachineTest {
 
         mStateMachine =
                 new A2dpSinkStateMachine(mService, mDevice, mLooper.getLooper(), mNativeInterface);
-        syncHandler(-2 /* SM_INIT_CMD */);
 
         assertThat(mStateMachine.getDevice()).isEqualTo(mDevice);
         assertThat(mStateMachine.getAudioConfig()).isNull();
@@ -89,17 +91,13 @@ public class A2dpSinkStateMachineTest {
     }
 
     private void sendConnectionEvent(int state) {
-        mStateMachine.sendMessage(
-                A2dpSinkStateMachine.MESSAGE_STACK_EVENT,
-                StackEvent.connectionStateChanged(mDevice, state));
-        syncHandler(A2dpSinkStateMachine.MESSAGE_STACK_EVENT);
+        mStateMachine.sendMessage(A2dpSinkStateMachine.MESSAGE_CONNECTION_STATE_CHANGED, state);
+        syncHandler(A2dpSinkStateMachine.MESSAGE_CONNECTION_STATE_CHANGED);
     }
 
     private void sendAudioConfigChangedEvent(int sampleRate, int channelCount) {
-        mStateMachine.sendMessage(
-                A2dpSinkStateMachine.MESSAGE_STACK_EVENT,
-                StackEvent.audioConfigChanged(mDevice, sampleRate, channelCount));
-        syncHandler(A2dpSinkStateMachine.MESSAGE_STACK_EVENT);
+        mStateMachine.onAudioConfigChanged(sampleRate, channelCount);
+        syncHandler(A2dpSinkStateMachine.MESSAGE_AUDIO_CONFIG_CHANGED);
     }
 
     /**********************************************************************************************
@@ -108,7 +106,7 @@ public class A2dpSinkStateMachineTest {
 
     @Test
     public void testConnectInDisconnected() {
-        mStateMachine.connect();
+        mStateMachine.sendMessage(A2dpSinkStateMachine.MESSAGE_CONNECT);
         syncHandler(A2dpSinkStateMachine.MESSAGE_CONNECT);
         verify(mNativeInterface).connectA2dpSink(mDevice);
         assertThat(mStateMachine.getState()).isEqualTo(STATE_CONNECTING);
@@ -131,6 +129,8 @@ public class A2dpSinkStateMachineTest {
     @Test
     public void testIncomingConnectedInDisconnected() {
         sendConnectionEvent(STATE_CONNECTED);
+        verify(mService).connectionStateChanged(mDevice, STATE_DISCONNECTED, STATE_CONNECTING);
+        verify(mService).connectionStateChanged(mDevice, STATE_CONNECTING, STATE_CONNECTED);
         assertThat(mStateMachine.getState()).isEqualTo(STATE_CONNECTED);
     }
 
@@ -243,7 +243,7 @@ public class A2dpSinkStateMachineTest {
     }
 
     @Test
-    public void testAudioStateChangeInConnecting() {
+    public void testAudioConfigChangeInConnecting() {
         testConnectInDisconnected();
 
         sendAudioConfigChangedEvent(44, 1);
@@ -255,7 +255,7 @@ public class A2dpSinkStateMachineTest {
     public void testConnectInConnecting() {
         testConnectInDisconnected();
 
-        mStateMachine.connect();
+        mStateMachine.sendMessage(A2dpSinkStateMachine.MESSAGE_CONNECT);
         syncHandler(A2dpSinkStateMachine.MESSAGE_CONNECT);
         assertThat(mStateMachine.getState()).isEqualTo(STATE_CONNECTING);
     }
@@ -274,6 +274,8 @@ public class A2dpSinkStateMachineTest {
 
         syncHandler(A2dpSinkStateMachine.MESSAGE_DISCONNECT); // message was defer
         verify(mNativeInterface).disconnectA2dpSink(mDevice);
+        sendConnectionEvent(STATE_DISCONNECTING);
+        sendConnectionEvent(STATE_DISCONNECTED);
         assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
 
         syncHandler(A2dpSinkStateMachine.CLEANUP);
@@ -288,7 +290,7 @@ public class A2dpSinkStateMachineTest {
     public void testConnectInConnected() {
         testConnectedInConnecting();
 
-        mStateMachine.connect();
+        mStateMachine.sendMessage(A2dpSinkStateMachine.MESSAGE_CONNECT);
         syncHandler(A2dpSinkStateMachine.MESSAGE_CONNECT);
         assertThat(mStateMachine.getState()).isEqualTo(STATE_CONNECTED);
     }
@@ -300,6 +302,8 @@ public class A2dpSinkStateMachineTest {
         mStateMachine.disconnect();
         syncHandler(A2dpSinkStateMachine.MESSAGE_DISCONNECT);
         verify(mNativeInterface).disconnectA2dpSink(mDevice);
+        sendConnectionEvent(STATE_DISCONNECTING);
+        sendConnectionEvent(STATE_DISCONNECTED);
         assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
 
         syncHandler(A2dpSinkStateMachine.CLEANUP);
@@ -307,7 +311,7 @@ public class A2dpSinkStateMachineTest {
     }
 
     @Test
-    public void testAudioStateChangeInConnected() {
+    public void testAudioConfigChangeInConnected() {
         testConnectedInConnecting();
 
         sendAudioConfigChangedEvent(44, 1);
@@ -339,10 +343,9 @@ public class A2dpSinkStateMachineTest {
         testConnectedInConnecting();
 
         sendConnectionEvent(STATE_DISCONNECTING);
-        assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
 
-        syncHandler(A2dpSinkStateMachine.CLEANUP);
-        verify(mService).removeStateMachine(mStateMachine);
+        verify(mService).connectionStateChanged(mDevice, STATE_CONNECTED, STATE_DISCONNECTING);
+        assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTING);
     }
 
     @Test
@@ -350,10 +353,68 @@ public class A2dpSinkStateMachineTest {
         testConnectedInConnecting();
 
         sendConnectionEvent(STATE_DISCONNECTED);
+
+        verify(mService).connectionStateChanged(mDevice, STATE_CONNECTED, STATE_DISCONNECTING);
+        verify(mService).connectionStateChanged(mDevice, STATE_DISCONNECTING, STATE_DISCONNECTED);
         assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
 
         syncHandler(A2dpSinkStateMachine.CLEANUP);
         verify(mService).removeStateMachine(mStateMachine);
+    }
+
+    /**********************************************************************************************
+     * DISCONNECTING STATE TESTS                                                                  *
+     *********************************************************************************************/
+
+    @Test
+    public void testDisconnectedInDisconnecting_proceedsToDisconnected() {
+        testDisconnectingInConnected();
+
+        sendConnectionEvent(STATE_DISCONNECTED);
+
+        verify(mService).connectionStateChanged(mDevice, STATE_DISCONNECTING, STATE_DISCONNECTED);
+        assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
+
+        syncHandler(A2dpSinkStateMachine.CLEANUP);
+        verify(mService).removeStateMachine(mStateMachine);
+    }
+
+    @Test
+    public void testDisconnectTimeoutInDisconnecting_proceedsToDisconnected() {
+        testDisconnectingInConnected();
+
+        mLooper.moveTimeForward(120_000); // Skip time so the timeout fires
+        syncHandler(A2dpSinkStateMachine.MESSAGE_DISCONNECT_TIMEOUT);
+
+        verify(mService).connectionStateChanged(mDevice, STATE_DISCONNECTING, STATE_DISCONNECTED);
+        assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
+
+        syncHandler(A2dpSinkStateMachine.CLEANUP);
+        verify(mService).removeStateMachine(mStateMachine);
+    }
+
+    @Test
+    public void testDisconnectRequestInDisconnecting_requestDeferred() {
+        testDisconnectingInConnected();
+        clearInvocations(mNativeInterface);
+
+        mStateMachine.sendMessage(A2dpSinkStateMachine.MESSAGE_DISCONNECT);
+        syncHandler(A2dpSinkStateMachine.MESSAGE_DISCONNECT);
+
+        verify(mNativeInterface, never()).disconnectA2dpSink(any());
+        assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTING);
+    }
+
+    @Test
+    public void testConnectRequestInDisconnecting_requestDeferred() {
+        testDisconnectingInConnected();
+        clearInvocations(mNativeInterface);
+
+        mStateMachine.sendMessage(A2dpSinkStateMachine.MESSAGE_CONNECT);
+        syncHandler(A2dpSinkStateMachine.MESSAGE_CONNECT);
+
+        verify(mNativeInterface, never()).connectA2dpSink(any());
+        assertThat(mStateMachine.getState()).isEqualTo(STATE_DISCONNECTING);
     }
 
     /**********************************************************************************************

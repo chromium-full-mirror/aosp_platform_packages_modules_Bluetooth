@@ -18,14 +18,20 @@ package com.android.bluetooth.le_scan
 
 import android.app.PendingIntent
 import android.bluetooth.le.IScannerCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanSettings
 import android.content.AttributionSource
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.BatteryStatsManager
 import android.os.Binder
+import android.os.UserHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import androidx.test.platform.app.InstrumentationRegistry
 import com.android.bluetooth.btservice.AdapterService
+import com.android.bluetooth.mockGetSystemService
+import com.android.bluetooth.mockPackageManager
 import com.android.tests.bluetooth.MockitoRule
 import com.google.common.truth.Truth.assertThat
 import java.util.UUID
@@ -36,6 +42,7 @@ import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doReturn
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 /** Test cases for [ScannerMap]. */
@@ -44,15 +51,15 @@ import org.mockito.kotlin.whenever
 class ScannerMapTest {
     @get:Rule val mockitoRule = MockitoRule()
 
-    @Mock private lateinit var attributionSource: AttributionSource
+    @Mock private lateinit var source: AttributionSource
     @Mock private lateinit var adapterService: AdapterService
     @Mock private lateinit var packageManager: PackageManager
-    @Mock private lateinit var scanController: ScanController
     @Mock private lateinit var scannerCallback: IScannerCallback
 
     @Before
     fun setUp() {
-        doReturn(packageManager).whenever(adapterService).packageManager
+        adapterService.mockGetSystemService<BatteryStatsManager>()
+        adapterService.mockPackageManager(packageManager)
         doReturn(APP_NAME).whenever(packageManager).getNameForUid(any())
     }
 
@@ -61,23 +68,26 @@ class ScannerMapTest {
         val scannerMap = ScannerMap()
         val context = InstrumentationRegistry.getInstrumentation().context
         val intent = PendingIntent.getBroadcast(context, 0, Intent(), PendingIntent.FLAG_IMMUTABLE)
-        val info = ScanController.PendingIntentInfo(intent, null, null, APP_NAME, UID)
+        val info = ScanController.PendingIntentInfo(intent, null, null, APP_NAME, UID, PID)
         val uuid = UUID.randomUUID()
+        val scanSettings = ScanSettings.Builder().build()
+        val filters = listOf(ScanFilter.Builder().build())
         val app =
             scannerMap.addWithPendingIntent(
+                APP_NAME,
                 uuid,
-                null,
-                attributionSource,
+                mock<UserHandle>(),
+                source,
                 info,
+                scanSettings,
+                filters,
                 adapterService,
-                scanController,
             )
-        app.mId = SCANNER_ID
+        app.id = SCANNER_ID
 
-        assertThat(scannerMap.getById(SCANNER_ID).mName).isEqualTo(APP_NAME)
-        assertThat(scannerMap.getByUuid(uuid).mName).isEqualTo(APP_NAME)
-        assertThat(scannerMap.getByName(APP_NAME).first().mName).isEqualTo(APP_NAME)
-        assertThat(scannerMap.getByPendingIntentInfo(intent).mName).isEqualTo(APP_NAME)
+        assertThat(scannerMap.getById(SCANNER_ID)?.name).isEqualTo(APP_NAME)
+        assertThat(scannerMap.getByUuid(uuid)?.name).isEqualTo(APP_NAME)
+        assertThat(scannerMap.getByPendingIntentInfo(intent)?.name).isEqualTo(APP_NAME)
         assertThat(scannerMap.getAppScanStatsById(SCANNER_ID)).isNotNull()
         assertThat(scannerMap.getAppScanStatsByUid(UID)).isNotNull()
     }
@@ -87,23 +97,28 @@ class ScannerMapTest {
         val scannerMap = ScannerMap()
         val uuid = UUID.randomUUID()
         val appUid = Binder.getCallingUid()
+        val appPid = Binder.getCallingPid()
+        val scanSettings = ScanSettings.Builder().build()
+        val filters = listOf(ScanFilter.Builder().build())
         val app =
             scannerMap.addWithCallback(
-                uuid,
-                attributionSource,
-                null,
                 appUid,
+                appPid,
+                APP_NAME,
+                uuid,
+                source,
+                null,
                 scannerCallback,
+                scanSettings,
+                filters,
                 adapterService,
-                scanController,
             )
-        app.mId = SCANNER_ID
+        app.id = SCANNER_ID
 
         val scannerMapById = scannerMap.getById(SCANNER_ID)
-        assertThat(scannerMapById.mName).isEqualTo(APP_NAME)
-        assertThat(scannerMapById.mCallback).isEqualTo(scannerCallback)
-        assertThat(scannerMap.getByUuid(uuid).mName).isEqualTo(APP_NAME)
-        assertThat(scannerMap.getByName(APP_NAME).first().mName).isEqualTo(APP_NAME)
+        assertThat(scannerMapById?.name).isEqualTo(APP_NAME)
+        assertThat(scannerMapById?.callback).isEqualTo(scannerCallback)
+        assertThat(scannerMap.getByUuid(uuid)?.name).isEqualTo(APP_NAME)
         assertThat(scannerMap.getAppScanStatsById(SCANNER_ID)).isNotNull()
         assertThat(scannerMap.getAppScanStatsByUid(appUid)).isNotNull()
     }
@@ -113,19 +128,25 @@ class ScannerMapTest {
         val scannerMap = ScannerMap()
         val uuid = UUID.randomUUID()
         val appUid = 1234
+        val appPid = Binder.getCallingPid()
+        val scanSettings = ScanSettings.Builder().build()
+        val filters = listOf(ScanFilter.Builder().build())
         val app =
             scannerMap.addWithCallback(
-                uuid,
-                attributionSource,
-                null,
                 appUid,
+                appPid,
+                APP_NAME,
+                uuid,
+                source,
+                null,
                 scannerCallback,
+                scanSettings,
+                filters,
                 adapterService,
-                scanController,
             )
-        app.mId = SCANNER_ID
+        app.id = SCANNER_ID
 
-        assertThat(scannerMap.getById(SCANNER_ID).mName).isEqualTo(APP_NAME)
+        assertThat(scannerMap.getById(SCANNER_ID)?.name).isEqualTo(APP_NAME)
 
         scannerMap.remove(SCANNER_ID)
         assertThat(scannerMap.getById(SCANNER_ID)).isNull()
@@ -136,14 +157,20 @@ class ScannerMapTest {
         val sb = StringBuilder()
         val scannerMap = ScannerMap()
         val appUid = 1234
+        val appPid = Binder.getCallingPid()
+        val scanSettings = ScanSettings.Builder().build()
+        val filters = listOf(ScanFilter.Builder().build())
         scannerMap.addWithCallback(
-            UUID.randomUUID(),
-            attributionSource,
-            null,
             appUid,
+            appPid,
+            APP_NAME,
+            UUID.randomUUID(),
+            source,
+            null,
             scannerCallback,
+            scanSettings,
+            filters,
             adapterService,
-            scanController,
         )
         scannerMap.dump(sb, emptyMap())
     }
@@ -151,6 +178,7 @@ class ScannerMapTest {
     companion object {
         private const val APP_NAME = "com.android.what.a.name"
         private const val UID = 12345
+        private const val PID = 19435
         private const val SCANNER_ID = 321
     }
 }

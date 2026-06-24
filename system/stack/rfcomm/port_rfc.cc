@@ -33,6 +33,7 @@
 
 #include <cstdint>
 
+#include "bluetooth/metrics/bluetooth_event.h"
 #include "hal/snoop_logger.h"
 #include "internal_include/bt_target.h"
 #include "internal_include/bt_trace.h"
@@ -84,6 +85,8 @@ int port_open_continue(tPORT* p_port) {
 
   switch (p_mcb->state) {
     case RFC_MX_STATE_CONNECTED:
+      bluetooth::metrics::LogRfcommMxEvent(p_mcb->bd_addr,
+                                           bluetooth::metrics::State::ALREADY_CONNECTED);
       RFCOMM_ParameterNegotiationRequest(p_mcb, p_port->dlci, p_port->mtu);
       log::verbose("Multiplexer already connected peer:{} state:{} cid:{}", p_port->bd_addr,
                    p_mcb->state, p_mcb->lcid);
@@ -216,6 +219,8 @@ void PORT_StartCnf(tRFC_MCB* p_mcb, uint16_t result) {
 
       if (result == RFCOMM_SUCCESS) {
         log::verbose("dlci {}", p_port->dlci);
+        bluetooth::metrics::LogRfcommMxEvent(p_mcb->bd_addr,
+                                             bluetooth::metrics::State::STATE_CONNECTED);
         RFCOMM_ParameterNegotiationRequest(p_mcb, p_port->dlci, p_port->mtu);
       } else {
         log::warn("Unable start configuration dlci:{} result:{}", p_port->dlci, result);
@@ -461,17 +466,10 @@ void PORT_DlcEstablishInd(tRFC_MCB* p_mcb, uint8_t dlci, uint16_t mtu) {
     (p_port->p_callback)(PORT_EV_CONNECTED, p_port->handle);
   }
 
-  if (com_android_bluetooth_flags_indicate_rfcomm_connection_complete_after_msc()) {
-    if (p_port->rfc_cfg_info.data_path != BTSOCK_DATA_PATH_HARDWARE_OFFLOAD &&
-        p_port->p_mgmt_callback) {
-      p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
-      bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_IND);
-    }
-  } else {
-    if (p_port->p_mgmt_callback) {
-      p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
-      bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_IND);
-    }
+  if (p_port->rfc_cfg_info.data_path != BTSOCK_DATA_PATH_HARDWARE_OFFLOAD &&
+      p_port->p_mgmt_callback) {
+    p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
+    bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_IND);
   }
 
   p_port->state = PORT_CONNECTION_STATE_OPENED;
@@ -516,17 +514,10 @@ void PORT_DlcEstablishCnf(tRFC_MCB* p_mcb, uint8_t dlci, uint16_t mtu, uint16_t 
     (p_port->p_callback)(PORT_EV_CONNECTED, p_port->handle);
   }
 
-  if (com_android_bluetooth_flags_indicate_rfcomm_connection_complete_after_msc()) {
-    if (p_port->rfc_cfg_info.data_path != BTSOCK_DATA_PATH_HARDWARE_OFFLOAD &&
-        p_port->p_mgmt_callback) {
-      p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
-      bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_CNF);
-    }
-  } else {
-    if (p_port->p_mgmt_callback) {
-      p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
-      bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_CNF);
-    }
+  if (p_port->rfc_cfg_info.data_path != BTSOCK_DATA_PATH_HARDWARE_OFFLOAD &&
+      p_port->p_mgmt_callback) {
+    p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
+    bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_CNF);
   }
 
   p_port->state = PORT_CONNECTION_STATE_OPENED;
@@ -663,12 +654,10 @@ void PORT_ControlInd(tRFC_MCB* p_mcb, uint8_t dlci, tPORT_CTRL* p_pars) {
                (p_port->peer_ctrl.modem_signal & MODEM_SIGNAL_RI) ? 1 : 0,
                (p_port->peer_ctrl.modem_signal & MODEM_SIGNAL_DCD) ? 1 : 0);
 
-  if (com_android_bluetooth_flags_indicate_rfcomm_connection_complete_after_msc()) {
-    if (p_port->rfc_cfg_info.data_path == BTSOCK_DATA_PATH_HARDWARE_OFFLOAD) {
-      if (p_port->port_ctrl == PORT_CTRL_SETUP_COMPLETED && p_port->p_mgmt_callback) {
-        p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
-        bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_IND);
-      }
+  if (p_port->rfc_cfg_info.data_path == BTSOCK_DATA_PATH_HARDWARE_OFFLOAD) {
+    if (p_port->port_ctrl == PORT_CTRL_SETUP_COMPLETED && p_port->p_mgmt_callback) {
+      p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
+      bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_IND);
     }
   }
 }
@@ -710,12 +699,10 @@ void PORT_ControlCnf(tRFC_MCB* p_mcb, uint8_t dlci, tPORT_CTRL* /* p_pars */) {
     (p_port->p_callback)(event, p_port->handle);
   }
 
-  if (com_android_bluetooth_flags_indicate_rfcomm_connection_complete_after_msc()) {
-    if (p_port->rfc_cfg_info.data_path == BTSOCK_DATA_PATH_HARDWARE_OFFLOAD) {
-      if (p_port->port_ctrl == PORT_CTRL_SETUP_COMPLETED && p_port->p_mgmt_callback) {
-        p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
-        bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_CNF);
-      }
+  if (p_port->rfc_cfg_info.data_path == BTSOCK_DATA_PATH_HARDWARE_OFFLOAD) {
+    if (p_port->port_ctrl == PORT_CTRL_SETUP_COMPLETED && p_port->p_mgmt_callback) {
+      p_port->p_mgmt_callback(PORT_SUCCESS, p_port->handle);
+      bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::RFCOMM_CONNECTION_SUCCESS_CNF);
     }
   }
 }
@@ -871,7 +858,8 @@ void PORT_DataInd(tRFC_MCB* p_mcb, uint8_t dlci, BT_HDR* p_buf) {
   /* Check if rx queue exceeds the limit */
   if ((p_port->rx.queue_size + p_buf->len > PORT_RX_CRITICAL_WM) ||
       (fixed_queue_length(p_port->rx.queue) + 1 > p_port->rx_buf_critical)) {
-    log::verbose("PORT_DataInd. Buffer over run. Dropping the buffer");
+    log::verbose("PORT_DataInd. Buffer over run. Dropping the buffer, queue_size={}, "
+                 "rx_buf_critical={}", p_port->rx.queue_size, p_port->rx_buf_critical);
     osi_free(p_buf);
     RFCOMM_LineStatusReq(p_mcb, dlci, LINE_STATUS_OVERRUN);
     return;

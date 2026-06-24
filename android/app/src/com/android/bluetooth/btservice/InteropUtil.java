@@ -20,14 +20,14 @@ package com.android.bluetooth.btservice;
 import android.bluetooth.BluetoothUtils;
 import android.util.Log;
 
-import com.android.bluetooth.Utils;
+import com.android.bluetooth.Util;
 
 /**
  * APIs of interoperability workaround utilities. These APIs will call stack layer's interop APIs of
  * interop.cc to do matching or entry adding/removing.
  */
 public class InteropUtil {
-    private static final String TAG = Utils.BT_PREFIX + InteropUtil.class.getSimpleName();
+    private static final String TAG = Util.BT_PREFIX + InteropUtil.class.getSimpleName();
 
     /**
      * Add interop feature from device/include/interop.h to below InteropFeature if this feature
@@ -45,7 +45,8 @@ public class InteropUtil {
         INTEROP_RETRY_SCO_AFTER_REMOTE_REJECT_SCO,
         INTEROP_ADV_PBAP_VER_1_2,
         INTEROP_HFP_SEND_OK_FOR_CLCC_AFTER_VOIP_CALL_END,
-        INTEROP_A2DP_DELAY_DISCONNECT;
+        INTEROP_A2DP_DELAY_DISCONNECT,
+        INTEROP_DISABLE_PROFILE_FALLBACK
     }
 
     private InteropUtil() {}

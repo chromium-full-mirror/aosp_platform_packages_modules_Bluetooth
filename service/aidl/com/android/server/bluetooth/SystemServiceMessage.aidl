@@ -13,12 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.server.bluetooth;
 
 import android.bluetooth.IBluetoothManagerCallback;
 import android.content.AttributionSource;
 
-/** @hide */
+/** Binder object definition to use in the Bluetotoh System Server messenger */
+@JavaPassthrough(annotation="@android.annotation.Hide")
 interface SystemServiceMessage {
     parcelable RegisterAdapter {
         IBluetoothManagerCallback binder;
@@ -62,6 +64,12 @@ interface SystemServiceMessage {
         parcelable Reply {
             String value;
         }
+    }
+
+    parcelable SetName {
+        AttributionSource attributionSource;
+        String name;
+        parcelable Reply {}
     }
 
     parcelable GetName {

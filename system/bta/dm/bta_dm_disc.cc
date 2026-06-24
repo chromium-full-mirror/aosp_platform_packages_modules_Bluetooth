@@ -57,7 +57,7 @@ using bluetooth::Uuid;
 using namespace bluetooth::legacy::stack::sdp;
 using namespace bluetooth;
 
-static void btm_dm_start_gatt_discovery(const RawAddress& bd_addr);
+static void bta_dm_start_gatt_discovery(const RawAddress& bd_addr);
 
 namespace {
 constexpr char kBtmLogTag[] = "SDP";
@@ -66,7 +66,7 @@ tBTA_DM_SERVICE_DISCOVERY_CB bta_dm_discovery_cb;
 base::RepeatingCallback<void(tBTA_DM_SDP_STATE*)> default_sdp_performer =
         base::Bind(bta_dm_sdp_find_services);
 base::RepeatingCallback<void(const RawAddress&)> default_gatt_performer =
-        base::Bind(btm_dm_start_gatt_discovery);
+        base::Bind(bta_dm_start_gatt_discovery);
 base::RepeatingCallback<void(tBTA_DM_SDP_STATE*)> sdp_performer = default_sdp_performer;
 base::RepeatingCallback<void(const RawAddress&)> gatt_performer = default_gatt_performer;
 
@@ -86,8 +86,7 @@ static bool is_same_device(const RawAddress& a, const RawAddress& b) {
 
 static void bta_dm_disc_sm_execute(tBTA_DM_DISC_EVT event, std::unique_ptr<tBTA_DM_MSG> msg);
 static void post_disc_evt(tBTA_DM_DISC_EVT event, std::unique_ptr<tBTA_DM_MSG> msg) {
-  if (do_in_main_thread(base::BindOnce(&bta_dm_disc_sm_execute, event, std::move(msg))) !=
-      BT_STATUS_SUCCESS) {
+  if (!do_in_main_thread(base::BindOnce(&bta_dm_disc_sm_execute, event, std::move(msg)))) {
     log::error("post_disc_evt failed");
   }
 }
@@ -125,7 +124,7 @@ struct gatt_interface_t {
         .BTA_GATTC_AppRegister =
                 [](const std::string& name, tBTA_GATTC_CBACK* p_client_cb,
                    BtaAppRegisterCallback cb, bool eatt_support) {
-                  BTA_GATTC_AppRegister(name, p_client_cb, cb, eatt_support);
+                  BTA_GATTC_AppRegister(name, p_client_cb, std::move(cb), eatt_support);
                 },
         .BTA_GATTC_Close = [](tCONN_ID conn_id) { BTA_GATTC_Close(conn_id); },
         .BTA_GATTC_ServiceSearchRequest =
@@ -141,8 +140,7 @@ struct gatt_interface_t {
                    tBTM_BLE_CONN_TYPE connection_type, bool opportunistic, uint16_t preferred_mtu,
                    bool prefer_relax_mode) {
                   BTA_GATTC_Open(client_if, remote_bda, BLE_ADDR_PUBLIC, connection_type,
-                                 BT_TRANSPORT_LE, opportunistic, LE_PHY_1M, preferred_mtu,
-                                 prefer_relax_mode);
+                                 BT_TRANSPORT_LE, opportunistic, preferred_mtu, prefer_relax_mode);
                 },
 };
 
@@ -588,7 +586,7 @@ static void bta_dm_close_gatt_conn(uint16_t conn_id) {
 }
 /*******************************************************************************
  *
- * Function         btm_dm_start_gatt_discovery
+ * Function         bta_dm_start_gatt_discovery
  *
  * Description      This is GATT initiate the service search by open a GATT
  *                  connection first.
@@ -596,7 +594,7 @@ static void bta_dm_close_gatt_conn(uint16_t conn_id) {
  * Parameters:
  *
  ******************************************************************************/
-static void btm_dm_start_gatt_discovery(const RawAddress& bd_addr) {
+static void bta_dm_start_gatt_discovery(const RawAddress& bd_addr) {
   /* connection is already open */
   if (bta_dm_discovery_cb.pending_close_bda == bd_addr &&
       bta_dm_discovery_cb.conn_id != GATT_INVALID_CONN_ID) {
@@ -707,6 +705,7 @@ static void bta_dm_gattc_callback(tBTA_GATTC_EVT event, tBTA_GATTC* p_data) {
     case BTA_GATTC_SRVC_CHG_EVT:
     case BTA_GATTC_SRVC_DISC_DONE_EVT:
     case BTA_GATTC_SUBRATE_CHG_EVT:
+    case BTA_GATTC_CHARACTERISTICS_UNOFFLOADED_EVT:
       break;
   }
 }

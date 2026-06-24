@@ -22,42 +22,32 @@ import static com.android.bluetooth.vaps.VapsServerStackEvent.EVENT_TYPE_ON_STOP
 
 import static java.util.Objects.requireNonNull;
 
-import android.bluetooth.BluetoothDevice;
 import android.util.Log;
 
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.profile.NativeCallback;
 import com.android.internal.annotations.VisibleForTesting;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-
 /** Voice Assistant Profile Server Native Callback (from native to Java). */
-public class VapsServerNativeCallback {
+public class VapsServerNativeCallback extends NativeCallback {
     private static final String TAG = VapsServerNativeCallback.class.getSimpleName();
 
-    private final AdapterService mAdapterService;
     private final VapsServerService mVapsServerService;
 
     VapsServerNativeCallback(AdapterService adapterService, VapsServerService vapsServerService) {
-        mAdapterService = requireNonNull(adapterService);
+        super(adapterService);
         mVapsServerService = requireNonNull(vapsServerService);
     }
 
-    private BluetoothDevice getDevice(byte[] address) {
-        return mAdapterService.getDeviceFromByte(address);
-    }
-
     void onInitialized() {
-        VapsServerStackEvent event =
-                new VapsServerStackEvent(EVENT_TYPE_ON_INITIALIZED);
+        VapsServerStackEvent event = new VapsServerStackEvent(EVENT_TYPE_ON_INITIALIZED);
         Log.d(TAG, "onInitialized: " + event);
         mVapsServerService.messageFromNative(event);
     }
 
     @VisibleForTesting
     void onStartVaSession(byte[] address) {
-        VapsServerStackEvent event =
-                new VapsServerStackEvent(EVENT_TYPE_ON_START_VA_SESSION);
+        VapsServerStackEvent event = new VapsServerStackEvent(EVENT_TYPE_ON_START_VA_SESSION);
         event.device = getDevice(address);
 
         Log.d(TAG, "onStartVaSession: " + event);
@@ -66,8 +56,7 @@ public class VapsServerNativeCallback {
 
     @VisibleForTesting
     void onStopVaSession(byte[] address) {
-        VapsServerStackEvent event =
-                new VapsServerStackEvent(EVENT_TYPE_ON_STOP_VA_SESSION);
+        VapsServerStackEvent event = new VapsServerStackEvent(EVENT_TYPE_ON_STOP_VA_SESSION);
         event.device = getDevice(address);
 
         Log.d(TAG, "onStopVaSession: " + event);

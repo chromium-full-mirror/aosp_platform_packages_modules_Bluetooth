@@ -86,11 +86,9 @@ static const bluetooth::Uuid kSinkAudioLocationCharacteristicUuid =
         bluetooth::Uuid::From16Bit(0x2BCA);
 static const bluetooth::Uuid kSourceAudioLocationCharacteristicUuid =
         bluetooth::Uuid::From16Bit(0x2BCC);
-
-/* Audio Stream Control Service Characteristics */
-static const bluetooth::Uuid kAudioContextAvailabilityCharacteristicUuid =
+static const bluetooth::Uuid kAvailableAudioContextsCharacteristicUuid =
         bluetooth::Uuid::From16Bit(0x2BCD);
-static const bluetooth::Uuid kAudioSupportedContextCharacteristicUuid =
+static const bluetooth::Uuid kSupportedAudioContextsCharacteristicUuid =
         bluetooth::Uuid::From16Bit(0x2BCE);
 
 /* Audio Stream Control Service Characteristics */
@@ -350,9 +348,6 @@ constexpr uint16_t kLeAudioHeadtrackerMaxSduSize = 13;
 constexpr uint8_t kLeAudioHeadtrackerRtn = 2;
 
 /* CSIS Types */
-constexpr uint8_t kDefaultScanDurationS = 5;
-constexpr uint8_t kDefaultCsisSetSize = 2;
-
 constexpr uint8_t kLeAudioDirectionSink = 0x01;
 constexpr uint8_t kLeAudioDirectionSource = 0x02;
 constexpr uint8_t kLeAudioDirectionBoth = kLeAudioDirectionSink | kLeAudioDirectionSource;

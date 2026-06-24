@@ -92,14 +92,7 @@ public:
       return;
     }
 
-    ScopedLocalRef<jbyteArray> addr(sCallbackEnv.get(),
-                                    sCallbackEnv->NewByteArray(sizeof(RawAddress)));
-    if (!addr.get()) {
-      log::error("Failed to new bd addr jbyteArray for connection state");
-      return;
-    }
-
-    sCallbackEnv->SetByteArrayRegion(addr.get(), 0, sizeof(RawAddress), (jbyte*)&bd_addr);
+    ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
     sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onConnectionStateChanged, addr.get(),
                                  (jint)state);
   }
@@ -112,14 +105,7 @@ public:
       return;
     }
 
-    ScopedLocalRef<jbyteArray> addr(sCallbackEnv.get(),
-                                    sCallbackEnv->NewByteArray(sizeof(RawAddress)));
-    if (!addr.get()) {
-      log::error("Failed to new bd addr jbyteArray for device available");
-      return;
-    }
-    sCallbackEnv->SetByteArrayRegion(addr.get(), 0, sizeof(RawAddress), (jbyte*)&bd_addr);
-
+    ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
     sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onDeviceAvailable, addr.get(),
                                  (jint)group_id, (jint)group_size, (jint)rank, UUID_PARAMS(uuid));
   }
@@ -133,14 +119,7 @@ public:
       return;
     }
 
-    ScopedLocalRef<jbyteArray> addr(sCallbackEnv.get(),
-                                    sCallbackEnv->NewByteArray(sizeof(RawAddress)));
-    if (!addr.get()) {
-      log::error("Failed to new jbyteArray bd addr for connection state");
-      return;
-    }
-
-    sCallbackEnv->SetByteArrayRegion(addr.get(), 0, sizeof(RawAddress), (jbyte*)&bd_addr);
+    ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
     sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onSetMemberAvailable, addr.get(),
                                  (jint)group_id);
   }
@@ -184,8 +163,7 @@ static void initNative(JNIEnv* env, jobject object) {
   }
 
   if ((mCallbacksObj = env->NewGlobalRef(object)) == nullptr) {
-    log::error("Failed to allocate Global Ref for Csis Client Callbacks");
-    return;
+    log::fatal("Failed to allocate Global Ref for Csis Client Callbacks");
   }
 
   sCsisClientInterface =
@@ -226,15 +204,8 @@ static jboolean connectNative(JNIEnv* env, jobject /* object */, jbyteArray addr
     return JNI_FALSE;
   }
 
-  jbyte* addr = env->GetByteArrayElements(address, nullptr);
-  if (!addr) {
-    jniThrowIOException(env, EINVAL);
-    return JNI_FALSE;
-  }
-
-  RawAddress* tmpraw = (RawAddress*)addr;
-  sCsisClientInterface->Connect(*tmpraw);
-  env->ReleaseByteArrayElements(address, addr, 0);
+  RawAddress bd_addr = addressFromJByteArray(env, address);
+  sCsisClientInterface->Connect(bd_addr);
   return JNI_TRUE;
 }
 
@@ -245,15 +216,8 @@ static jboolean disconnectNative(JNIEnv* env, jobject /* object */, jbyteArray a
     return JNI_FALSE;
   }
 
-  jbyte* addr = env->GetByteArrayElements(address, nullptr);
-  if (!addr) {
-    jniThrowIOException(env, EINVAL);
-    return JNI_FALSE;
-  }
-
-  RawAddress* tmpraw = (RawAddress*)addr;
-  sCsisClientInterface->Disconnect(*tmpraw);
-  env->ReleaseByteArrayElements(address, addr, 0);
+  RawAddress bd_addr = addressFromJByteArray(env, address);
+  sCsisClientInterface->Disconnect(bd_addr);
   return JNI_TRUE;
 }
 

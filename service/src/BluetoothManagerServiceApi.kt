@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.server.bluetooth
 
 import android.bluetooth.IBluetoothManagerCallback
 import android.os.IBinder
-import android.os.UserHandle
 import java.io.FileDescriptor
 import java.io.PrintWriter
 
@@ -28,15 +28,19 @@ import java.io.PrintWriter
  * depend on this interface instead.
  */
 interface BluetoothManagerServiceApi {
-    fun registerAdapter(callback: IBluetoothManagerCallback?): IBinder?
-
-    fun unregisterAdapter(callback: IBluetoothManagerCallback?)
-
+    // getState can be called from any thread
     fun getState(): Int
 
+    // waitForState can be called from any thread
     fun waitForState(state: Int): Boolean
 
+    fun registerAdapter(callback: IBluetoothManagerCallback): IBinder?
+
+    fun unregisterAdapter(callback: IBluetoothManagerCallback)
+
     fun getAddress(): String?
+
+    fun setName(name: String)
 
     fun getName(): String?
 
@@ -44,17 +48,17 @@ interface BluetoothManagerServiceApi {
 
     fun isHearingAidProfileSupported(): Boolean
 
-    fun enable(reason: Int, packageName: String?): Boolean
+    fun enable(reason: Int, packageName: String): Boolean
 
-    fun enableBle(packageName: String?, token: IBinder?): Boolean
+    fun enableBle(packageName: String, token: IBinder): Boolean
 
-    fun enableNoAutoConnect(packageName: String?): Boolean
+    fun enableNoAutoConnect(packageName: String): Boolean
 
-    fun disable(packageName: String?, persist: Boolean): Boolean
+    fun disable(packageName: String, persist: Boolean): Boolean
 
-    fun disableBle(packageName: String?, token: IBinder?): Boolean
+    fun disableBle(packageName: String, token: IBinder): Boolean
 
-    fun factoryReset(count: Int): Boolean
+    fun factoryReset(): Boolean
 
     fun setBtHciSnoopLogMode(mode: Int): Int
 
@@ -67,8 +71,4 @@ interface BluetoothManagerServiceApi {
     fun setAutoOnEnabled(status: Boolean)
 
     fun dump(fd: FileDescriptor?, writer: PrintWriter?, args: Array<String?>?)
-
-    fun onUserRestrictionsChanged(userHandle: UserHandle?)
-
-    fun onBleScanDisabled()
 }

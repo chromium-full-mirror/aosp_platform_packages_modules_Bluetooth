@@ -40,10 +40,10 @@ uint16_t AVDT_ConnectReq(const RawAddress& /* bd_addr */, uint8_t /* channel_ind
   inc_func_call_count(__func__);
   return 0;
 }
-uint16_t AVDT_CreateStream(uint8_t /* peer_id */, uint8_t* /* p_handle */,
+tAVDT_RESULT AVDT_CreateStream(uint8_t /* peer_id */, uint8_t* /* p_handle */,
                            const AvdtpStreamConfig& /* avdtp_stream_config */) {
   inc_func_call_count(__func__);
-  return 0;
+  return tAVDT_RESULT::AVDT_SUCCESS;
 }
 uint16_t AVDT_DelayReport(uint8_t /* handle */, uint8_t /* seid */, uint16_t /* delay */) {
   inc_func_call_count(__func__);
@@ -115,3 +115,7 @@ void avdt_ccb_ret_ccb_timer_timeout(void* /* data */) { inc_func_call_count(__fu
 void avdt_ccb_rsp_ccb_timer_timeout(void* /* data */) { inc_func_call_count(__func__); }
 void avdt_scb_transport_channel_timer_timeout(void* /* data */) { inc_func_call_count(__func__); }
 void stack_debug_avdtp_api_dump(int /* fd */) { inc_func_call_count(__func__); }
+std::string DumpAvdtCodecInfo(const uint8_t* /*data*/) {
+  inc_func_call_count(__func__);
+  return "";
+}

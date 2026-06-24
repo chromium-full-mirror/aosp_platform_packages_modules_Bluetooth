@@ -208,7 +208,6 @@ impl BtSocket {
         let mut sockfd: i32 = -1;
         let sockfd_ptr = LTCheckedPtrMut::from_ref(&mut sockfd);
         let uuid_ptr = LTCheckedPtr::from(&service_uuid);
-        let addr_ptr = LTCheckedPtr::from_ref(&addr);
 
         let data_path: u32 = 0;
         let sock_name = CString::new("test").expect("Socket name has null in it");
@@ -219,7 +218,7 @@ impl BtSocket {
         let status: BtStatus = ccall!(
             self,
             connect,
-            addr_ptr.into(),
+            addr,
             sock_type.into(),
             uuid_ptr.into(),
             channel,
@@ -302,8 +301,6 @@ mod tests {
             status: 5_i32,
             max_tx_packet_size: 16_u16,
             max_rx_packet_size: 17_u16,
-            conn_uuid_lsb: 0x0000113500001135_u64,
-            conn_uuid_msb: 0x1135000011350000_u64,
             socket_id: 0x1135113511351135_u64,
         };
         // SAFETY: The sock_connect_signal_t type has size CONNECT_COMPLETE_SIZE,

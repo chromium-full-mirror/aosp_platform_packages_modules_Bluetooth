@@ -78,6 +78,7 @@ import com.android.bluetooth.btservice.RemoteDevices;
 import com.android.bluetooth.btservice.SilenceDeviceManager;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.flags.Flags;
+import com.android.bluetooth.storage.BluetoothStorageManager;
 import com.android.tests.bluetooth.MockitoRule;
 
 import org.junit.After;
@@ -108,6 +109,7 @@ public class HeadsetServiceTest {
     @Mock private ActiveDeviceManager mActiveDeviceManager;
     @Mock private SilenceDeviceManager mSilenceDeviceManager;
     @Mock private DatabaseManager mDatabaseManager;
+    @Mock private BluetoothStorageManager mStorage;
     @Mock private HeadsetSystemInterface mSystemInterface;
     @Mock private HeadsetNativeInterface mNativeInterface;
     @Mock private AudioManager mAudioManager;
@@ -145,7 +147,6 @@ public class HeadsetServiceTest {
         doReturn(BluetoothDevice.BOND_BONDED)
                 .when(mAdapterService)
                 .getBondState(any(BluetoothDevice.class));
-        doReturn(mActiveDeviceManager).when(mAdapterService).getActiveDeviceManager();
         doReturn(mSilenceDeviceManager).when(mAdapterService).getSilenceDeviceManager();
         doReturn(mDatabaseManager).when(mAdapterService).getDatabaseManager();
         doReturn(mRemoteDevices).when(mAdapterService).getRemoteDevices();
@@ -189,10 +190,15 @@ public class HeadsetServiceTest {
                             return stateMachine;
                         })
                 .when(mObjectsFactory)
-                .makeStateMachine(any(), any(), any(), any(), any(), any());
-        mHeadsetService = new HeadsetService(mAdapterService, mNativeInterface, mSystemInterface);
+                .makeStateMachine(any(), any(), any(), any(), any(), any(), any());
+        mHeadsetService =
+                new HeadsetService(
+                        mAdapterService,
+                        mStorage,
+                        mNativeInterface,
+                        mSystemInterface,
+                        mActiveDeviceManager);
         mHeadsetService.setAvailable(true);
-        mHeadsetService.setForceScoAudio(true);
     }
 
     @After
@@ -269,6 +275,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mStateMachines.get(mCurrentDevice))
@@ -282,7 +289,7 @@ public class HeadsetServiceTest {
         // 2nd connection attempt will fail
         assertThat(mHeadsetService.connect(mCurrentDevice)).isFalse();
         // Verify makeStateMachine is only called once
-        verify(mObjectsFactory).makeStateMachine(any(), any(), any(), any(), any(), any());
+        verify(mObjectsFactory).makeStateMachine(any(), any(), any(), any(), any(), any(), any());
         // Verify CONNECT is only sent once
         verify(mStateMachines.get(mCurrentDevice))
                 .sendMessage(eq(HeadsetStateMachine.CONNECT), any());
@@ -308,6 +315,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mStateMachines.get(mCurrentDevice))
@@ -351,6 +359,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mStateMachines.get(mCurrentDevice))
@@ -394,6 +403,7 @@ public class HeadsetServiceTest {
                             mHeadsetService.getStateMachinesThreadLooper(),
                             mHeadsetService,
                             mAdapterService,
+                            mStorage,
                             mNativeInterface,
                             mSystemInterface);
             verify(mObjectsFactory, times(i + 1))
@@ -402,6 +412,7 @@ public class HeadsetServiceTest {
                             eq(mHeadsetService.getStateMachinesThreadLooper()),
                             eq(mHeadsetService),
                             eq(mAdapterService),
+                            eq(mStorage),
                             eq(mNativeInterface),
                             eq(mSystemInterface));
             verify(mStateMachines.get(mCurrentDevice))
@@ -433,6 +444,7 @@ public class HeadsetServiceTest {
                         eq(mHeadsetService.getStateMachinesThreadLooper()),
                         eq(mHeadsetService),
                         eq(mAdapterService),
+                        eq(mStorage),
                         eq(mNativeInterface),
                         eq(mSystemInterface));
         assertThat(mHeadsetService.getConnectionState(mCurrentDevice))
@@ -459,6 +471,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mStateMachines.get(mCurrentDevice))
@@ -467,14 +480,15 @@ public class HeadsetServiceTest {
         when(mStateMachines.get(mCurrentDevice).getConnectionState()).thenReturn(STATE_CONNECTED);
         when(mStateMachines.get(mCurrentDevice).getConnectingTimestampMs())
                 .thenReturn(SystemClock.uptimeMillis());
+        when(mStateMachines.get(mCurrentDevice).getHfpCallAudioPolicy())
+                .thenReturn(new BluetoothSinkAudioPolicy.Builder().build());
         assertThat(mHeadsetService.getConnectionState(mCurrentDevice)).isEqualTo(STATE_CONNECTED);
         assertThat(mHeadsetService.getConnectedDevices()).isEqualTo(List.of(mCurrentDevice));
         mHeadsetService.onConnectionStateChangedFromStateMachine(
                 mCurrentDevice, STATE_DISCONNECTED, STATE_CONNECTED);
-        // Test connect audio - set the device first as the active device
+        // Test connect audio - set the device first as the active device, fake a call
+        when(mSystemInterface.isInCall()).thenReturn(true);
         assertThat(mHeadsetService.setActiveDevice(mCurrentDevice)).isTrue();
-        assertThat(mHeadsetService.connectAudio(mCurrentDevice))
-                .isEqualTo(BluetoothStatusCodes.SUCCESS);
         verify(mStateMachines.get(mCurrentDevice))
                 .sendMessage(HeadsetStateMachine.CONNECT_AUDIO, mCurrentDevice);
         when(mStateMachines.get(mCurrentDevice).getAudioState())
@@ -518,6 +532,7 @@ public class HeadsetServiceTest {
                             mHeadsetService.getStateMachinesThreadLooper(),
                             mHeadsetService,
                             mAdapterService,
+                            mStorage,
                             mNativeInterface,
                             mSystemInterface);
             verify(mObjectsFactory, times(i + 1))
@@ -526,6 +541,7 @@ public class HeadsetServiceTest {
                             eq(mHeadsetService.getStateMachinesThreadLooper()),
                             eq(mHeadsetService),
                             eq(mAdapterService),
+                            eq(mStorage),
                             eq(mNativeInterface),
                             eq(mSystemInterface));
             verify(mStateMachines.get(mCurrentDevice))
@@ -546,6 +562,8 @@ public class HeadsetServiceTest {
                     .thenReturn(STATE_CONNECTED);
             when(mStateMachines.get(mCurrentDevice).getConnectingTimestampMs())
                     .thenReturn(SystemClock.uptimeMillis());
+            when(mStateMachines.get(mCurrentDevice).getHfpCallAudioPolicy())
+                    .thenReturn(new BluetoothSinkAudioPolicy.Builder().build());
             assertThat(mHeadsetService.getConnectionState(mCurrentDevice))
                     .isEqualTo(STATE_CONNECTED);
             mHeadsetService.onConnectionStateChangedFromStateMachine(
@@ -556,10 +574,9 @@ public class HeadsetServiceTest {
             // Should fail
             assertThat(mHeadsetService.connectAudio(mCurrentDevice))
                     .isEqualTo(BluetoothStatusCodes.ERROR_NOT_ACTIVE_DEVICE);
-            // Should succeed after setActiveDevice()
+            // Should succeed after setActiveDevice(), fake active call
+            when(mSystemInterface.isInCall()).thenReturn(true);
             assertThat(mHeadsetService.setActiveDevice(mCurrentDevice)).isTrue();
-            assertThat(mHeadsetService.connectAudio(mCurrentDevice))
-                    .isEqualTo(BluetoothStatusCodes.SUCCESS);
             verify(mStateMachines.get(mCurrentDevice))
                     .sendMessage(HeadsetStateMachine.CONNECT_AUDIO, mCurrentDevice);
             // Put device to audio connecting state
@@ -610,6 +627,7 @@ public class HeadsetServiceTest {
                             mHeadsetService.getStateMachinesThreadLooper(),
                             mHeadsetService,
                             mAdapterService,
+                            mStorage,
                             mNativeInterface,
                             mSystemInterface);
             verify(mObjectsFactory, times(i + 1))
@@ -618,6 +636,7 @@ public class HeadsetServiceTest {
                             eq(mHeadsetService.getStateMachinesThreadLooper()),
                             eq(mHeadsetService),
                             eq(mAdapterService),
+                            eq(mStorage),
                             eq(mNativeInterface),
                             eq(mSystemInterface));
             verify(mStateMachines.get(mCurrentDevice))
@@ -649,10 +668,9 @@ public class HeadsetServiceTest {
             // Try to connect audio
             BluetoothDevice firstDevice = connectedDevices.get(0);
             BluetoothDevice secondDevice = connectedDevices.get(1);
-            // Set the first device as the active device
+            // Set the first device as the active device, fake a call
+            when(mSystemInterface.isInCall()).thenReturn(true);
             assertThat(mHeadsetService.setActiveDevice(firstDevice)).isTrue();
-            assertThat(mHeadsetService.connectAudio(firstDevice))
-                    .isEqualTo(BluetoothStatusCodes.SUCCESS);
             verify(mStateMachines.get(firstDevice))
                     .sendMessage(HeadsetStateMachine.CONNECT_AUDIO, firstDevice);
             // Put device to audio connecting state
@@ -704,6 +722,7 @@ public class HeadsetServiceTest {
                             mHeadsetService.getStateMachinesThreadLooper(),
                             mHeadsetService,
                             mAdapterService,
+                            mStorage,
                             mNativeInterface,
                             mSystemInterface);
             verify(mObjectsFactory, times(i + 1))
@@ -712,6 +731,7 @@ public class HeadsetServiceTest {
                             eq(mHeadsetService.getStateMachinesThreadLooper()),
                             eq(mHeadsetService),
                             eq(mAdapterService),
+                            eq(mStorage),
                             eq(mNativeInterface),
                             eq(mSystemInterface));
             verify(mStateMachines.get(mCurrentDevice))
@@ -743,8 +763,8 @@ public class HeadsetServiceTest {
         }
         // Try to connect audio
         BluetoothDevice firstDevice = connectedDevices.get(0);
+        when(mSystemInterface.isInCall()).thenReturn(true);
         assertThat(mHeadsetService.setActiveDevice(firstDevice)).isTrue();
-        assertThat(mHeadsetService.connectAudio()).isEqualTo(BluetoothStatusCodes.SUCCESS);
         verify(mStateMachines.get(firstDevice))
                 .sendMessage(HeadsetStateMachine.CONNECT_AUDIO, firstDevice);
     }
@@ -777,6 +797,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mStateMachines.get(mCurrentDevice))
@@ -848,6 +869,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mStateMachines.get(mCurrentDevice))
@@ -941,6 +963,7 @@ public class HeadsetServiceTest {
                             mHeadsetService.getStateMachinesThreadLooper(),
                             mHeadsetService,
                             mAdapterService,
+                            mStorage,
                             mNativeInterface,
                             mSystemInterface);
             verify(mObjectsFactory, times(i + 1))
@@ -949,6 +972,7 @@ public class HeadsetServiceTest {
                             eq(mHeadsetService.getStateMachinesThreadLooper()),
                             eq(mHeadsetService),
                             eq(mAdapterService),
+                            eq(mStorage),
                             eq(mNativeInterface),
                             eq(mSystemInterface));
             verify(mStateMachines.get(mCurrentDevice))
@@ -1015,6 +1039,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         when(mStateMachines.get(mCurrentDevice).getDevice()).thenReturn(mCurrentDevice);
@@ -1043,6 +1068,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         when(mStateMachines.get(mCurrentDevice).getDevice()).thenReturn(mCurrentDevice);
@@ -1075,6 +1101,7 @@ public class HeadsetServiceTest {
                             mHeadsetService.getStateMachinesThreadLooper(),
                             mHeadsetService,
                             mAdapterService,
+                            mStorage,
                             mNativeInterface,
                             mSystemInterface);
             when(mStateMachines.get(mCurrentDevice).getDevice()).thenReturn(mCurrentDevice);
@@ -1112,6 +1139,7 @@ public class HeadsetServiceTest {
                             mHeadsetService.getStateMachinesThreadLooper(),
                             mHeadsetService,
                             mAdapterService,
+                            mStorage,
                             mNativeInterface,
                             mSystemInterface);
             when(mStateMachines.get(mCurrentDevice).getDevice()).thenReturn(mCurrentDevice);
@@ -1173,7 +1201,6 @@ public class HeadsetServiceTest {
                         any(BluetoothDevice.class), eq(BluetoothProfile.HEADSET)))
                 .thenReturn(CONNECTION_POLICY_UNKNOWN);
         mCurrentDevice = getTestDevice(0);
-        mHeadsetService.setForceScoAudio(false);
 
         assertThat(mHeadsetService.connect(mCurrentDevice)).isTrue();
         when(mStateMachines.get(mCurrentDevice).getDevice()).thenReturn(mCurrentDevice);
@@ -1304,6 +1331,8 @@ public class HeadsetServiceTest {
 
         when(mStateMachines.get(mCurrentDevice).getDevice()).thenReturn(mCurrentDevice);
         when(mStateMachines.get(mCurrentDevice).getConnectionState()).thenReturn(STATE_CONNECTED);
+        when(mStateMachines.get(mCurrentDevice).getHfpCallAudioPolicy())
+                .thenReturn(new BluetoothSinkAudioPolicy.Builder().build());
 
         when(mSystemInterface.isRinging()).thenReturn(true);
         mHeadsetService.setActiveDevice(mCurrentDevice);
@@ -1457,6 +1486,7 @@ public class HeadsetServiceTest {
                         mHeadsetService.getStateMachinesThreadLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         when(mStateMachines.get(device).getDevice()).thenReturn(device);

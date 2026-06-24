@@ -26,8 +26,8 @@
 #include <base/functional/bind.h>
 #include <bluetooth/log.h>
 #include <bluetooth/types/address.h>
+#include <bluetooth/types/bt_octets.h>
 #include <stddef.h>
-#include <string.h>
 
 #include <bitset>
 
@@ -36,7 +36,6 @@
 #include "internal_include/bt_target.h"
 #include "osi/include/allocator.h"
 #include "stack/include/bt_hdr.h"
-#include "stack/include/bt_octets.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/btu_hcif.h"
 
@@ -94,18 +93,15 @@
 #define HCIC_PARAM_SIZE_BLE_RC_PARAM_REQ_REPLY 14
 #define HCIC_PARAM_SIZE_BLE_RC_PARAM_REQ_NEG_REPLY 3
 
-#define HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_CREATE_SYNC 14
-#define HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_CREATE_SYNC_CANCEL 0
-#define HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_TERMINATE_SYNC 2
-#define HCIC_PARAM_SIZE_ADD_DEVICE_TO_PERIODIC_ADVERTISER_LIST 8
-#define HCIC_PARAM_SIZE_REMOVE_DEVICE_FROM_PERIODIC_ADVERTISER_LIST 8
-#define HCIC_PARAM_SIZE_CLEAR_PERIODIC_ADVERTISER_LIST 0
-#define HCIC_PARAM_SIZE_READ_PERIODIC_ADVERTISER_LIST_SIZE 0
-#define HCIC_PARAM_SIZE_SET_PERIODIC_ADVERTISING_RECEIVE_ENABLE 3
-#define HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_SYNC_TRANSFER 6
-#define HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER 5
-#define HCIC_PARAM_SIZE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMS 8
-#define HCIC_PARAM_SIZE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMS 8
+#define HCIC_PARAM_SIZE_SET_CIG_PARAMS_BASE_LEN 15
+#define HCIC_PARAM_SIZE_SET_CIG_PARAMS_PER_CIS_LEN 9
+#define HCIC_PARAM_SIZE_CREATE_CIS_BASE_LEN 1
+#define HCIC_PARAM_SIZE_CREATE_CIS_PER_CIS_LEN 4
+#define HCIC_PARAM_SIZE_BLE_SETUP_ISO_DATA_PATH_BASE_LEN 13
+
+#define HCIC_PARAM_SIZE_SET_BIG_CHANNEL_MAP_CLASSIFICATION_VSC_BASE 4
+
+constexpr uint8_t kMaxParametersSize = 255;
 
 void btsnd_hcic_ble_set_scan_params(uint8_t scan_type, uint16_t scan_int, uint16_t scan_win,
                                     uint8_t addr_type_own, uint8_t scan_filter_policy) {
@@ -158,20 +154,21 @@ void btsnd_hcic_ble_read_remote_feat(uint16_t handle) {
   btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
 }
 
-void btsnd_hcic_ble_rand(base::Callback<void(BT_OCTET8)> cb) {
-  btu_hcif_send_cmd_with_cb(
-          HCI_BLE_RAND, nullptr, 0,
-          base::Bind(
-                  [](base::Callback<void(BT_OCTET8)> cb, uint8_t* param, uint16_t /* param_len */) {
-                    bluetooth::log::assert_that(param[0] == 0,
-                                                "LE Rand return status must be zero");
-                    cb.Run(param + 1 /* skip status */);
-                  },
-                  std::move(cb)));
+void btsnd_hcic_ble_rand(base::OnceCallback<void(Octet8)> cb) {
+  btu_hcif_send_cmd_with_cb(HCI_BLE_RAND, nullptr, 0,
+                            base::BindOnce(
+                                    [](base::OnceCallback<void(Octet8)> cb, uint8_t* param,
+                                       uint16_t /* param_len */) {
+                                      bluetooth::log::assert_that(
+                                              param[0] == 0, "LE Rand return status must be zero");
+                                      Octet8 rand{};
+                                      memcpy(rand.data(), param + 1, rand.size()); /* Skip status */
+                                      std::move(cb).Run(rand);
+                                    },
+                                    std::move(cb)));
 }
 
-void btsnd_hcic_ble_start_enc(uint16_t handle, uint8_t rand[HCIC_BLE_RAND_DI_SIZE], uint16_t ediv,
-                              const Octet16& ltk) {
+void btsnd_hcic_ble_start_enc(uint16_t handle, Octet8 rand, uint16_t ediv, const Octet16& ltk) {
   BT_HDR* p = (BT_HDR*)osi_malloc(HCI_CMD_BUF_SIZE);
   uint8_t* pp = (uint8_t*)(p + 1);
 
@@ -359,13 +356,17 @@ void btsnd_hcic_ble_set_extended_scan_enable(uint8_t enable, uint8_t filter_dupl
   btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
 }
 
-void btsnd_hcic_set_cig_params(uint8_t cig_id, uint32_t sdu_itv_mtos, uint32_t sdu_itv_stom,
-                               uint8_t sca, uint8_t packing, uint8_t framing,
-                               uint16_t max_trans_lat_stom, uint16_t max_trans_lat_mtos,
-                               uint8_t cis_cnt, const EXT_CIS_CFG* cis_cfg,
-                               base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  const int params_len = 15 + cis_cnt * 9;
-  uint8_t param[params_len];
+void btsnd_hcic_ble_set_cig_params(uint8_t cig_id, uint32_t sdu_itv_mtos, uint32_t sdu_itv_stom,
+                                   uint8_t sca, uint8_t packing, uint8_t framing,
+                                   uint16_t max_trans_lat_stom, uint16_t max_trans_lat_mtos,
+                                   uint8_t cis_cnt, const EXT_CIS_CFG* cis_cfg,
+                                   base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
+  const int params_len = HCIC_PARAM_SIZE_SET_CIG_PARAMS_BASE_LEN +
+                         cis_cnt * HCIC_PARAM_SIZE_SET_CIG_PARAMS_PER_CIS_LEN;
+  bluetooth::log::assert_that(params_len <= kMaxParametersSize,
+                              "assert failed: params_len={} <= kMaxParametersSize={}", params_len,
+                              kMaxParametersSize);
+  uint8_t param[kMaxParametersSize];
   uint8_t* pp = param;
 
   UINT8_TO_STREAM(pp, cig_id);
@@ -391,10 +392,14 @@ void btsnd_hcic_set_cig_params(uint8_t cig_id, uint32_t sdu_itv_mtos, uint32_t s
   btu_hcif_send_cmd_with_cb(HCI_LE_SET_CIG_PARAMS, param, params_len, std::move(cb));
 }
 
-void btsnd_hcic_create_cis(uint8_t num_cis, const EXT_CIS_CREATE_CFG* cis_cfg,
-                           base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  const int params_len = 1 + num_cis * 4;
-  uint8_t param[params_len];
+void btsnd_hcic_ble_create_cis(uint8_t num_cis, const EXT_CIS_CREATE_CFG* cis_cfg,
+                               base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
+  const int params_len =
+          HCIC_PARAM_SIZE_CREATE_CIS_BASE_LEN + num_cis * HCIC_PARAM_SIZE_CREATE_CIS_PER_CIS_LEN;
+  bluetooth::log::assert_that(params_len <= kMaxParametersSize,
+                              "assert failed: params_len={} <= kMaxParametersSize={}", params_len,
+                              kMaxParametersSize);
+  uint8_t param[kMaxParametersSize];
   uint8_t* pp = param;
 
   UINT8_TO_STREAM(pp, num_cis);
@@ -407,17 +412,17 @@ void btsnd_hcic_create_cis(uint8_t num_cis, const EXT_CIS_CREATE_CFG* cis_cfg,
   btu_hcif_send_cmd_with_cb(HCI_LE_CREATE_CIS, param, params_len, std::move(cb));
 }
 
-void btsnd_hcic_remove_cig(uint8_t cig_id, base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  const int params_len = 1;
-  uint8_t param[params_len];
+void btsnd_hcic_ble_remove_cig(uint8_t cig_id, base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
+  constexpr int kParamsLen = 1;
+  uint8_t param[kParamsLen];
   uint8_t* pp = param;
 
   UINT8_TO_STREAM(pp, cig_id);
 
-  btu_hcif_send_cmd_with_cb(HCI_LE_REMOVE_CIG, param, params_len, std::move(cb));
+  btu_hcif_send_cmd_with_cb(HCI_LE_REMOVE_CIG, param, kParamsLen, std::move(cb));
 }
 
-void btsnd_hcic_req_peer_sca(uint16_t conn_handle) {
+void btsnd_hcic_ble_req_peer_sca(uint16_t conn_handle) {
   BT_HDR* p = (BT_HDR*)osi_malloc(HCI_CMD_BUF_SIZE);
   uint8_t* pp = (uint8_t*)(p + 1);
 
@@ -432,10 +437,10 @@ void btsnd_hcic_req_peer_sca(uint16_t conn_handle) {
   btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
 }
 
-void btsnd_hcic_create_big(uint8_t big_handle, uint8_t adv_handle, uint8_t num_bis,
-                           uint32_t sdu_itv, uint16_t max_sdu_size, uint16_t transport_latency,
-                           uint8_t rtn, uint8_t phy, uint8_t packing, uint8_t framing, uint8_t enc,
-                           std::array<uint8_t, 16> bcst_code) {
+void btsnd_hcic_ble_create_big(uint8_t big_handle, uint8_t adv_handle, uint8_t num_bis,
+                               uint32_t sdu_itv, uint16_t max_sdu_size, uint16_t transport_latency,
+                               uint8_t rtn, uint8_t phy, uint8_t packing, uint8_t framing,
+                               uint8_t enc, std::array<uint8_t, 16> bcst_code) {
   BT_HDR* p = (BT_HDR*)osi_malloc(HCI_CMD_BUF_SIZE);
   uint8_t* pp = (uint8_t*)(p + 1);
 
@@ -459,12 +464,12 @@ void btsnd_hcic_create_big(uint8_t big_handle, uint8_t adv_handle, uint8_t num_b
   UINT8_TO_STREAM(pp, enc);
 
   uint8_t* buf_ptr = bcst_code.data();
-  ARRAY_TO_STREAM(pp, buf_ptr, 16);
+  ARRAY_TO_STREAM(pp, buf_ptr, bcst_code.size());
 
   btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
 }
 
-void btsnd_hcic_term_big(uint8_t big_handle, uint8_t reason) {
+void btsnd_hcic_ble_term_big(uint8_t big_handle, uint8_t reason) {
   BT_HDR* p = (BT_HDR*)osi_malloc(HCI_CMD_BUF_SIZE);
   uint8_t* pp = (uint8_t*)(p + 1);
 
@@ -481,13 +486,51 @@ void btsnd_hcic_term_big(uint8_t big_handle, uint8_t reason) {
   btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
 }
 
-void btsnd_hcic_setup_iso_data_path(uint16_t iso_handle, uint8_t data_path_dir,
-                                    uint8_t data_path_id, uint8_t codec_id_format,
-                                    uint16_t codec_id_company, uint16_t codec_id_vendor,
-                                    uint32_t controller_delay, std::vector<uint8_t> codec_conf,
-                                    base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  const int params_len = 13 + codec_conf.size();
-  uint8_t param[params_len];
+void btsnd_hcic_ble_big_create_sync(uint8_t big_handle, uint16_t sync_handle, uint8_t encryption,
+                                    const std::array<uint8_t, 16>& bcast_code, uint8_t mse,
+                                    uint16_t sync_timeout, const std::vector<uint8_t>& bis) {
+  BT_HDR* p = (BT_HDR*)osi_malloc(HCI_CMD_BUF_SIZE);
+  uint8_t* pp = (uint8_t*)(p + 1);
+
+  constexpr uint8_t kBigCreateSyncCommandBaseSize = 24;  // Command size excluding bis[i] field.
+  auto param_len = kBigCreateSyncCommandBaseSize + bis.size();
+  p->len = HCIC_PREAMBLE_SIZE + param_len;
+  p->offset = 0;
+
+  UINT16_TO_STREAM(pp, HCI_LE_BIG_CREATE_SYNC);
+  UINT8_TO_STREAM(pp, param_len);
+
+  UINT8_TO_STREAM(pp, big_handle);
+  UINT16_TO_STREAM(pp, sync_handle);
+  UINT8_TO_STREAM(pp, encryption);
+  ARRAY_TO_STREAM(pp, bcast_code.data(), 16);
+  UINT8_TO_STREAM(pp, mse);
+  UINT16_TO_STREAM(pp, sync_timeout);
+  UINT8_TO_STREAM(pp, bis.size());
+  ARRAY_TO_STREAM(pp, bis.data(), bis.size());
+
+  btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
+}
+
+void btsnd_hcic_ble_big_terminate_sync(uint8_t big_handle,
+                                       base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
+  uint8_t param[1];
+  uint8_t* pp = param;
+
+  UINT8_TO_STREAM(pp, big_handle);
+
+  btu_hcif_send_cmd_with_cb(HCI_LE_BIG_TERM_SYNC, param, 1, std::move(cb));
+}
+void btsnd_hcic_ble_setup_iso_data_path(uint16_t iso_handle, uint8_t data_path_dir,
+                                        uint8_t data_path_id, uint8_t codec_id_format,
+                                        uint16_t codec_id_company, uint16_t codec_id_vendor,
+                                        uint32_t controller_delay, std::vector<uint8_t> codec_conf,
+                                        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
+  const int params_len = HCIC_PARAM_SIZE_BLE_SETUP_ISO_DATA_PATH_BASE_LEN + codec_conf.size();
+  bluetooth::log::assert_that(params_len <= kMaxParametersSize,
+                              "assert failed: params_len={} <= kMaxParametersSize={}", params_len,
+                              kMaxParametersSize);
+  uint8_t param[kMaxParametersSize];
   uint8_t* pp = param;
 
   UINT16_TO_STREAM(pp, iso_handle);
@@ -503,173 +546,49 @@ void btsnd_hcic_setup_iso_data_path(uint16_t iso_handle, uint8_t data_path_dir,
   btu_hcif_send_cmd_with_cb(HCI_LE_SETUP_ISO_DATA_PATH, param, params_len, std::move(cb));
 }
 
-void btsnd_hcic_remove_iso_data_path(uint16_t iso_handle, uint8_t data_path_dir,
-                                     base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  const int params_len = 3;
-  uint8_t param[params_len];
+void btsnd_hcic_ble_remove_iso_data_path(uint16_t iso_handle, uint8_t data_path_dir,
+                                         base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
+  constexpr int kParamsLen = 3;
+  uint8_t param[kParamsLen];
   uint8_t* pp = param;
 
   UINT16_TO_STREAM(pp, iso_handle);
   UINT8_TO_STREAM(pp, data_path_dir);
 
-  btu_hcif_send_cmd_with_cb(HCI_LE_REMOVE_ISO_DATA_PATH, param, params_len, std::move(cb));
+  btu_hcif_send_cmd_with_cb(HCI_LE_REMOVE_ISO_DATA_PATH, param, kParamsLen, std::move(cb));
 }
 
-void btsnd_hcic_read_iso_link_quality(uint16_t iso_handle,
-                                      base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  const int params_len = 2;
-  uint8_t param[params_len];
+void btsnd_hcic_ble_read_iso_link_quality(uint16_t iso_handle,
+                                          base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
+  constexpr int kParamsLen = 2;
+  uint8_t param[kParamsLen];
   uint8_t* pp = param;
 
   UINT16_TO_STREAM(pp, iso_handle);
 
-  btu_hcif_send_cmd_with_cb(HCI_LE_READ_ISO_LINK_QUALITY, param, params_len, std::move(cb));
+  btu_hcif_send_cmd_with_cb(HCI_LE_READ_ISO_LINK_QUALITY, param, kParamsLen, std::move(cb));
 }
 
-void btsnd_hcic_ble_periodic_advertising_create_sync(uint8_t options, uint8_t adv_sid,
-                                                     uint8_t adv_addr_type,
-                                                     const RawAddress& adv_addr, uint16_t skip_num,
-                                                     uint16_t sync_timeout, uint8_t sync_cte_type) {
+void btsnd_hcic_ble_set_big_channel_map_classification_vsc(uint8_t action, uint8_t big_handle,
+                                                           const std::vector<uint16_t>& handles) {
   BT_HDR* p = (BT_HDR*)osi_malloc(HCI_CMD_BUF_SIZE);
   uint8_t* pp = (uint8_t*)(p + 1);
 
-  p->len = HCIC_PREAMBLE_SIZE + HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_CREATE_SYNC;
+  const uint8_t param_len =
+          HCIC_PARAM_SIZE_SET_BIG_CHANNEL_MAP_CLASSIFICATION_VSC_BASE + (handles.size() * 2);
+  p->len = HCIC_PREAMBLE_SIZE + param_len;
   p->offset = 0;
 
-  UINT16_TO_STREAM(pp, HCI_BLE_PERIODIC_ADVERTISING_CREATE_SYNC);
-  UINT8_TO_STREAM(pp, HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_CREATE_SYNC);
-  UINT8_TO_STREAM(pp, options);
-  UINT8_TO_STREAM(pp, adv_sid);
-  UINT8_TO_STREAM(pp, adv_addr_type);
-  BDADDR_TO_STREAM(pp, adv_addr);
-  UINT16_TO_STREAM(pp, skip_num);
-  UINT16_TO_STREAM(pp, sync_timeout);
-  UINT8_TO_STREAM(pp, sync_cte_type);
+  UINT16_TO_STREAM(pp, HCI_LE_SET_BIG_CHANNEL_MAP_CLASSIFICATION_OPCODE);
+  UINT8_TO_STREAM(pp, param_len);
+
+  UINT8_TO_STREAM(pp, SET_BIG_MAP_BY_CONNECTION_HANDLE);
+  UINT8_TO_STREAM(pp, action);
+  UINT8_TO_STREAM(pp, big_handle);
+  UINT8_TO_STREAM(pp, handles.size());
+  for (uint16_t handle : handles) {
+    UINT16_TO_STREAM(pp, handle);
+  }
 
   btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
-}
-
-void btsnd_hcic_ble_periodic_advertising_create_sync_cancel(
-        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  btu_hcif_send_cmd_with_cb(HCI_BLE_PERIODIC_ADVERTISING_CREATE_SYNC_CANCEL, nullptr,
-                            HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_CREATE_SYNC_CANCEL, std::move(cb));
-}
-
-void btsnd_hcic_ble_periodic_advertising_terminate_sync(
-        uint16_t sync_handle, base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_TERMINATE_SYNC];
-  uint8_t* pp = param;
-
-  UINT16_TO_STREAM(pp, sync_handle);
-
-  btu_hcif_send_cmd_with_cb(HCI_BLE_PERIODIC_ADVERTISING_TERMINATE_SYNC, param,
-                            HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_TERMINATE_SYNC, std::move(cb));
-}
-
-void btsnd_hci_ble_add_device_to_periodic_advertiser_list(
-        uint8_t adv_addr_type, const RawAddress& adv_addr, uint8_t adv_sid,
-        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_ADD_DEVICE_TO_PERIODIC_ADVERTISER_LIST];
-  uint8_t* pp = param;
-
-  UINT8_TO_STREAM(pp, adv_addr_type);
-  BDADDR_TO_STREAM(pp, adv_addr);
-  UINT8_TO_STREAM(pp, adv_sid);
-
-  btu_hcif_send_cmd_with_cb(HCI_BLE_ADD_DEVICE_TO_PERIODIC_ADVERTISER_LIST, param,
-                            HCIC_PARAM_SIZE_ADD_DEVICE_TO_PERIODIC_ADVERTISER_LIST, std::move(cb));
-}
-
-void btsnd_hci_ble_remove_device_from_periodic_advertiser_list(
-        uint8_t adv_addr_type, const RawAddress& adv_addr, uint8_t adv_sid,
-        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_REMOVE_DEVICE_FROM_PERIODIC_ADVERTISER_LIST];
-  uint8_t* pp = param;
-
-  UINT8_TO_STREAM(pp, adv_addr_type);
-  BDADDR_TO_STREAM(pp, adv_addr);
-  UINT8_TO_STREAM(pp, adv_sid);
-
-  btu_hcif_send_cmd_with_cb(HCI_BLE_REMOVE_DEVICE_FROM_PERIODIC_ADVERTISER_LIST, param,
-                            HCIC_PARAM_SIZE_REMOVE_DEVICE_FROM_PERIODIC_ADVERTISER_LIST,
-                            std::move(cb));
-}
-
-void btsnd_hci_ble_clear_periodic_advertiser_list(base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  btu_hcif_send_cmd_with_cb(HCI_BLE_CLEAR_PERIODIC_ADVERTISER_LIST, nullptr,
-                            HCIC_PARAM_SIZE_CLEAR_PERIODIC_ADVERTISER_LIST, std::move(cb));
-}
-
-void btsnd_hcic_ble_set_periodic_advertising_receive_enable(
-        uint16_t sync_handle, bool enable, base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_SET_PERIODIC_ADVERTISING_RECEIVE_ENABLE];
-  uint8_t* pp = param;
-
-  UINT16_TO_STREAM(pp, sync_handle);
-  UINT8_TO_STREAM(pp, (enable ? 0x01 : 0x00));
-
-  btu_hcif_send_cmd_with_cb(HCI_LE_SET_PERIODIC_ADVERTISING_RECEIVE_ENABLE, param,
-                            HCIC_PARAM_SIZE_SET_PERIODIC_ADVERTISING_RECEIVE_ENABLE, std::move(cb));
-}
-
-void btsnd_hcic_ble_periodic_advertising_sync_transfer(
-        uint16_t conn_handle, uint16_t service_data, uint16_t sync_handle,
-        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_SYNC_TRANSFER];
-  uint8_t* pp = param;
-
-  UINT16_TO_STREAM(pp, conn_handle);
-  UINT16_TO_STREAM(pp, service_data);
-  UINT16_TO_STREAM(pp, sync_handle);
-
-  btu_hcif_send_cmd_with_cb(HCI_LE_PERIODIC_ADVERTISING_SYNC_TRANSFER, param,
-                            HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_SYNC_TRANSFER, std::move(cb));
-}
-
-void btsnd_hcic_ble_periodic_advertising_set_info_transfer(
-        uint16_t conn_handle, uint16_t service_data, uint8_t adv_handle,
-        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER];
-  uint8_t* pp = param;
-
-  UINT16_TO_STREAM(pp, conn_handle);
-  UINT16_TO_STREAM(pp, service_data);
-  UINT8_TO_STREAM(pp, adv_handle);
-
-  btu_hcif_send_cmd_with_cb(HCI_LE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER, param,
-                            HCIC_PARAM_SIZE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER, std::move(cb));
-}
-
-void btsnd_hcic_ble_set_periodic_advertising_sync_transfer_params(
-        uint16_t conn_handle, uint8_t mode, uint16_t skip, uint16_t sync_timeout, uint8_t cte_type,
-        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMS];
-  uint8_t* pp = param;
-
-  UINT16_TO_STREAM(pp, conn_handle);
-  UINT8_TO_STREAM(pp, mode);
-  UINT16_TO_STREAM(pp, skip);
-  UINT16_TO_STREAM(pp, sync_timeout);
-  UINT8_TO_STREAM(pp, cte_type);
-
-  btu_hcif_send_cmd_with_cb(HCI_LE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAM, param,
-                            HCIC_PARAM_SIZE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMS,
-                            std::move(cb));
-}
-
-void btsnd_hcic_ble_set_default_periodic_advertising_sync_transfer_params(
-        uint16_t conn_handle, uint8_t mode, uint16_t skip, uint16_t sync_timeout, uint8_t cte_type,
-        base::OnceCallback<void(uint8_t*, uint16_t)> cb) {
-  uint8_t param[HCIC_PARAM_SIZE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMS];
-  uint8_t* pp = param;
-
-  UINT16_TO_STREAM(pp, conn_handle);
-  UINT8_TO_STREAM(pp, mode);
-  UINT16_TO_STREAM(pp, skip);
-  UINT16_TO_STREAM(pp, sync_timeout);
-  UINT8_TO_STREAM(pp, cte_type);
-
-  btu_hcif_send_cmd_with_cb(HCI_LE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAM, param,
-                            HCIC_PARAM_SIZE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMS,
-                            std::move(cb));
 }

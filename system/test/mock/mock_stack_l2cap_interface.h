@@ -42,7 +42,7 @@ public:
                uint16_t sec_level));
   MOCK_METHOD(void, L2CA_Deregister, (uint16_t psm));
 
-  MOCK_METHOD(uint16_t, L2CA_AllocateLePSM, ());
+  MOCK_METHOD(uint16_t, L2CA_AllocateLePSM, (int fixed_psm_slots));
   MOCK_METHOD(void, L2CA_FreeLePSM, (uint16_t psm));
 
   MOCK_METHOD(uint16_t, L2CA_RegisterLECoc,
@@ -99,7 +99,10 @@ public:
   MOCK_METHOD(void, L2CA_LockBleConnParamsForLeAudioSubrate,
               (const RawAddress& bd_addr, bool lock));
   MOCK_METHOD(tHCI_ROLE, L2CA_GetBleConnRole, (const RawAddress& bd_addr));
+  MOCK_METHOD(uint16_t, L2CA_GetBleSubrateFactor, (const RawAddress& bd_addr));
   MOCK_METHOD(uint16_t, L2CA_GetBleConnInterval, (const RawAddress& bd_addr));
+  MOCK_METHOD(uint16_t, L2CA_GetBlePeriphLatency, (const RawAddress& bd_addr));
+  MOCK_METHOD(uint16_t, L2CA_GetBleSupervisionTimeout, (const RawAddress& bd_addr));
   MOCK_METHOD(bool, L2CA_SetLeGattTimeout, (const RawAddress& bd_addr, uint16_t idle_tout));
   MOCK_METHOD(bool, L2CA_MarkLeLinkAsActive, (const RawAddress& bd_addr));
   MOCK_METHOD(bool, L2CA_GetPeerLECocConfig, (uint16_t lcid, tL2CAP_LE_CFG_INFO* peer_cfg));

@@ -86,6 +86,7 @@ import com.android.bluetooth.btservice.SilenceDeviceManager;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.le_audio.LeAudioService;
+import com.android.bluetooth.storage.BluetoothStorageManager;
 import com.android.tests.bluetooth.FlagsWrapper;
 import com.android.tests.bluetooth.StaticMockitoRule;
 
@@ -134,12 +135,15 @@ public class HeadsetServiceAndStateMachineTest {
 
     @Spy private HeadsetObjectsFactory mObjectsFactory = HeadsetObjectsFactory.getInstance();
 
+    @Mock private BluetoothSinkAudioPolicy sinkAudioPolicy;
     @Mock private HeadsetNativeInterface mNativeInterface;
     @Mock private LeAudioService mLeAudioService;
     @Mock private AdapterService mAdapterService;
     @Mock private ActiveDeviceManager mActiveDeviceManager;
     @Mock private SilenceDeviceManager mSilenceDeviceManager;
     @Mock private DatabaseManager mDatabaseManager;
+    @Mock private BluetoothStorageManager mStorageFlag;
+    private BluetoothStorageManager mStorage; // Move to mock when cleaning flag
     @Mock private HeadsetSystemInterface mSystemInterface;
     @Mock private AudioManager mAudioManager;
     @Mock private AudioDeviceVolumeManager mAudioDeviceVolumeManager;
@@ -166,6 +170,12 @@ public class HeadsetServiceAndStateMachineTest {
 
     @Before
     public void setUp() {
+        if (!Flags.mainlineBetaStorage()) {
+            mStorage = null; // force mock to null when flag is off to be compliant with code
+        } else {
+            mStorage = mStorageFlag;
+            doReturn(sinkAudioPolicy).when(mStorage).getAudioPolicyMetadata(any());
+        }
         mInOrder = inOrder(mAdapterService);
         doReturn(mContext.getPackageName()).when(mAdapterService).getPackageName();
         doReturn(mContext.getPackageManager()).when(mAdapterService).getPackageManager();
@@ -191,7 +201,6 @@ public class HeadsetServiceAndStateMachineTest {
         doReturn(new BluetoothSinkAudioPolicy.Builder().build())
                 .when(mAdapterService)
                 .getRequestedAudioPolicyAsSink(any(BluetoothDevice.class));
-        doReturn(mActiveDeviceManager).when(mAdapterService).getActiveDeviceManager();
         doReturn(mSilenceDeviceManager).when(mAdapterService).getSilenceDeviceManager();
         doReturn(mRemoteDevices).when(mAdapterService).getRemoteDevices();
         // Mock system interface
@@ -230,14 +239,16 @@ public class HeadsetServiceAndStateMachineTest {
         // Use real state machines here
         doCallRealMethod()
                 .when(mObjectsFactory)
-                .makeStateMachine(any(), any(), any(), any(), any(), any());
+                .makeStateMachine(any(), any(), any(), any(), any(), any(), any());
         mTestLooper = new TestLooper();
 
         mHeadsetService =
                 new HeadsetService(
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface,
+                        mActiveDeviceManager,
                         mTestLooper.getLooper());
         mHeadsetService.setAvailable(true);
         if (android.media.audio.Flags.scoManagedByAudio()) {
@@ -297,6 +308,7 @@ public class HeadsetServiceAndStateMachineTest {
                         mTestLooper.getLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verifyConnectionStateIntent(device, STATE_CONNECTING, STATE_DISCONNECTED);
@@ -338,6 +350,7 @@ public class HeadsetServiceAndStateMachineTest {
                         mTestLooper.getLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verifyConnectionStateIntent(device, STATE_CONNECTING, STATE_DISCONNECTED);
@@ -382,6 +395,7 @@ public class HeadsetServiceAndStateMachineTest {
                         mTestLooper.getLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mNativeInterface).connectHfp(device);
@@ -2307,6 +2321,7 @@ public class HeadsetServiceAndStateMachineTest {
                         mTestLooper.getLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mActiveDeviceManager)
@@ -2363,6 +2378,7 @@ public class HeadsetServiceAndStateMachineTest {
                         mTestLooper.getLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mActiveDeviceManager)
@@ -2425,6 +2441,7 @@ public class HeadsetServiceAndStateMachineTest {
                         mTestLooper.getLooper(),
                         mHeadsetService,
                         mAdapterService,
+                        mStorage,
                         mNativeInterface,
                         mSystemInterface);
         verify(mActiveDeviceManager)

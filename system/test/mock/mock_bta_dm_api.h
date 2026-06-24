@@ -29,6 +29,7 @@
 #include <base/functional/bind.h>
 #include <bluetooth/types/address.h>
 #include <bluetooth/types/ble_address_with_type.h>
+#include <bluetooth/types/bt_octets.h>
 
 #include <vector>
 
@@ -36,7 +37,6 @@
 #include "bta/include/bta_sec_api.h"
 #include "hci/le_rand_callback.h"
 #include "stack/include/bt_device_type.h"
-#include "stack/include/bt_octets.h"
 
 // Original usings
 
@@ -512,15 +512,6 @@ struct BTA_DmSirkSecCbRegister {
   void operator()(tBTA_DM_SEC_CBACK* p_cback) { body(p_cback); }
 };
 extern struct BTA_DmSirkSecCbRegister BTA_DmSirkSecCbRegister;
-
-// Name: BTA_EnableTestMode
-// Params: void
-// Return: void
-struct BTA_EnableTestMode {
-  std::function<void(void)> body{[](void) {}};
-  void operator()(void) { body(); }
-};
-extern struct BTA_EnableTestMode BTA_EnableTestMode;
 
 // Name: BTA_dm_init
 // Params:

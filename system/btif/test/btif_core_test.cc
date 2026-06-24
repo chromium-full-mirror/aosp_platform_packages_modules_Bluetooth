@@ -63,8 +63,8 @@ void set_hal_cbacks(bt_callbacks_t* callbacks);
 }  // namespace bluetooth::testing
 
 namespace bluetooth::legacy::testing {
-void bta_dm_acl_down(const tAclLinkSpec& link_spec);
-void bta_dm_acl_up(const tAclLinkSpec& acl_link_spec, uint16_t acl_handle);
+void bta_dm_acl_down(const AclLinkSpec& link_spec);
+void bta_dm_acl_up(const AclLinkSpec& acl_link_spec, uint16_t acl_handle);
 }  // namespace bluetooth::legacy::testing
 
 const tBTA_AG_RES_DATA tBTA_AG_RES_DATA::kEmpty = {};
@@ -134,23 +134,25 @@ std::map<std::string, std::function<void()>> callback_map_;
 void adapter_state_changed_callback(bt_state_t /* state */) {}
 void adapter_properties_callback(bt_status_t /* status */, int /* num_properties */,
                                  bt_property_t* /* properties */) {}
-void remote_device_properties_callback(bt_status_t /* status */, RawAddress* /* bd_addr */,
+void remote_device_properties_callback(bt_status_t /* status */, RawAddress /* bd_addr */,
                                        uint8_t /* address_type */, int /* num_properties */,
                                        bt_property_t* /* properties */) {}
 void device_found_callback(int /* num_properties */, bt_property_t* /* properties */) {}
 void discovery_state_changed_callback(bt_discovery_state_t /* state */) {}
-void pin_request_callback(RawAddress* /* remote_bd_addr */, bt_bdname_t* /* bd_name */,
-                          uint32_t /* cod */, bool /* min_16_digit */) {}
-void ssp_request_callback(RawAddress* /* remote_bd_addr */, bt_ssp_variant_t /* pairing_variant */,
-                          uint32_t /* pass_key */) {}
-void bond_state_changed_callback(bt_status_t /* status */, RawAddress* /* remote_bd_addr */,
-                                 bt_bond_state_t /* state */, int /* fail_reason */) {}
-void address_consolidate_callback(RawAddress* /* main_bd_addr */,
-                                  RawAddress* /* secondary_bd_addr */) {}
-void le_address_associate_callback(RawAddress* /* main_bd_addr */,
-                                   RawAddress* /* secondary_bd_addr */,
+void pin_request_callback(RawAddress /* remote_bd_addr */, bt_bdname_t* /* bd_name */,
+                          uint32_t /* cod */, bool /* min_16_digit */,
+                          PairingAlgorithm /* pairing_algorithm */) {}
+void ssp_request_callback(RawAddress /* remote_bd_addr */, bt_ssp_variant_t /* pairing_variant */,
+                          uint32_t /* pass_key */, PairingAlgorithm /* pairing_algorithm */) {}
+void bond_state_changed_callback(bt_status_t /* status */, RawAddress /* remote_bd_addr */,
+                                 tBT_TRANSPORT /* transport */, bt_bond_state_t /* state */,
+                                 PairingType /* pairing_type */, int /* fail_reason */) {}
+void address_consolidate_callback(RawAddress /* main_bd_addr */,
+                                  RawAddress /* secondary_bd_addr */) {}
+void le_address_associate_callback(RawAddress /* main_bd_addr */,
+                                   RawAddress /* secondary_bd_addr */,
                                    uint8_t /* identity_address_type */) {}
-void acl_state_changed_callback(bt_status_t /* status */, tAclLinkSpec& /* link_spec */,
+void acl_state_changed_callback(bt_status_t /* status */, AclLinkSpec& /* link_spec */,
                                 bt_acl_state_t /* state */, bt_hci_error_code_t /* hci_reason */,
                                 bt_conn_direction_t /* direction */, uint16_t /* acl_handle */) {}
 void link_quality_report_callback(uint64_t /* timestamp */, int /* report_id */, int /* rssi */,
@@ -242,14 +244,14 @@ class BtifCoreWithConnectionTest : public BtifCoreWithControllerTest {
 protected:
   void SetUp() override {
     BtifCoreWithControllerTest::SetUp();
-    tAclLinkSpec link_spec = {.addrt = {.type = BLE_ADDR_PUBLIC, .bda = kRawAddress},
-                              .transport = BT_TRANSPORT_AUTO};
+    AclLinkSpec link_spec = {.addrt = {.type = BLE_ADDR_PUBLIC, .bda = kRawAddress},
+                             .transport = BT_TRANSPORT_AUTO};
     bluetooth::legacy::testing::bta_dm_acl_up(link_spec, kHciHandle);
   }
 
   void TearDown() override {
-    tAclLinkSpec link_spec = {.addrt = {.type = BLE_ADDR_PUBLIC, .bda = kRawAddress},
-                              .transport = BT_TRANSPORT_AUTO};
+    AclLinkSpec link_spec = {.addrt = {.type = BLE_ADDR_PUBLIC, .bda = kRawAddress},
+                             .transport = BT_TRANSPORT_AUTO};
     bluetooth::legacy::testing::bta_dm_acl_down(link_spec);
     BtifCoreWithControllerTest::TearDown();
   }
@@ -1034,7 +1036,7 @@ TEST_F(BtifCoreSocketTest, CreateRfcommServerSocket) {
   uint64_t hub_id = 0;
   uint64_t endpoint_id = 0;
   int max_rx_packet_size = 0;
-  ASSERT_EQ(BT_STATUS_SUCCESS,
+  ASSERT_EQ(BtifStatus(),
             btif_sock_get_interface()->listen(
                     BTSOCK_RFCOMM, "TestService", &server_uuid, kChannelOne, &socket_number, kFlags,
                     kAppUid, data_path, "TestSocket", hub_id, endpoint_id, max_rx_packet_size));
@@ -1050,7 +1052,7 @@ TEST_F(BtifCoreSocketTest, CreateTwoRfcommServerSockets) {
   uint64_t hub_id = 0;
   uint64_t endpoint_id = 0;
   int max_rx_packet_size = 0;
-  ASSERT_EQ(BT_STATUS_SUCCESS,
+  ASSERT_EQ(BtifStatus(),
             btif_sock_get_interface()->listen(
                     BTSOCK_RFCOMM, "TestService", &server_uuid, kChannelOne, &socket_number, kFlags,
                     kAppUid, data_path, "TestSocket", hub_id, endpoint_id, max_rx_packet_size));
@@ -1059,10 +1061,10 @@ TEST_F(BtifCoreSocketTest, CreateTwoRfcommServerSockets) {
   static constexpr int kAppUidTwo = 6;
   const Uuid server_uuid_two = Uuid::FromString("12345678-1234-2345-3456-456789123456");
   int socket_number_two = 1;
-  ASSERT_EQ(BT_STATUS_SUCCESS, btif_sock_get_interface()->listen(
-                                       BTSOCK_RFCOMM, "ServiceTwo", &server_uuid_two, kChannelTwo,
-                                       &socket_number_two, kFlagsTwo, kAppUidTwo, data_path,
-                                       "TestSocket", hub_id, endpoint_id, max_rx_packet_size));
+  ASSERT_EQ(BtifStatus(), btif_sock_get_interface()->listen(
+                                  BTSOCK_RFCOMM, "ServiceTwo", &server_uuid_two, kChannelTwo,
+                                  &socket_number_two, kFlagsTwo, kAppUidTwo, data_path,
+                                  "TestSocket", hub_id, endpoint_id, max_rx_packet_size));
 }
 
 TEST_F(BtifCoreSocketTest, CreateManyRfcommServerSockets) {
@@ -1082,7 +1084,7 @@ TEST_F(BtifCoreSocketTest, CreateManyRfcommServerSockets) {
     uint64_t hub_id = 0;
     uint64_t endpoint_id = 0;
     int max_rx_packet_size = 0;
-    ASSERT_EQ(BT_STATUS_SUCCESS,
+    ASSERT_EQ(BtifStatus(),
               btif_sock_get_interface()->listen(
                       BTSOCK_RFCOMM, "TestService", &server_uuid, channel, &socket_number, flags,
                       app_uuid, data_path, "TestSocket", hub_id, endpoint_id, max_rx_packet_size));

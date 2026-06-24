@@ -19,9 +19,10 @@ dependencies = [
     "types-protobuf",
     "yapf",
     "types-portpicker",
+    "absl-py",
     # Only for local test.
     "pytest",
-    "bumble == 0.0.214",
+    "bumble == 0.0.219",
     "snippet-uiautomator"
 ]
 

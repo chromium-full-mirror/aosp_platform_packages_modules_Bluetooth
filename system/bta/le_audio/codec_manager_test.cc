@@ -325,6 +325,23 @@ public:
   }
 
   virtual void TearDown() override {
+    /* It is essential to clear expectations on mocks that are not owned by
+     * the test fixture.
+     */
+    if (mock_le_audio_source_hal_client_) {
+      Mock::VerifyAndClearExpectations(mock_le_audio_source_hal_client_);
+    }
+    if (mock_broadcast_le_audio_source_hal_client_) {
+      Mock::VerifyAndClearExpectations(mock_broadcast_le_audio_source_hal_client_);
+    }
+    if (mock_le_audio_sink_hal_client_) {
+      Mock::VerifyAndClearExpectations(mock_le_audio_sink_hal_client_);
+    }
+
+    owned_mock_le_audio_source_hal_client_.reset();
+    owned_mock_broadcast_le_audio_source_hal_client_.reset();
+    owned_mock_le_audio_sink_hal_client_.reset();
+
     codec_manager->Stop();
     bluetooth::hci::testing::mock_controller_.release();
   }
@@ -1028,6 +1045,56 @@ TEST_F(CodecManagerTestAdsp, test_broadcast_config) {
   CodecManager::BroadcastConfigurationRequirements requirements = {
           .subgroup_quality = {{types::LeAudioContextType::MEDIA, 1}}};
   auto cfg = codec_manager->GetBroadcastConfig(requirements);
+  ASSERT_EQ(2, cfg->GetNumBisTotal());
+  ASSERT_EQ(2, cfg->GetNumChannelsMax());
+  ASSERT_EQ(48000u, cfg->GetSamplingFrequencyHzMax());
+  ASSERT_EQ(10000u, cfg->GetSduIntervalUs());
+  ASSERT_EQ(100u, cfg->GetMaxSduOctets());
+  ASSERT_EQ(1lu, cfg->subgroups.size());
+  ASSERT_EQ(2lu, cfg->subgroups.at(0).GetNumBis());
+  ASSERT_EQ(2lu, cfg->subgroups.at(0).GetNumChannelsTotal());
+
+  ASSERT_EQ(2lu, cfg->subgroups.at(0).GetBisCodecConfigs().at(0).GetNumBis());
+  ASSERT_EQ(2lu, cfg->subgroups.at(0).GetBisCodecConfigs().at(0).GetNumChannels());
+  ASSERT_EQ(1lu, cfg->subgroups.at(0).GetBisCodecConfigs().at(0).GetNumChannelsPerBis());
+
+  // Clean up the before testing any other offload capabilities.
+  codec_manager->Stop();
+}
+
+TEST_F(CodecManagerTestAdsp, test_broadcast_config_with_source_capability) {
+  static const types::CodecConfigSetting bc_lc3_48_2 = {
+          .id = kLeAudioCodecIdLc3,
+          .params = types::LeAudioLtvMap({
+                  LTV_ENTRY_SAMPLING_FREQUENCY(codec_spec_conf::kLeAudioSamplingFreq48000Hz),
+                  LTV_ENTRY_FRAME_DURATION(codec_spec_conf::kLeAudioCodecFrameDur10000us),
+                  LTV_ENTRY_AUDIO_CHANNEL_ALLOCATION(codec_spec_conf::kLeAudioLocationStereo),
+                  LTV_ENTRY_OCTETS_PER_CODEC_FRAME(100),
+          }),
+          .channel_count_per_iso_stream = 2,
+  };
+
+  // This configuration has both sink and source capabilities. Before the fix,
+  // this would be ignored. After the fix, it should be considered a valid
+  // broadcast capability based on its sink part.
+  std::vector<AudioSetConfiguration> offload_capabilities = {{
+          .name = "Test_Broadcast_Config_With_Source_lc3_48_2",
+          .confs = {.sink = {types::AseConfiguration(bc_lc3_48_2),
+                             types::AseConfiguration(bc_lc3_48_2)},
+                    .source = {types::AseConfiguration(lc3_16_2)}},
+  }};
+  set_mock_offload_capabilities(offload_capabilities);
+
+  const std::vector<bluetooth::le_audio::btle_audio_codec_config_t> offloading_preference = {
+          {.codec_type = bluetooth::le_audio::LE_AUDIO_CODEC_INDEX_SOURCE_LC3}};
+  codec_manager->Start(offloading_preference);
+
+  CodecManager::BroadcastConfigurationRequirements requirements = {
+          .subgroup_quality = {{types::LeAudioContextType::MEDIA, 1}}};
+  auto cfg = codec_manager->GetBroadcastConfig(requirements);
+
+  // Verify that the configuration was processed correctly
+  ASSERT_NE(nullptr, cfg);
   ASSERT_EQ(2, cfg->GetNumBisTotal());
   ASSERT_EQ(2, cfg->GetNumChannelsMax());
   ASSERT_EQ(48000u, cfg->GetSamplingFrequencyHzMax());

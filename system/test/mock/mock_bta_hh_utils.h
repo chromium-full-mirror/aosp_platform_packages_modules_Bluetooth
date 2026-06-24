@@ -25,6 +25,7 @@
 #include <functional>
 
 // Original included files, if any
+#include <bluetooth/types/acl_link_spec.h>
 #include <bluetooth/types/address.h>
 
 #include "bta/hh/bta_hh_int.h"
@@ -66,47 +67,47 @@ struct bta_hh_clean_up_kdev {
 extern struct bta_hh_clean_up_kdev bta_hh_clean_up_kdev;
 
 // Name: bta_hh_cleanup_disable
-// Params: tBTA_HH_STATUS status
+// Params: bthh_status_t status
 // Return: void
 struct bta_hh_cleanup_disable {
-  std::function<void(tBTA_HH_STATUS status)> body{[](tBTA_HH_STATUS /* status */) {}};
-  void operator()(tBTA_HH_STATUS status) { body(status); }
+  std::function<void(bthh_status_t status)> body{[](bthh_status_t /* status */) {}};
+  void operator()(bthh_status_t status) { body(status); }
 };
 extern struct bta_hh_cleanup_disable bta_hh_cleanup_disable;
 
 // Name: bta_hh_find_cb
-// Params: const tAclLinkSpec& link_spec
+// Params: const AclLinkSpec& link_spec
 // Return: uint8_t
 struct bta_hh_find_cb {
   tBTA_HH_DEV_CB* return_value{nullptr};
-  std::function<tBTA_HH_DEV_CB*(const tAclLinkSpec& link_spec)> body{
-          [this](const tAclLinkSpec& /* link_spec */) { return return_value; }};
-  tBTA_HH_DEV_CB* operator()(const tAclLinkSpec& link_spec) { return body(link_spec); }
+  std::function<tBTA_HH_DEV_CB*(const AclLinkSpec& link_spec)> body{
+          [this](const AclLinkSpec& /* link_spec */) { return return_value; }};
+  tBTA_HH_DEV_CB* operator()(const AclLinkSpec& link_spec) { return body(link_spec); }
 };
 extern struct bta_hh_find_cb bta_hh_find_cb;
 
 // Name: bta_hh_get_cb
-// Params: const tAclLinkSpec& link_spec
+// Params: const AclLinkSpec& link_spec
 // Return: tBTA_HH_DEV_CB*
 struct bta_hh_get_cb {
   tBTA_HH_DEV_CB* return_value{0};
-  std::function<tBTA_HH_DEV_CB*(const tAclLinkSpec& link_spec)> body{
-          [this](const tAclLinkSpec& /* link_spec */) { return return_value; }};
-  tBTA_HH_DEV_CB* operator()(const tAclLinkSpec& link_spec) { return body(link_spec); }
+  std::function<tBTA_HH_DEV_CB*(const AclLinkSpec& link_spec)> body{
+          [this](const AclLinkSpec& /* link_spec */) { return return_value; }};
+  tBTA_HH_DEV_CB* operator()(const AclLinkSpec& link_spec) { return body(link_spec); }
 };
 extern struct bta_hh_get_cb bta_hh_get_cb;
 
 // Name: bta_hh_read_ssr_param
-// Params: const tAclLinkSpec& bd_addr, uint16_t* p_max_ssr_lat, uint16_t*
-// p_min_ssr_tout Return: tBTA_HH_STATUS
+// Params: const AclLinkSpec& bd_addr, uint16_t* p_max_ssr_lat, uint16_t*
+// p_min_ssr_tout Return: bthh_status_t
 struct bta_hh_read_ssr_param {
-  tBTA_HH_STATUS return_value{0};
-  std::function<tBTA_HH_STATUS(const tAclLinkSpec& link_spec, uint16_t* p_max_ssr_lat,
-                               uint16_t* p_min_ssr_tout)>
-          body{[this](const tAclLinkSpec& /* link_spec */, uint16_t* /* p_max_ssr_lat */,
+  bthh_status_t return_value{BTHH_OK};
+  std::function<bthh_status_t(const AclLinkSpec& link_spec, uint16_t* p_max_ssr_lat,
+                              uint16_t* p_min_ssr_tout)>
+          body{[this](const AclLinkSpec& /* link_spec */, uint16_t* /* p_max_ssr_lat */,
                       uint16_t* /* p_min_ssr_tout */) { return return_value; }};
-  tBTA_HH_STATUS operator()(const tAclLinkSpec& link_spec, uint16_t* p_max_ssr_lat,
-                            uint16_t* p_min_ssr_tout) {
+  bthh_status_t operator()(const AclLinkSpec& link_spec, uint16_t* p_max_ssr_lat,
+                           uint16_t* p_min_ssr_tout) {
     return body(link_spec, p_max_ssr_lat, p_min_ssr_tout);
   }
 };

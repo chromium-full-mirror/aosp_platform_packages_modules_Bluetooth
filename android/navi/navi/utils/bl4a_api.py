@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import contextlib
 import dataclasses
 import datetime
@@ -46,6 +46,7 @@ from navi.utils import snippet_stub
 _logger = logging.getLogger(__name__)
 _DEFAULT_RETRY_COUNT = 3
 _DEFAULT_RETRY_DELAY_SECONDS = 1.0
+_DEFAULT_CONNECTION_TIMEOUT_SECONDS = 10.0
 _DEFAULT_CALLBACK_TIMEOUT_SECONDS = 30.0
 _FIELD = 'field'
 _MAPPER = 'mapper'
@@ -93,6 +94,8 @@ class Module(enum.Enum):
     BQR = enum.auto()
     A2DP_SINK = enum.auto()
     AVRCP_CONTROLLER = enum.auto()
+    HAP_CLIENT = enum.auto()
+    VOLUME_CONTROL = enum.auto()
 
 
 @dataclasses.dataclass
@@ -110,7 +113,7 @@ class CallbackHandler:
 
     snippet: snippet_stub.BluetoothSnippet
     handler: callback_handler_base.CallbackHandlerBase
-    module: Module | None = None
+    on_close: Callable[[str], None] | None = None
 
     @classmethod
     def for_module(cls: Type[Self], snippet: snippet_stub.BluetoothSnippet, module: Module) -> Self:
@@ -129,81 +132,76 @@ class CallbackHandler:
         match module:
             case Module.AUDIO:
                 handler = snippet.audioRegisterCallback()
+                on_close = snippet.audioUnregisterCallback
             case Module.A2DP:
-                handler = snippet.a2dpSetup()
+                handler = snippet.registerA2dpCallback()
+                on_close = snippet.unregisterA2dpCallback
             case Module.ADAPTER:
-                handler = snippet.adapterSetup()
+                handler = snippet.registerAdapterCallback()
+                on_close = snippet.unregisterAdapterCallback
             case Module.HFP_AG:
-                handler = snippet.hfpAgSetup()
+                handler = snippet.registerHfpAgCallback()
+                on_close = snippet.unregisterHfpAgCallback
             case Module.HFP_HF:
-                handler = snippet.hfpHfSetup()
+                handler = snippet.registerHfpHfCallback()
+                on_close = snippet.unregisterHfpHfCallback
             case Module.TELECOM:
                 handler = snippet.registerTelecomCallback()
+                on_close = snippet.unregisterTelecomCallback
             case Module.LE_AUDIO:
                 handler = snippet.registerLeAudioCallback()
+                on_close = snippet.unregisterLeAudioCallback
             case Module.INPUT:
                 handler = snippet.registerInputEventCallback()
+                on_close = snippet.unregisterInputEventCallback
             case Module.HID_HOST:
                 handler = snippet.registerHidHostCallback()
+                on_close = snippet.unregisterHidHostCallback
             case Module.PAN:
                 handler = snippet.registerPanCallback()
+                on_close = snippet.unregisterPanCallback
             case Module.ASHA:
                 handler = snippet.registerProfileCallback(android_constants.Profile.HEARING_AID)
+                on_close = snippet.unregisterProfileCallback
             case Module.PBAP:
                 handler = snippet.registerProfileCallback(android_constants.Profile.PBAP)
+                on_close = snippet.unregisterProfileCallback
             case Module.MAP:
                 handler = snippet.registerProfileCallback(android_constants.Profile.MAP)
+                on_close = snippet.unregisterProfileCallback
             case Module.SAP:
                 handler = snippet.registerProfileCallback(android_constants.Profile.SAP)
+                on_close = snippet.unregisterProfileCallback
             case Module.BASS:
                 handler = snippet.registerBassCallback()
+                on_close = snippet.unregisterBassCallback
             case Module.PLAYER:
                 handler = snippet.registerPlayerListener()
+                on_close = snippet.unregisterPlayerListener
             case Module.BQR:
                 handler = snippet.registerBluetoothQualityReportCallback()
+                on_close = snippet.unregisterBluetoothQualityReportCallback
             case Module.A2DP_SINK:
                 handler = snippet.registerProfileCallback(android_constants.Profile.A2DP_SINK)
+                on_close = snippet.unregisterProfileCallback
             case Module.AVRCP_CONTROLLER:
                 handler = snippet.registerProfileCallback(
                     android_constants.Profile.AVRCP_CONTROLLER)
+                on_close = snippet.unregisterProfileCallback
+            case Module.HAP_CLIENT:
+                handler = snippet.registerHapClientCallback()
+                on_close = snippet.unregisterHapClientCallback
+            case Module.VOLUME_CONTROL:
+                handler = snippet.registerVolumeControlCallback()
+                on_close = snippet.unregisterVolumeControlCallback
             case _:
                 raise ValueError(f'Unsupported module: {module}')
-        return cls(snippet=snippet, handler=handler, module=module)
+        return cls(snippet=snippet, handler=handler, on_close=on_close)
 
     def close(self) -> None:
         """Closes the callback handler."""
-        match self.module:
-            case Module.AUDIO:
-                self.snippet.audioUnregisterCallback(self.handler.callback_id)
-            case Module.A2DP:
-                self.snippet.a2dpTeardown(self.handler.callback_id)
-            case Module.ADAPTER:
-                self.snippet.adapterTeardown(self.handler.callback_id)
-            case Module.HFP_AG:
-                self.snippet.hfpAgTeardown(self.handler.callback_id)
-            case Module.HFP_HF:
-                self.snippet.hfpHfTeardown(self.handler.callback_id)
-            case Module.TELECOM:
-                self.snippet.unregisterTelecomCallback(self.handler.callback_id)
-            case Module.LE_AUDIO:
-                self.snippet.unregisterLeAudioCallback(self.handler.callback_id)
-            case Module.INPUT:
-                self.snippet.unregisterInputEventCallback(self.handler.callback_id)
-            case Module.HID_HOST:
-                self.snippet.unregisterHidHostCallback(self.handler.callback_id)
-            case Module.PAN:
-                self.snippet.unregisterPanCallback(self.handler.callback_id)
-            case (Module.ASHA | Module.PBAP | Module.MAP | Module.SAP | Module.A2DP_SINK |
-                  Module.AVRCP_CONTROLLER):
-                self.snippet.unregisterProfileCallback(self.handler.callback_id)
-            case Module.BASS:
-                self.snippet.unregisterBassCallback(self.handler.callback_id)
-            case Module.PLAYER:
-                self.snippet.unregisterPlayerListener(self.handler.callback_id)
-            case Module.BQR:
-                self.snippet.unregisterBluetoothQualityReportCallback(self.handler.callback_id)
-            case _:
-                raise ValueError(f'Unsupported module: {self.module}')
+        if self.on_close is not None:
+            self.on_close(self.handler.callback_id)
 
     async def wait_for_event(
         self,
@@ -525,6 +523,22 @@ class A2dpPlayingStateChanged(JsonDeserializableEvent):
 
 
 @dataclasses.dataclass
+class AdapterStateChanged(JsonDeserializableEvent):
+    """android.bluetooth.adapter.action.STATE_CHANGED.
+
+  Attributes:
+    state: new state of the Bluetooth adapter.
+  """
+
+    state: android_constants.AdapterState = dataclasses.field(metadata={
+        _FIELD: snippet_constants.FIELD_STATE,
+        _MAPPER: android_constants.AdapterState,
+    })
+
+    EVENT_NAME = snippet_constants.ADAPTER_STATE_CHANGED
+
+
+@dataclasses.dataclass
 class PairingRequest(JsonDeserializableEvent):
     """android.bluetooth.device.action.PAIRING_REQUEST.
 
@@ -708,6 +722,15 @@ class GattCharacteristicChanged(JsonDeserializableEvent):
 
 
 @dataclasses.dataclass
+class GattServiceChanged(JsonDeserializableEvent):
+    """android.bluetooth.BluetoothGattCallback.onServiceChanged."""
+
+    address: str = dataclasses.field(metadata={_FIELD: snippet_constants.FIELD_DEVICE})
+
+    EVENT_NAME = snippet_constants.GATT_SERVICE_CHANGED
+
+
+@dataclasses.dataclass
 class GattSubrateChanged(JsonDeserializableEvent):
     """android.bluetooth.BluetoothGattCallback.onSubrateChange."""
 
@@ -845,6 +868,15 @@ class PlayerMediaItemTransition(JsonDeserializableEvent):
     EVENT_NAME = snippet_constants.PLAYER_MEDIA_ITEM_TRANSITION
 
     uri: str | None = dataclasses.field(metadata={_FIELD: snippet_constants.URI})
+
+
+@dataclasses.dataclass
+class PositionDiscontinuity(JsonDeserializableEvent):
+
+    EVENT_NAME = snippet_constants.POSITION_DISCONTINUITY
+
+    old_position_ms: int = dataclasses.field(metadata={_FIELD: snippet_constants.OLD_POSITION})
+    new_position_ms: int = dataclasses.field(metadata={_FIELD: snippet_constants.NEW_POSITION})
 
 
 @dataclasses.dataclass
@@ -1029,6 +1061,97 @@ class BatchScanResults(JsonDeserializableEvent):
 
 
 @dataclasses.dataclass
+class PresetInfoChanged(JsonDeserializableEvent):
+    """android.bluetooth.BluetoothHapClient.Callback.onPresetInfoChanged."""
+
+    address: str = dataclasses.field(metadata={_FIELD: snippet_constants.FIELD_DEVICE})
+    reason: android_constants.BluetoothStatusCode = dataclasses.field(metadata={
+        _FIELD: snippet_constants.FIELD_REASON,
+        _MAPPER: android_constants.BluetoothStatusCode,
+    })
+
+    EVENT_NAME = snippet_constants.PRESET_INFO_CHANGED
+
+
+@dataclasses.dataclass
+class AicsDescriptionChanged(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onDescriptionChanged."""
+
+    description: str = dataclasses.field(metadata={_FIELD: snippet_constants.AICS_DESCRIPTION})
+
+    EVENT_NAME = snippet_constants.AICS_DESCRIPTION_CHANGED
+
+
+@dataclasses.dataclass
+class AicsStatusChanged(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onAudioInputStatusChanged."""
+
+    status: int = dataclasses.field(metadata={_FIELD: snippet_constants.FIELD_STATUS})
+
+    EVENT_NAME = snippet_constants.AICS_STATUS_CHANGED
+
+
+@dataclasses.dataclass
+class AicsGainSettingChanged(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onGainSettingChanged."""
+
+    gain_setting: int = dataclasses.field(metadata={_FIELD: snippet_constants.AICS_GAIN_SETTING})
+
+    EVENT_NAME = snippet_constants.AICS_GAIN_SETTING_CHANGED
+
+
+@dataclasses.dataclass
+class AicsSetGainSettingFailed(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onSetGainSettingFailed."""
+
+    EVENT_NAME = snippet_constants.AICS_SET_GAIN_SETTING_FAILED
+
+
+@dataclasses.dataclass
+class AicsMuteChanged(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onMuteChanged."""
+
+    mute: int = dataclasses.field(metadata={_FIELD: snippet_constants.AICS_MUTE})
+
+    EVENT_NAME = snippet_constants.AICS_MUTE_CHANGED
+
+
+@dataclasses.dataclass
+class AicsSetMuteFailed(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onSetMuteFailed."""
+
+    EVENT_NAME = snippet_constants.AICS_SET_MUTE_FAILED
+
+
+@dataclasses.dataclass
+class AicsGainModeChanged(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onGainModeChanged."""
+
+    gain_mode: int = dataclasses.field(metadata={_FIELD: snippet_constants.AICS_GAIN_MODE})
+
+    EVENT_NAME = snippet_constants.AICS_GAIN_MODE_CHANGED
+
+
+@dataclasses.dataclass
+class AicsSetGainModeFailed(JsonDeserializableEvent):
+    """android.bluetooth.AudioInputControl.Callback.onSetGainModeFailed."""
+
+    EVENT_NAME = snippet_constants.AICS_SET_GAIN_MODE_FAILED
+
+
+@dataclasses.dataclass
+class VoiceCommand(JsonDeserializableEvent):
+    """android.intent.action.VOICE_COMMAND.
+
+  Attributes:
+    state: Whether the voice command is enabled or not.
+  """
+
+    state: bool
+    EVENT_NAME = snippet_constants.VOICE_COMMAND
+
+
+@dataclasses.dataclass
 class LegacyAdvertiseSettings:
     """android.bluetooth.le.AdvertiseSettings."""
 
@@ -1058,6 +1181,14 @@ class AdvertisingSetParameters:
 
 
 @dataclasses.dataclass
+class PeriodicAdvertisingParameters:
+    """android.bluetooth.le.PeriodicAdvertisingParameters."""
+
+    interval: int
+    include_tx_power_level: bool = False
+
+
+@dataclasses.dataclass
 class AdvertisingData:
     """android.bluetooth.le.AdvertiseData."""
 
@@ -1078,6 +1209,7 @@ class ScanFilter:
     name: Remote device mame.
     device: Remote device address.
     address_type: Remote device address type.
+    irk: The IRK to use for resolving private addresses.
     service_uuids: Service UUID. Though it's called service_uuids, it actually
       means "search for an UUID in UUIDs".
     service_solicitation_uuids: Though it's called service_solicitation_uuids,
@@ -1090,6 +1222,7 @@ class ScanFilter:
     name: str | None = None
     device: str | None = None
     address_type: android_constants.AddressTypeStatus | None = None
+    irk: bytes | None = None
     service_uuids: str | None = None
     service_solicitation_uuids: str | None = None
     service_data: dict[str, bytes] | None = None
@@ -1102,6 +1235,7 @@ class ScanSettings:
 
     scan_mode: android_constants.BleScanMode | None = None
     callback_type: android_constants.BleScanCallbackType | None = None
+    match_mode: android_constants.BleScanMatchMode | None = None
     scan_result_type: android_constants.BleScanResultType | None = None
     phy: android_constants.Phy | None = None
     legacy: bool | None = None
@@ -1177,7 +1311,7 @@ class LegacyAdvertiser:
         return cls(cookie=cookie, snippet=snippet)
 
     def stop(self) -> None:
-        self.snippet.stopAdvertisingSet(self.cookie)
+        self.snippet.stopAdvertising(self.cookie)
 
     def __enter__(self) -> Self:
         return self
@@ -1196,11 +1330,13 @@ class ExtendedAdvertisingSet:
 
     @classmethod
     async def create(
-        cls: Type[Self],
-        snippet: snippet_stub.BluetoothSnippet,
-        advertising_set_parameters: AdvertisingSetParameters,
-        advertising_data: AdvertisingData | None = None,
-        scan_response: AdvertisingData | None = None,
+            cls: Type[Self],
+            snippet: snippet_stub.BluetoothSnippet,
+            advertising_set_parameters: AdvertisingSetParameters,
+            advertising_data: AdvertisingData | None = None,
+            scan_response: AdvertisingData | None = None,
+            periodic_advertising_parameters: PeriodicAdvertisingParameters | None = (None),
+            periodic_advertising_data: AdvertisingData | None = (None),
     ) -> Self:
         """Starts an Extended Advertising Set.
 
@@ -1209,6 +1345,8 @@ class ExtendedAdvertisingSet:
       advertising_set_parameters: advertising set parameters.
       advertising_data: advertising data.
       scan_response: scan response.
+      periodic_advertising_parameters: periodic advertising parameters.
+      periodic_advertising_data: periodic advertising data.
 
     Returns:
       advertiser instance.
@@ -1218,6 +1356,8 @@ class ExtendedAdvertisingSet:
                 _make_json_object(advertising_set_parameters),
                 _make_json_object(advertising_data),
                 _make_json_object(scan_response),
+                _make_json_object(periodic_advertising_parameters),
+                _make_json_object(periodic_advertising_data),
             ),)
         return cls(cookie=cookie, snippet=snippet)
 
@@ -1362,26 +1502,6 @@ def find_characteristic_by_uuid(characteristic_uuid: str,
     return characteristic
 
 
-def _schedule_rpc(
-    snippet: snippet_stub.BluetoothSnippet,
-    method_name: str,
-    args: Sequence[Any],
-    delay_ms: int = 0,
-) -> Coroutine[None, None, str]:
-    """Calls a snippet method asynchronously."""
-    handler = snippet.scheduleRpc(method_name, delay_ms, args)
-
-    async def wait_for_result() -> str:
-        response: callback_event.CallbackEvent = await asyncio.to_thread(
-            lambda: handler.waitAndGet(method_name))
-        # Mobly doesn't parse JSON events, so they are remained as strings.
-        if (error := response.data['error']) != 'null':
-            raise errors.SnippetError(error)
-        return response.data['result']
-
-    return wait_for_result()
-
-
 class PhoneCall:
     """Context managable phone call wrapper."""
 
@@ -1450,6 +1570,8 @@ class AudioRecorder:
         snippet: snippet_stub.BluetoothSnippet,
         path: str,
         source: Source,
+        preferred_device_address: str | None = None,
+        preferred_device_type: android_constants.AudioDeviceType | None = None,
     ):
         """Class initializer.
 
@@ -1457,10 +1579,12 @@ class AudioRecorder:
         snippet: snippet client instance.
         path: Path on device to save the recorded media file.
         source: Source of the audio to record.
+        preferred_device_address: Address of the preferred device.
+        preferred_device_type: Type of the preferred device.
     """
         self.snippet = snippet
         self.path = path
-        snippet.startRecording(path, source)
+        snippet.startRecording(path, source, preferred_device_address, preferred_device_type)
 
     def close(self) -> None:
         """Closes the phone call."""
@@ -1488,8 +1612,8 @@ class L2capChannel:
         address: str,
         secure: bool,
         psm: int,
-        transport: int,
-        address_type: int | None = None,
+        address_type: android_constants.AddressTypeStatus = android_constants.AddressTypeStatus.
+        RANDOM,
         retry_count: int = _DEFAULT_RETRY_COUNT,
     ) -> Self:
         """Connects an l2cap channel.
@@ -1499,7 +1623,6 @@ class L2capChannel:
       address: Address of target device.
       secure: Whether encryption is required.
       psm: Channel number of the l2cap channel.
-      transport: Transport to use (Classic or LE).
       address_type: Address type of target device (if LE transport is used).
       retry_count: Allowed retry count of connect attempts.
 
@@ -1521,7 +1644,6 @@ class L2capChannel:
                     address,
                     secure,
                     psm,
-                    transport,
                     address_type,
                 )
                 return cls(snippet=snippet, cookie=cookie)
@@ -1575,7 +1697,6 @@ class L2capServer:
         cls: Type[Self],
         snippet: snippet_stub.BluetoothSnippet,
         secure: bool,
-        transport: int,
         psm: int = AUTO_ALLOCATE_PSM,
     ) -> Self:
         """Opens an L2CAP server.
@@ -1583,13 +1704,12 @@ class L2capServer:
     Args:
       snippet: Snippet client instance.
       secure: Whether encryption is required.
-      transport: Transport (LE or Classic) of L2CAP.
       psm: L2CAP channel number.
 
     Returns:
       Created L2CAP server wrapper.
     """
-        return cls(snippet=snippet, psm=snippet.l2capOpenServer(secure, transport, psm))
+        return cls(snippet=snippet, psm=snippet.l2capOpenServer(secure, psm))
 
     def close(self) -> None:
         """Closes the L2CAP server."""
@@ -1614,7 +1734,7 @@ class RfcommChannel:
         snippet: snippet_stub.BluetoothSnippet,
         address: str,
         secure: bool,
-        channel_or_uuid: int | str,
+        uuid: str,
         retry_count: int = _DEFAULT_RETRY_COUNT,
     ) -> Self:
         """Connects an RFCOMM channel.
@@ -1623,7 +1743,7 @@ class RfcommChannel:
       snippet: snippet client instance.
       address: address of target device.
       secure: whether encryption is required.
-      channel_or_uuid: channel number or UUID of the RFCOMM channel.
+      uuid: UUID of the RFCOMM channel.
       retry_count: allowed retry count of connect attempts.
 
     Returns:
@@ -1632,12 +1752,6 @@ class RfcommChannel:
     Raises:
       ConnectionError: RFCOMM is not connected after allowed retry counts.
     """
-        if isinstance(channel_or_uuid, int):
-            method = lambda: snippet.rfcommConnectWithChannel(address, secure, channel_or_uuid)
-        elif isinstance(channel_or_uuid, str):
-            method = lambda: snippet.rfcommConnectWithUuid(address, secure, channel_or_uuid)
-        else:
-            raise ValueError(f'Unsupported channel_or_uuid: {channel_or_uuid}')
 
         @retry.retry_on_exception(
             initial_delay_sec=_DEFAULT_RETRY_DELAY_SECONDS,
@@ -1645,7 +1759,8 @@ class RfcommChannel:
         )
         async def inner() -> Self:
             try:
-                cookie = await asyncio.to_thread(method)
+                cookie = await asyncio.to_thread(
+                    lambda: snippet.rfcommConnectWithUuid(address, secure, uuid))
                 return cls(snippet=snippet, cookie=cookie)
             except mobly.snippet.errors.ApiError as e:
                 raise errors.ConnectionError('Unable to connect RFCOMM') from e
@@ -1658,35 +1773,45 @@ class RfcommChannel:
         snippet: snippet_stub.BluetoothSnippet,
         address: str,
         secure: bool,
-        channel_or_uuid: int | str,
-    ) -> Coroutine[None, None, Self]:
+        uuid: str,
+    ) -> Self:
         """Connects an RFCOMM channel asynchronously.
 
     Args:
       snippet: snippet client instance.
       address: address of target device.
       secure: whether encryption is required.
-      channel_or_uuid: channel number or UUID of the RFCOMM channel.
+      uuid: UUID of the RFCOMM channel.
 
     Returns:
       A coroutine that will return the RFCOMM client wrapper instance.
     """
-        if isinstance(channel_or_uuid, int):
-            method = 'rfcommConnectWithChannel'
-        else:
-            method = 'rfcommConnectWithUuid'
-
-        coro = _schedule_rpc(
-            snippet,
-            method,
-            (address, secure, channel_or_uuid),
+        return cls(
+            snippet=snippet,
+            cookie=snippet.rfcommConnectWithUuid(address, secure, uuid, False),
         )
 
-        async def inner() -> Self:
-            cookie = await coro
-            return cls(snippet=snippet, cookie=cookie)
+    async def wait_for_connected(
+        self,
+        timeout: datetime.timedelta = datetime.timedelta(
+            seconds=_DEFAULT_CONNECTION_TIMEOUT_SECONDS),
+    ) -> None:
+        """Waits for async connection to complete.
 
-        return inner()
+    Args:
+      timeout: Timeout for connection to complete, default is 10 seconds.
+
+    Raises:
+      ConnectionError: RFCOMM is not connected as expected.
+    """
+        try:
+            await asyncio.to_thread(
+                self.snippet.rfcommWaitForConnectionComplete,
+                self.cookie,
+                int(timeout.total_seconds() * 1000),
+            )
+        except mobly.snippet.errors.ApiError as e:
+            raise errors.ConnectionError('Unable to connect RFCOMM') from e
 
     async def close(self) -> None:
         """Closes the RFCOMM channel."""
@@ -1766,7 +1891,8 @@ class GattClient(CallbackHandler):
         snippet: snippet_stub.BluetoothSnippet,
         address: str,
         transport: int,
-        address_type: int | None = None,
+        address_type: android_constants.AddressTypeStatus = android_constants.AddressTypeStatus.
+        RANDOM,
         retry_count: int = _DEFAULT_RETRY_COUNT,
     ) -> Self:
         """Connects services and returns discovered services.
@@ -2094,11 +2220,11 @@ class GattServer(CallbackHandler):
       Created GATT Server control block.
     """
         callback_handler = snippet.gattServerOpen()
-        return cls(snippet=snippet, handler=callback_handler, module=Module.GATT_SERVER)
-
-    @override
-    def close(self) -> None:
-        self.snippet.gattServerClose(self.handler.callback_id)
+        return cls(
+            snippet=snippet,
+            handler=callback_handler,
+            on_close=snippet.gattServerClose,
+        )
 
     async def add_service(self, service: GattService) -> None:
         """Adds a GATT service to GATT server.
@@ -2182,6 +2308,116 @@ class GattServer(CallbackHandler):
 
 
 @dataclasses.dataclass
+class AudioInputControl(CallbackHandler):
+    """Audio Input Control wrapper."""
+
+    address: str = ''
+    instance_id: int = 0
+
+    @classmethod
+    def create(
+        cls: Type[Self],
+        snippet: snippet_stub.BluetoothSnippet,
+        address: str,
+        instance_id: int,
+    ) -> Self:
+        """Creates an Audio Input Control callback handler.
+
+    Args:
+      snippet: Snippet instance.
+      address: Address of target device.
+      instance_id: Instance ID of the AICS.
+
+    Returns:
+      AudioInputControl instance.
+    """
+        callback_handler = snippet.registerAicsCallback(address, instance_id)
+        return cls(
+            snippet=snippet,
+            handler=callback_handler,
+            on_close=snippet.unregisterAicsCallback,
+            address=address,
+            instance_id=instance_id,
+        )
+
+    async def get_audio_input_type(self) -> int:
+        """Gets the Audio Input Type."""
+        return await asyncio.to_thread(self.snippet.aicsGetAudioInputType, self.address,
+                                       self.instance_id)
+
+    async def get_gain_setting_unit(self) -> int:
+        """Gets the Gain Setting Units."""
+        return await asyncio.to_thread(self.snippet.aicsGetGainSettingUnit, self.address,
+                                       self.instance_id)
+
+    async def get_gain_setting_min(self) -> int:
+        """Gets the minimum Gain Setting."""
+        return await asyncio.to_thread(self.snippet.aicsGetGainSettingMin, self.address,
+                                       self.instance_id)
+
+    async def get_gain_setting_max(self) -> int:
+        """Gets the maximum Gain Setting."""
+        return await asyncio.to_thread(self.snippet.aicsGetGainSettingMax, self.address,
+                                       self.instance_id)
+
+    async def get_description(self) -> str:
+        """Gets the description."""
+        return await asyncio.to_thread(self.snippet.aicsGetDescription, self.address,
+                                       self.instance_id)
+
+    async def is_description_writable(self) -> bool:
+        """Checks if description is writable."""
+        return await asyncio.to_thread(self.snippet.aicsIsDescriptionWritable, self.address,
+                                       self.instance_id)
+
+    async def set_description(self, description: str) -> bool:
+        """Sets the description."""
+        return await asyncio.to_thread(
+            self.snippet.aicsSetDescription,
+            self.address,
+            self.instance_id,
+            description,
+        )
+
+    async def get_audio_input_status(self) -> int:
+        """Gets the Audio Input Status."""
+        return await asyncio.to_thread(self.snippet.aicsGetAudioInputStatus, self.address,
+                                       self.instance_id)
+
+    async def get_gain_setting(self) -> int:
+        """Gets the gain setting."""
+        return await asyncio.to_thread(self.snippet.aicsGetGainSetting, self.address,
+                                       self.instance_id)
+
+    async def set_gain_setting(self, gain_setting: int) -> bool:
+        """Sets the gain setting."""
+        return await asyncio.to_thread(
+            self.snippet.aicsSetGainSetting,
+            self.address,
+            self.instance_id,
+            gain_setting,
+        )
+
+    async def get_gain_mode(self) -> int:
+        """Gets the gain mode."""
+        return await asyncio.to_thread(self.snippet.aicsGetGainMode, self.address, self.instance_id)
+
+    async def set_gain_mode(self, gain_mode: int) -> bool:
+        """Sets the gain mode."""
+        return await asyncio.to_thread(self.snippet.aicsSetGainMode, self.address, self.instance_id,
+                                       gain_mode)
+
+    async def get_mute(self) -> int:
+        """Gets the mute state."""
+        return await asyncio.to_thread(self.snippet.aicsGetMute, self.address, self.instance_id)
+
+    async def set_mute(self, mute: int) -> bool:
+        """Sets the mute state."""
+        return await asyncio.to_thread(self.snippet.aicsSetMute, self.address, self.instance_id,
+                                       mute)
+
+
+@dataclasses.dataclass
 class Scanner(CallbackHandler):
     """LE Scanner control block."""
 
@@ -2254,9 +2490,11 @@ class SnippetWrapper:
         self,
         attributes: AudioAttributes,
         handle_audio_focus: bool,
+        player_id: str | None = None,
     ) -> None:
         """Sets audio attributes."""
-        self.snippet.setAudioAttributes(_make_json_object(attributes), handle_audio_focus)
+        self.snippet.setAudioAttributes(_make_json_object(attributes), handle_audio_focus,
+                                        player_id)
 
     def register_callback(self, module: Module) -> CallbackHandler:
         """Registers a callback for a module."""
@@ -2300,11 +2538,24 @@ class SnippetWrapper:
     """
         return GattServer.create(self.snippet)
 
+    def get_aics(self, address: str, instance_id: int) -> AudioInputControl:
+        """Sets up an Audio Input Control session.
+
+    Args:
+      address: Address of target device.
+      instance_id: Instance ID of the AICS.
+
+    Returns:
+      The Audio Input Control session.
+    """
+        return AudioInputControl.create(self.snippet, address, instance_id)
+
     async def connect_gatt_client(
         self,
         address: str,
         transport: int,
-        address_type: int | None = None,
+        address_type: android_constants.AddressTypeStatus = android_constants.AddressTypeStatus.
+        RANDOM,
         retry_count: int = _DEFAULT_RETRY_COUNT,
     ) -> GattClient:
         """Connects to a GATT server.
@@ -2323,28 +2574,26 @@ class SnippetWrapper:
     def create_l2cap_server(
         self,
         secure: bool,
-        transport: int,
         psm: int = L2capServer.AUTO_ALLOCATE_PSM,
     ) -> L2capServer:
         """Creates an L2CAP server.
 
     Args:
       secure: Whether encryption is required.
-      transport: Transport (LE or Classic) of L2CAP.
       psm: L2CAP channel number.
 
     Returns:
       The L2CAP server control block.
     """
-        return L2capServer.create(self.snippet, secure, transport, psm)
+        return L2capServer.create(self.snippet, secure, psm)
 
     async def create_l2cap_channel(
         self,
         address: str,
         secure: bool,
         psm: int,
-        transport: int,
-        address_type: int | None = None,
+        address_type: android_constants.AddressTypeStatus = android_constants.AddressTypeStatus.
+        RANDOM,
         retry_count: int = _DEFAULT_RETRY_COUNT,
     ) -> L2capChannel:
         """Creates an L2CAP channel.
@@ -2353,8 +2602,7 @@ class SnippetWrapper:
       address: Address of target device.
       secure: Whether encryption is required.
       psm: L2CAP channel number.
-      transport: Transport (LE or Classic) of L2CAP.
-      address_type: Address type of target device (if LE transport is used).
+      address_type: Address type of target device.
       retry_count: Allowed retry count of connect attempts.
 
     Returns:
@@ -2365,7 +2613,6 @@ class SnippetWrapper:
             address,
             secure,
             psm,
-            transport,
             address_type,
             retry_count,
         )
@@ -2386,7 +2633,7 @@ class SnippetWrapper:
         self,
         address: str,
         secure: bool,
-        channel_or_uuid: int | str,
+        uuid: str,
         retry_count: int = _DEFAULT_RETRY_COUNT,
     ) -> RfcommChannel:
         """Creates an RFCOMM channel.
@@ -2394,32 +2641,31 @@ class SnippetWrapper:
     Args:
       address: Address of target device.
       secure: Whether encryption is required.
-      channel_or_uuid: Channel number or UUID of the RFCOMM service.
+      uuid: UUID of the RFCOMM service.
       retry_count: Allowed retry count of connect attempts.
 
     Returns:
       The RFCOMM channel control block.
     """
-        return await RfcommChannel.connect(self.snippet, address, secure, channel_or_uuid,
-                                           retry_count)
+        return await RfcommChannel.connect(self.snippet, address, secure, uuid, retry_count)
 
     def create_rfcomm_channel_async(
         self,
         address: str,
         secure: bool,
-        channel_or_uuid: int | str,
-    ) -> Coroutine[None, None, RfcommChannel]:
+        uuid: str,
+    ) -> RfcommChannel:
         """Creates an RFCOMM channel.
 
     Args:
       address: Address of target device.
       secure: Whether encryption is required.
-      channel_or_uuid: Channel number or UUID of the RFCOMM service.
+      uuid: UUID of the RFCOMM service.
 
     Returns:
       The RFCOMM channel control block.
     """
-        return RfcommChannel.connect_async(self.snippet, address, secure, channel_or_uuid)
+        return RfcommChannel.connect_async(self.snippet, address, secure, uuid)
 
     async def start_legacy_advertiser(
         self,
@@ -2445,10 +2691,12 @@ class SnippetWrapper:
         )
 
     async def start_extended_advertising_set(
-        self,
-        advertising_set_parameters: AdvertisingSetParameters,
-        advertising_data: AdvertisingData | None = None,
-        scan_response: AdvertisingData | None = None,
+            self,
+            advertising_set_parameters: AdvertisingSetParameters,
+            advertising_data: AdvertisingData | None = None,
+            scan_response: AdvertisingData | None = None,
+            periodic_advertising_parameters: PeriodicAdvertisingParameters | None = (None),
+            periodic_advertising_data: AdvertisingData | None = (None),
     ) -> ExtendedAdvertisingSet:
         """Starts an extended advertising set.
 
@@ -2456,6 +2704,8 @@ class SnippetWrapper:
       advertising_set_parameters: Advertising set parameters.
       advertising_data: Advertising data.
       scan_response: Scan response data.
+      periodic_advertising_parameters: Periodic advertising parameters.
+      periodic_advertising_data: Periodic advertising data.
 
     Returns:
       The extended advertising set control block.
@@ -2465,6 +2715,8 @@ class SnippetWrapper:
             advertising_set_parameters,
             advertising_data,
             scan_response,
+            periodic_advertising_parameters,
+            periodic_advertising_data,
         )
 
     async def start_le_audio_broadcast(
@@ -2515,17 +2767,27 @@ class SnippetWrapper:
         self,
         path: str,
         source: AudioRecorder.Source = AudioRecorder.Source.DEFAULT,
+        preferred_device_address: str | None = None,
+        preferred_device_type: android_constants.AudioDeviceType | None = None,
     ) -> AudioRecorder:
         """Starts audio recording.
 
     Args:
       path: Path to the recording file.
       source: Source of the audio recording.
+      preferred_device_address: Address of the preferred recording device.
+      preferred_device_type: Type of the preferred recording device.
 
     Returns:
       The audio recorder control block.
     """
-        return AudioRecorder(self.snippet, path, source)
+        return AudioRecorder(
+            self.snippet,
+            path=path,
+            source=source,
+            preferred_device_address=preferred_device_address,
+            preferred_device_type=preferred_device_type,
+        )
 
     def create_bond_oob(
         self,
@@ -2569,3 +2831,46 @@ class SnippetWrapper:
                 key: bytes(value) if isinstance(value, list) else value
                 for key, value in self.snippet.generateLocalOobData(transport).items()
             })  # type: ignore[arg-type]
+
+    def get_all_hap_preset_info(self, device: str) -> dict[int, str]:
+        """Gets all HAP preset info.
+
+    Args:
+      device: Address of target device.
+
+    Returns:
+      A mapping of preset index to preset name.
+    """
+        return {
+            int(index): name for index, name in self.snippet.getAllHapPresetInfo(device).items()
+        }
+
+    def register_voice_command_callback(self) -> CallbackHandler:
+        """Registers a callback for voice command."""
+        return CallbackHandler(
+            snippet=self.snippet,
+            handler=self.snippet.registerVoiceCommandCallback(),
+            on_close=self.snippet.unregisterVoiceCommandCallback,
+        )
+
+    def register_hid_device_app(
+            self,
+            name: str = 'name',
+            description: str = 'description',
+            provider: str = 'provider',
+            subclass: int = 0,
+            descriptors: Sequence[int] = (),
+    ) -> CallbackHandler:
+        """Registers a hid device app and returns a callback handler."""
+        sdp_settings = {
+            snippet_constants.HID_DEVICE_APP_NAME: name,
+            snippet_constants.HID_DEVICE_APP_DESCRIPTION: description,
+            snippet_constants.HID_DEVICE_APP_PROVIDER: provider,
+            snippet_constants.HID_DEVICE_APP_SUBCLASS: subclass,
+            snippet_constants.HID_DEVICE_APP_DESCRIPTORS: list(descriptors),
+        }
+        return CallbackHandler(
+            snippet=self.snippet,
+            handler=self.snippet.registerHidDeviceApp(sdp_settings),
+            on_close=self.snippet.unregisterHidDeviceApp,
+        )

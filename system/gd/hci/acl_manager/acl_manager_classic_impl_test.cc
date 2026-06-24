@@ -128,10 +128,9 @@ protected:
             client_handler_, *test_hci_layer_, *test_controller_, *test_storage_,
             *test_round_robin_scheduler_, *acl_manager_classic_);
 
-    Address::FromString("A1:A2:A3:A4:A5:A6", remote);
+    remote = Address::FromString("A1:A2:A3:A4:A5:A6").value();
 
-    hci::Address address;
-    Address::FromString("D0:05:04:03:02:01", address);
+    hci::Address address = Address::FromString("D0:05:04:03:02:01").value();
     hci::AddressWithType address_with_type(address, hci::AddressType::RANDOM_DEVICE_ADDRESS);
     auto minimum_rotation_time = std::chrono::milliseconds(7 * 60 * 1000);
     auto maximum_rotation_time = std::chrono::milliseconds(15 * 60 * 1000);
@@ -149,13 +148,14 @@ protected:
             LeSetRandomAddressCompleteBuilder::Create(0x01, ErrorCode::SUCCESS));
 
     ON_CALL(mock_connection_callback_, OnConnectSuccess)
-            .WillByDefault([this](std::unique_ptr<ClassicAclConnection> connection) {
-              connections_.push_back(std::move(connection));
-              if (connection_promise_ != nullptr) {
-                connection_promise_->set_value();
-                connection_promise_.reset();
-              }
-            });
+            .WillByDefault(
+                    [this](std::unique_ptr<ClassicAclConnection> connection, Role /* role */) {
+                      connections_.push_back(std::move(connection));
+                      if (connection_promise_ != nullptr) {
+                        connection_promise_->set_value();
+                        connection_promise_.reset();
+                      }
+                    });
   }
 
   void TearDown() override {
@@ -265,8 +265,10 @@ protected:
       last_command = GetConnectionManagementCommand(OpCode::CREATE_CONNECTION);
     }
 
-    EXPECT_CALL(mock_connection_management_callbacks_,
-                OnRoleChange(hci::ErrorCode::SUCCESS, Role::CENTRAL));
+    if (!com_android_bluetooth_flags_remove_fake_role_change_event()) {
+      EXPECT_CALL(mock_connection_management_callbacks_,
+                  OnRoleChange(hci::ErrorCode::SUCCESS, Role::CENTRAL));
+    }
 
     auto first_connection = GetConnectionFuture();
     test_hci_layer_->IncomingEvent(ConnectionCompleteBuilder::Create(
@@ -791,7 +793,7 @@ protected:
             client_handler_, *test_hci_layer_, *test_controller_, *test_storage_,
             *test_round_robin_scheduler_, *acl_manager_classic_);
 
-    Address::FromString("A1:A2:A3:A4:A5:A6", remote);
+    remote = Address::FromString("A1:A2:A3:A4:A5:A6").value();
   }
 };
 

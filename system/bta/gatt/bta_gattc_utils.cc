@@ -796,6 +796,31 @@ tBTA_GATTC_CLCB* bta_gattc_find_int_disconn_clcb(tBTA_GATTC_DATA* p_msg) {
   return p_clcb;
 }
 
+/*******************************************************************************
+ *
+ * Function         bta_gattc_get_regcb_by_notification_handle
+ *
+ * Description      get registration control block by notification handle.
+ *
+ * Returns          pointer to the regcb
+ *
+ ******************************************************************************/
+tBTA_GATTC_RCB* bta_gattc_get_regcb_by_notification_handle(uint16_t handle, const RawAddress& bda) {
+  for (auto it = bta_gattc_cb.cl_rcb_map.begin(); it != bta_gattc_cb.cl_rcb_map.end(); ++it) {
+    tBTA_GATTC_RCB* p_clreg = it->second.get();
+    if (!p_clreg) {
+      continue;
+    }
+    for (uint8_t i = 0; i < BTA_GATTC_NOTIF_REG_MAX; i++) {
+      if (p_clreg->notif_reg[i].in_use && p_clreg->notif_reg[i].remote_bda == bda &&
+          p_clreg->notif_reg[i].handle == handle) {
+        return p_clreg;
+      }
+    }
+  }
+  return nullptr;
+}
+
 void bta_gatt_client_dump(int fd) {
   std::stringstream stream;
   int entry_count = 0;
@@ -819,8 +844,10 @@ void bta_gatt_client_dump(int fd) {
       continue;
     }
     entry_count++;
-    stream << "  address: " << p_bg_track->remote_bda.ToRedactedStringForLogging()
-           << "  cif_mask: " << loghex(p_bg_track->cif_mask);
+    stream << "  address: " << p_bg_track->remote_bda.ToRedactedStringForLogging() << "  cif_set: ";
+    for (auto& cif : p_bg_track->cif_set) {
+      stream << static_cast<int>(cif) << " ";
+    }
     stream << "\n";
   }
 

@@ -90,7 +90,7 @@ void GattTest::SetUp() {
   status_ = 0;
 
   BluetoothTest::SetUp();
-  ASSERT_EQ(bt_interface()->enable(), BT_STATUS_SUCCESS);
+  ASSERT_EQ(bt_interface()->enable("test_name"), BT_STATUS_SUCCESS);
   semaphore_wait(adapter_state_changed_callback_sem_);
   EXPECT_TRUE(GetState() == BT_STATE_ON);
 
@@ -99,7 +99,7 @@ void GattTest::SetUp() {
   ASSERT_NE(nullptr, gatt_interface_);
   instance = this;
   auto status = gatt_interface_->init(&callbacks);
-  ASSERT_EQ(status, BT_STATUS_SUCCESS);
+  ASSERT_EQ(static_cast<bt_status_t>(status.code()), BT_STATUS_SUCCESS);
 }
 
 void GattTest::TearDown() {

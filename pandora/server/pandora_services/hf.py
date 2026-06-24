@@ -22,6 +22,7 @@ def _default_hf_configuration():
     configuration = hfp.HfConfiguration(
         supported_hf_features=[
             hfp.HfFeature.THREE_WAY_CALLING,
+            hfp.HfFeature.VOICE_RECOGNITION_ACTIVATION,
             hfp.HfFeature.REMOTE_VOLUME_CONTROL,
             hfp.HfFeature.ENHANCED_CALL_STATUS,
             hfp.HfFeature.ENHANCED_CALL_CONTROL,
@@ -75,7 +76,7 @@ class HFService(HFPServicer):
                            protocol: HfProtocol):
             logging.info('SCO request received')
             if connection == protocol.dlc.multiplexer.l2cap_channel.connection:
-                if link_type == hci.HCI_Connection_Complete_Event.SCO_LINK_TYPE:
+                if link_type == hci.HCI_Connection_Complete_Event.LinkType.SCO:
                     esco_parameters = hfp.ESCO_PARAMETERS[hfp.DefaultCodecParameters.SCO_CVSD_D1]
                 elif protocol.active_codec == hfp.AudioCodec.MSBC:
                     esco_parameters = hfp.ESCO_PARAMETERS[hfp.DefaultCodecParameters.ESCO_MSBC_T2]

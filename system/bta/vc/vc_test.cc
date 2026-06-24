@@ -441,7 +441,7 @@ protected:
     __android_log_set_minimum_priority(ANDROID_LOG_VERBOSE);
     com::android::bluetooth::flags::provider_->reset_flags();
 
-    com::android::bluetooth::flags::provider_->vcp_handle_group_id_internally(true);
+    com::android::bluetooth::flags::provider_->vcp_skip_redundant_operation_writes(true);
 
     bluetooth::manager::SetMockBtmInterface(&btm_interface);
     MockCsisClient::SetMockInstanceForTesting(&mock_csis_client_module_);
@@ -516,7 +516,7 @@ protected:
     }));
     ON_CALL(*mock_alarm, AlarmFree(_)).WillByDefault(Invoke([](alarm_t* alarm) {
       if (alarm) {
-        free(alarm);
+        delete alarm;
       }
     }));
     ON_CALL(*mock_alarm, AlarmCancel(_)).WillByDefault(Invoke([](alarm_t* alarm) {
@@ -562,11 +562,12 @@ protected:
   void TestAppRegister(void) {
     BtaAppRegisterCallback app_register_callback;
     EXPECT_CALL(gatt_interface, AppRegister(_, _, _, _))
-            .WillOnce(DoAll(SaveArg<1>(&gatt_callback), SaveArg<2>(&app_register_callback)));
+            .WillOnce(DoAll(SaveArg<1>(&gatt_callback),
+                            WithArg<2>([&](auto arg) { app_register_callback = std::move(arg); })));
     VolumeControl::Initialize(&callbacks, base::DoNothing());
     ASSERT_TRUE(gatt_callback);
     ASSERT_TRUE(app_register_callback);
-    app_register_callback.Run(gatt_if, GATT_SUCCESS);
+    std::move(app_register_callback).Run(gatt_if, GATT_SUCCESS);
     ASSERT_TRUE(VolumeControl::IsVolumeControlRunning());
   }
 
@@ -639,20 +640,13 @@ protected:
   }
 
   void TestReadCharacteristic(const RawAddress& address, uint16_t conn_id,
-                              std::vector<uint16_t> handles) {
+                              std::vector<uint16_t> /*handles*/) {
     SetSampleDatabase(conn_id);
     TestAppRegister();
     TestConnect(address);
     GetConnectedEvent(address, conn_id);
 
-    if (!com_android_bluetooth_flags_le_ase_read_multiple_variable()) {
-      EXPECT_CALL(gatt_queue, ReadCharacteristic(conn_id, _, _, _)).WillRepeatedly(DoDefault());
-      for (auto const& handle : handles) {
-        EXPECT_CALL(gatt_queue, ReadCharacteristic(conn_id, handle, _, _)).WillOnce(DoDefault());
-      }
-    } else {
-      EXPECT_CALL(gatt_queue, ReadMultiCharacteristic(_, _, _, _)).Times(testing::AtLeast(1));
-    }
+    EXPECT_CALL(gatt_queue, ReadMultiCharacteristic(_, _, _, _)).Times(testing::AtLeast(1));
 
     GetSearchCompleteEvent(conn_id);
     TestAppUnregister();
@@ -765,19 +759,22 @@ protected:
   bluetooth::groups::DeviceGroupsCallbacks* group_callbacks_ = nullptr;
 };
 
-TEST_F(VolumeControlTest, test_get_uninitialized) { ASSERT_DEATH(VolumeControl::Get(), ""); }
+class VolumeControlDeathTest : public VolumeControlTest {};
+
+TEST_F(VolumeControlDeathTest, get_while_uninitialized) { ASSERT_DEATH(VolumeControl::Get(), ""); }
 
 TEST_F(VolumeControlTest, test_initialize) {
   bool init_cb_called = false;
   BtaAppRegisterCallback app_register_callback;
   EXPECT_CALL(gatt_interface, AppRegister(_, _, _, _))
-          .WillOnce(DoAll(SaveArg<1>(&gatt_callback), SaveArg<2>(&app_register_callback)));
+          .WillOnce(DoAll(SaveArg<1>(&gatt_callback),
+                          WithArg<2>([&](auto arg) { app_register_callback = std::move(arg); })));
   VolumeControl::Initialize(
           &callbacks,
           base::Bind([](bool* init_cb_called) { *init_cb_called = true; }, &init_cb_called));
   ASSERT_TRUE(gatt_callback);
   ASSERT_TRUE(app_register_callback);
-  app_register_callback.Run(gatt_if, GATT_SUCCESS);
+  std::move(app_register_callback).Run(gatt_if, GATT_SUCCESS);
   ASSERT_TRUE(init_cb_called);
 
   ASSERT_TRUE(VolumeControl::IsVolumeControlRunning());
@@ -1138,22 +1135,7 @@ TEST_F(VolumeControlTest, test_read_vcs_volume_flags) {
   TestReadCharacteristic(GetTestAddress(0), 1, handles);
 }
 
-TEST_F(VolumeControlTest, test_read_vocs_volume_offset) {
-  com::android::bluetooth::flags::provider_->le_ase_read_multiple_variable(false);
-  const RawAddress test_address = GetTestAddress(0);
-  EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 2, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutLocationChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutLocationChanged(test_address, 2, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 2, _)).Times(1);
-  std::vector<uint16_t> handles({0x0072, 0x0082});
-  TestReadCharacteristic(test_address, 1, handles);
-  Mock::VerifyAndClearExpectations(&callbacks);
-}
-
 TEST_F(VolumeControlTest, test_read_vocs_volume_offset_multi) {
-  com::android::bluetooth::flags::provider_->le_ase_read_multiple_variable(true);
   const RawAddress test_address = GetTestAddress(0);
   EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 1, _)).Times(1);
   EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 2, _)).Times(1);
@@ -1162,28 +1144,11 @@ TEST_F(VolumeControlTest, test_read_vocs_volume_offset_multi) {
   EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 1, _)).Times(1);
   EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 2, _)).Times(1);
   std::vector<uint16_t> handles({0x0072, 0x0082});
-  TestReadCharacteristic(test_address, 1, handles);
-  Mock::VerifyAndClearExpectations(&callbacks);
-}
-
-TEST_F(VolumeControlTest, test_read_vocs_offset_location) {
-  com::android::bluetooth::flags::provider_->le_ase_read_multiple_variable(false);
-  const RawAddress test_address = GetTestAddress(0);
-  // It is called twice because after connect read is done once and second read is coming from the
-  // test.
-  EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 2, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutLocationChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutLocationChanged(test_address, 2, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 2, _)).Times(1);
-  std::vector<uint16_t> handles({0x0075, 0x0085});
   TestReadCharacteristic(test_address, 1, handles);
   Mock::VerifyAndClearExpectations(&callbacks);
 }
 
 TEST_F(VolumeControlTest, test_read_vocs_offset_location_multi) {
-  com::android::bluetooth::flags::provider_->le_ase_read_multiple_variable(true);
   const RawAddress test_address = GetTestAddress(0);
   // It is called twice because after connect read is done once and second read is coming from the
   // test.
@@ -1198,21 +1163,7 @@ TEST_F(VolumeControlTest, test_read_vocs_offset_location_multi) {
   Mock::VerifyAndClearExpectations(&callbacks);
 }
 
-TEST_F(VolumeControlTest, test_read_vocs_output_description) {
-  com::android::bluetooth::flags::provider_->le_ase_read_multiple_variable(false);
-  const RawAddress test_address = GetTestAddress(0);
-  EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 2, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutLocationChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutLocationChanged(test_address, 2, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 1, _)).Times(1);
-  EXPECT_CALL(callbacks, OnExtAudioOutDescriptionChanged(test_address, 2, _)).Times(1);
-  std::vector<uint16_t> handles({0x0079, 0x008a});
-  TestReadCharacteristic(test_address, 1, handles);
-}
-
 TEST_F(VolumeControlTest, test_read_vocs_output_description_multi) {
-  com::android::bluetooth::flags::provider_->le_ase_read_multiple_variable(true);
   const RawAddress test_address = GetTestAddress(0);
   EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 1, _)).Times(1);
   EXPECT_CALL(callbacks, OnExtAudioOutVolumeOffsetChanged(test_address, 2, _)).Times(1);
@@ -1338,11 +1289,7 @@ protected:
 
 TEST_F(VolumeControlCallbackTest, test_volume_state_changed_stress) {
   std::vector<uint8_t> value({0x03, 0x01, 0x02});
-  if (!com_android_bluetooth_flags_vcp_handle_group_id_internally()) {
-    EXPECT_CALL(callbacks, OnVolumeStateChanged(test_address, 0x03, true, _, true));
-  } else {
-    EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(group_id, 0x03, true, true));
-  }
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(group_id, 0x03, true, true));
   GetNotificationEvent(0x0021, value);
 }
 
@@ -1587,7 +1534,7 @@ protected:
             .WillByDefault([this](uint16_t conn_id, uint16_t /*handle*/, std::vector<uint8_t> value,
                                   tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb,
                                   void* cb_data) {
-              uint8_t write_rsp;
+              uint8_t write_rsp = 0;
 
               std::vector<uint8_t> ntf_value({value[0], 0, static_cast<uint8_t>(value[1] + 1)});
               switch (value[0]) {
@@ -1633,6 +1580,35 @@ protected:
     TestAppUnregister();
     VolumeControlTest::TearDown();
   }
+};
+
+// In this tests we simulate notification coming later and operations will be queued but some could
+// be removed from the queue
+class VolumeControlDelayedNotification : public VolumeControlValueSetTest {
+protected:
+  void SetUp(void) override {
+    VolumeControlValueSetTest::SetUp();
+
+    ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
+            .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
+                              tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
+              uint8_t write_rsp = 0;
+
+              switch (value[0]) {
+                case 0x06:  // mute
+                  break;
+                case 0x05:  // unmute
+                  break;
+                case 0x04:  // set abs. volume
+                  break;
+                default:
+                  break;
+              }
+              cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
+            });
+  }
+
+  void TearDown(void) override { VolumeControlValueSetTest::TearDown(); }
 };
 
 TEST_F(VolumeControlValueSetTest, test_volume_operation_failed) {
@@ -1721,28 +1697,13 @@ TEST_F(VolumeControlValueSetTest, test_set_volume) {
   VolumeControl::Get()->SetVolume(test_address, 0x20);
 }
 
-TEST_F(VolumeControlValueSetTest, test_set_volume_to_previous_during_pending) {
-  // In this test we simulate notification coming later and operations will be queued
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_set_volume_to_previous_during_pending) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> vol_x11({0x04, /*change_cnt*/ 1, 0x11});
-  std::vector<uint8_t> ntf_value_x11({0x11, 0, 2});
+  std::vector<uint8_t> ntf_value_x11({0x11, 0, /*change_cnt*/ 2});
   const std::vector<uint8_t> vol_x10_2({0x04, /*change_cnt*/ 2, 0x10});
-  std::vector<uint8_t> ntf_value_x10_2({0x10, 0, 3});
+  std::vector<uint8_t> ntf_value_x10_2({0x10, 0, /*change_cnt*/ 3});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
   VolumeControl::Get()->SetVolume(test_address, 0x10);
@@ -1763,33 +1724,13 @@ TEST_F(VolumeControlValueSetTest, test_set_volume_to_previous_during_pending) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_set_volume_to_same_during_other_pending) {
-  // In this test we simulate notification coming later and operations will be queued but some will
-  // be removed from the queue
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x06:  // mute
-                break;
-              case 0x05:  // unmute
-                break;
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_set_volume_to_same_during_other_pending) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> vol_x00({0x04, /*change_cnt*/ 1, 0x00});
-  std::vector<uint8_t> ntf_value_x00({0x00, 0, 2});
+  std::vector<uint8_t> ntf_value_x00({0x00, 0, /*change_cnt*/ 2});
   const std::vector<uint8_t> mute({0x06, /*change_cnt*/ 2});
-  std::vector<uint8_t> ntf_value_mute({0x00, 1, 3});
+  std::vector<uint8_t> ntf_value_mute({0x00, 1, /*change_cnt*/ 3});
   const std::vector<uint8_t> vol_x00_2({0x04, /*change_cnt*/ 3, 0x00});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
@@ -1814,31 +1755,11 @@ TEST_F(VolumeControlValueSetTest, test_set_volume_to_same_during_other_pending) 
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_set_volume_to_same_pending) {
-  // In this test we simulate notification coming later and operations will be queued but some will
-  // be removed from the queue
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x06:  // mute
-                break;
-              case 0x05:  // unmute
-                break;
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_set_volume_to_same_pending) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> vol_x00({0x04, /*change_cnt*/ 1, 0x00});
-  std::vector<uint8_t> ntf_value_x00({0x00, 0, 2});
+  std::vector<uint8_t> ntf_value_x00({0x00, 0, /*change_cnt*/ 2});
   const std::vector<uint8_t> vol_x00_2({0x04, /*change_cnt*/ 2, 0x00});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
@@ -1859,32 +1780,13 @@ TEST_F(VolumeControlValueSetTest, test_set_volume_to_same_pending) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_unmute_to_previous_during_pending) {
-  // In this test we simulate notification coming later and operations will be queued
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x06:  // mute
-                break;
-              case 0x05:  // unmute
-                break;
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_unmute_to_previous_during_pending) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> mute({0x06, /*change_cnt*/ 1});
-  std::vector<uint8_t> ntf_value_mute({0x10, 1, 2});
+  std::vector<uint8_t> ntf_value_mute({0x10, 1, /*change_cnt*/ 2});
   const std::vector<uint8_t> unmute({0x05, /*change_cnt*/ 2});
-  std::vector<uint8_t> ntf_value_unmute({0x10, 0, 3});
+  std::vector<uint8_t> ntf_value_unmute({0x10, 0, /*change_cnt*/ 3});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
   VolumeControl::Get()->SetVolume(test_address, 0x10);
@@ -1904,34 +1806,15 @@ TEST_F(VolumeControlValueSetTest, test_unmute_to_previous_during_pending) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_mute_to_previous_during_pending) {
-  // In this test we simulate notification coming later and operations will be queued
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x06:  // mute
-                break;
-              case 0x05:  // unmute
-                break;
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_mute_to_previous_during_pending) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> mute({0x06, /*change_cnt*/ 1});
-  std::vector<uint8_t> ntf_value_mute({0x10, 1, 2});
+  std::vector<uint8_t> ntf_value_mute({0x10, 1, /*change_cnt*/ 2});
   const std::vector<uint8_t> unmute({0x05, /*change_cnt*/ 2});
-  std::vector<uint8_t> ntf_value_unmute({0x10, 0, 3});
+  std::vector<uint8_t> ntf_value_unmute({0x10, 0, /*change_cnt*/ 3});
   const std::vector<uint8_t> mute_2({0x06, /*change_cnt*/ 3});
-  std::vector<uint8_t> ntf_value_mute_2({0x10, 1, 4});
+  std::vector<uint8_t> ntf_value_mute_2({0x10, 1, /*change_cnt*/ 4});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
   VolumeControl::Get()->SetVolume(test_address, 0x10);
@@ -1955,31 +1838,11 @@ TEST_F(VolumeControlValueSetTest, test_mute_to_previous_during_pending) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_unmute_to_same_during_other_pending) {
-  // In this test we simulate notification coming later and operations will be queued but some will
-  // be removed from the queue
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x06:  // mute
-                break;
-              case 0x05:  // unmute
-                break;
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_unmute_to_same_during_other_pending) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> vol_x11({0x04, /*change_cnt*/ 1, 0x11});
-  std::vector<uint8_t> ntf_value_x11({0x11, 0, 2});
+  std::vector<uint8_t> ntf_value_x11({0x11, 0, /*change_cnt*/ 2});
   const std::vector<uint8_t> unmute({0x05, /*change_cnt*/ 2});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
@@ -1999,33 +1862,13 @@ TEST_F(VolumeControlValueSetTest, test_unmute_to_same_during_other_pending) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_mute_to_same_during_other_pending) {
-  // In this test we simulate notification coming later and operations will be queued but some will
-  // be removed from the queue
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x06:  // mute
-                break;
-              case 0x05:  // unmute
-                break;
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_mute_to_same_during_other_pending) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> mute({0x06, /*change_cnt*/ 1});
-  std::vector<uint8_t> ntf_value_mute({0x10, 1, 2});
+  std::vector<uint8_t> ntf_value_mute({0x10, 1, /*change_cnt*/ 2});
   const std::vector<uint8_t> vol_x11({0x04, /*change_cnt*/ 2, 0x11});
-  std::vector<uint8_t> ntf_value_x11({0x11, 1, 3});
+  std::vector<uint8_t> ntf_value_x11({0x11, 1, /*change_cnt*/ 3});
   const std::vector<uint8_t> mute_2({0x06, /*change_cnt*/ 3});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
@@ -2049,29 +1892,9 @@ TEST_F(VolumeControlValueSetTest, test_mute_to_same_during_other_pending) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_remove_pending_mute_operation) {
-  // In this test we simulate notification coming later and operations will be queued but some will
-  // be removed from the queue
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x06:  // mute
-                break;
-              case 0x05:  // unmute
-                break;
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_remove_pending_mute_operation) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> mute({0x06, /*change_cnt*/ 1});
   const std::vector<uint8_t> unmute({0x05, /*change_cnt*/ 1});
 
@@ -2108,30 +1931,15 @@ TEST_F(VolumeControlValueSetTest, test_set_volume_stress) {
   }
 }
 
-TEST_F(VolumeControlValueSetTest, test_set_volume_stress_2) {
-  // In this test we simulate notification coming later and operations will be queued
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_set_volume_stress_2) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> vol_x11({0x04, /*change_cnt*/ 1, 0x11});
-  std::vector<uint8_t> ntf_value_x11({0x11, 0, 2});
+  std::vector<uint8_t> ntf_value_x11({0x11, 0, /*change_cnt*/ 2});
   const std::vector<uint8_t> vol_x12({0x04, /*change_cnt*/ 2, 0x12});
-  std::vector<uint8_t> ntf_value_x12({0x12, 0, 3});
+  std::vector<uint8_t> ntf_value_x12({0x12, 0, /*change_cnt*/ 3});
   const std::vector<uint8_t> vol_x13({0x04, /*change_cnt*/ 3, 0x13});
-  std::vector<uint8_t> ntf_value_x13({0x13, 0, 4});
+  std::vector<uint8_t> ntf_value_x13({0x13, 0, /*change_cnt*/ 4});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x11, GATT_WRITE, _, _)).Times(1);
@@ -2150,31 +1958,15 @@ TEST_F(VolumeControlValueSetTest, test_set_volume_stress_2) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlValueSetTest, test_set_volume_stress_3) {
-  // In this test we simulate notification coming later and operations will be queued but some will
-  // be removed from the queue
-  ON_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, _, GATT_WRITE, _, _))
-          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
-                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
-            uint8_t write_rsp;
-
-            switch (value[0]) {
-              case 0x04:  // set abs. volume
-                break;
-              default:
-                break;
-            }
-            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
-          });
-
+TEST_F(VolumeControlDelayedNotification, test_set_volume_stress_3) {
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> vol_x11({0x04, /*change_cnt*/ 1, 0x11});
-  std::vector<uint8_t> ntf_value_x11({0x11, 0, 2});
+  std::vector<uint8_t> ntf_value_x11({0x11, 0, /*change_cnt*/ 2});
   const std::vector<uint8_t> vol_x12({0x04, /*change_cnt*/ 1, 0x12});
-  std::vector<uint8_t> ntf_value_x12({0x12, 0, 3});
+  std::vector<uint8_t> ntf_value_x12({0x12, 0, /*change_cnt*/ 3});
   const std::vector<uint8_t> vol_x13({0x04, /*change_cnt*/ 1, 0x13});
-  std::vector<uint8_t> ntf_value_x13({0x13, 0, 4});
+  std::vector<uint8_t> ntf_value_x13({0x13, 0, /*change_cnt*/ 4});
 
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id, 0x0024, vol_x10, GATT_WRITE, _, _)).Times(1);
 
@@ -2301,17 +2093,6 @@ protected:
   void SetUp(void) override {
     VolumeControlTest::SetUp();
 
-    if (!com_android_bluetooth_flags_vcp_handle_group_id_internally()) {
-      ON_CALL(mock_csis_client_module_, Get()).WillByDefault(Return(&mock_csis_client_module_));
-
-      // Report working CSIS
-      ON_CALL(mock_csis_client_module_, IsCsisClientRunning()).WillByDefault(Return(true));
-
-      ON_CALL(mock_csis_client_module_, GetDeviceList(_)).WillByDefault(Return(csis_group));
-
-      ON_CALL(mock_csis_client_module_, GetGroupId(_, _)).WillByDefault(Return(group_id));
-    }
-
     SetSampleDatabase(conn_id_1);
     SetSampleDatabase(conn_id_2);
 
@@ -2396,8 +2177,6 @@ TEST_F(VolumeControlGroupId, test_set_volume_device_not_ready_no_respond) {
 }
 
 TEST_F(VolumeControlGroupId, test_set_volume_device_not_ready_no_group) {
-  com::android::bluetooth::flags::provider_->vcp_handle_group_id_internally(true);
-
   // Simulate late group adding
   ON_CALL(mock_groups_module_, GetGroupId(_, _))
           .WillByDefault(Return(bluetooth::groups::kGroupUnknown));
@@ -2410,11 +2189,11 @@ TEST_F(VolumeControlGroupId, test_set_volume_device_not_ready_no_group) {
   GetSearchCompleteEvent(conn_id_2);
 
   const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 0, 0x10});
-  std::vector<uint8_t> ntf_value_x10({0x10, 0, 1});
+  std::vector<uint8_t> ntf_value_x10({0x10, 0, /*change_cnt*/ 1});
   const std::vector<uint8_t> vol_x11({0x04, /*change_cnt*/ 1, 0x11});
-  std::vector<uint8_t> ntf_value_x11({0x11, 0, 2});
+  std::vector<uint8_t> ntf_value_x11({0x11, 0, /*change_cnt*/ 2});
   const std::vector<uint8_t> vol_x12({0x04, /*change_cnt*/ 2, 0x12});
-  std::vector<uint8_t> ntf_value_x12({0x12, 0, 3});
+  std::vector<uint8_t> ntf_value_x12({0x12, 0, /*change_cnt*/ 3});
 
   // Devices without group
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, vol_x10, GATT_WRITE, _, _))
@@ -2449,7 +2228,7 @@ TEST_F(VolumeControlGroupId, test_set_volume_device_not_ready_no_group) {
   Mock::VerifyAndClearExpectations(&gatt_queue);
 }
 
-TEST_F(VolumeControlGroupId, autonomus_test_set_volume_forward_required) {
+TEST_F(VolumeControlGroupId, autonomous_test_set_volume_forward_required) {
   // Connect and ready
   TestConnect(test_address_1);
   GetConnectedEvent(test_address_1, conn_id_1);
@@ -2466,6 +2245,7 @@ TEST_F(VolumeControlGroupId, autonomus_test_set_volume_forward_required) {
   // Inject autonomous notification and make sure that second remote is updated
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, _, GATT_WRITE, _, _)).Times(0);
   EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, vol, GATT_WRITE, _, _));
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(_, _, _, _)).Times(0);
   GetNotificationEvent(conn_id_1, test_address_1, 0x0021, ntf);
 
   // Inject second notification and make sure that callback is sent up to Java layer
@@ -2476,7 +2256,134 @@ TEST_F(VolumeControlGroupId, autonomus_test_set_volume_forward_required) {
   GetNotificationEvent(conn_id_2, test_address_2, 0x0021, ntf);
 }
 
-TEST_F(VolumeControlGroupId, autonomus_test_set_volume_forward_not_required_not_ready) {
+TEST_F(VolumeControlGroupId, autonomous_test_set_volume_and_unmute_both_forward_required) {
+  // Connect and ready
+  TestConnect(test_address_1);
+  GetConnectedEvent(test_address_1, conn_id_1);
+  GetSearchCompleteEvent(conn_id_1);
+
+  // Connect and ready
+  TestConnect(test_address_2);
+  GetConnectedEvent(test_address_2, conn_id_2);
+  GetSearchCompleteEvent(conn_id_2);
+
+  // In this test we simulate notification coming later and operations will be queued
+  ON_CALL(gatt_queue, WriteCharacteristic(_, 0x0024, _, GATT_WRITE, _, _))
+          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
+                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
+            uint8_t write_rsp = 0;
+
+            switch (value[0]) {
+              case 0x06:  // mute
+                break;
+              case 0x05:  // unmute
+                break;
+              case 0x04:  // set abs. volume
+                break;
+              default:
+                break;
+            }
+            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
+          });
+
+  const std::vector<uint8_t> mute({0x06, /*change_cnt*/ 0});
+  std::vector<uint8_t> ntf_value_mute({0x0, 1, /*change_cnt*/ 1});
+
+  std::vector<uint8_t> ntf_value_0x10_unmute({0x10, 0, /*change_cnt*/ 2});
+
+  const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 1, 0x10});
+  std::vector<uint8_t> ntf_value_0x10({0x10, 1, /*change_cnt*/ 2});
+  const std::vector<uint8_t> unmute({0x05, /*change_cnt*/ 2});
+  std::vector<uint8_t> ntf_value_unmute({0x10, 0, /*change_cnt*/ 3});
+
+  // On test start group has volume 0 by default and unmute, set group mute
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, mute, GATT_WRITE, _, _));
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, mute, GATT_WRITE, _, _));
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(group_id, 0x00, true, false));
+  VolumeControl::Get()->Mute(group_id);
+  GetNotificationEvent(conn_id_1, test_address_1, 0x0021, ntf_value_mute);
+  GetNotificationEvent(conn_id_2, test_address_2, 0x0021, ntf_value_mute);
+
+  // Inject autonomous notification with volume and unmute
+  // Make sure that second remote is updated by volume first
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, _, GATT_WRITE, _, _)).Times(0);
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, vol_x10, GATT_WRITE, _, _));
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(_, _, _, _)).Times(0);
+  GetNotificationEvent(conn_id_1, test_address_1, 0x0021, ntf_value_0x10_unmute);
+
+  // After notification of volume change there is java callback and unmute update
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, _, GATT_WRITE, _, _)).Times(0);
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, unmute, GATT_WRITE, _, _));
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(group_id, 0x10, true, true));
+  GetNotificationEvent(conn_id_2, test_address_2, 0x0021, ntf_value_0x10);
+
+  // After notification of unmute change there is java callback
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, _, GATT_WRITE, _, _)).Times(0);
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, _, GATT_WRITE, _, _)).Times(0);
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(group_id, 0x10, false, true));
+  GetNotificationEvent(conn_id_2, test_address_2, 0x0021, ntf_value_unmute);
+}
+
+TEST_F(VolumeControlGroupId, autonomous_test_set_volume_and_unmute_one_forward_required) {
+  // Connect and ready
+  TestConnect(test_address_1);
+  GetConnectedEvent(test_address_1, conn_id_1);
+  GetSearchCompleteEvent(conn_id_1);
+
+  // Connect and ready
+  TestConnect(test_address_2);
+  GetConnectedEvent(test_address_2, conn_id_2);
+  GetSearchCompleteEvent(conn_id_2);
+
+  // In this test we simulate notification coming later and operations will be queued but some could
+  // be removed from the queue
+  ON_CALL(gatt_queue, WriteCharacteristic(_, 0x0024, _, GATT_WRITE, _, _))
+          .WillByDefault([](uint16_t conn_id, uint16_t handle, std::vector<uint8_t> value,
+                            tGATT_WRITE_TYPE /*write_type*/, GATT_WRITE_OP_CB cb, void* cb_data) {
+            uint8_t write_rsp = 0;
+
+            switch (value[0]) {
+              case 0x06:  // mute
+                break;
+              case 0x05:  // unmute
+                break;
+              case 0x04:  // set abs. volume
+                break;
+              default:
+                break;
+            }
+            cb(conn_id, GATT_SUCCESS, handle, 0, &write_rsp, cb_data);
+          });
+
+  const std::vector<uint8_t> mute({0x06, /*change_cnt*/ 0});
+  std::vector<uint8_t> ntf_value_mute({0x0, 1, /*change_cnt*/ 1});
+
+  std::vector<uint8_t> ntf_value_0x10_unmute({0x10, 0, /*change_cnt*/ 2});
+  const std::vector<uint8_t> vol_x10({0x04, /*change_cnt*/ 1, 0x10});
+
+  // On test start group has volume 0 by default and unmute, set group mute
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, mute, GATT_WRITE, _, _));
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, mute, GATT_WRITE, _, _));
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(group_id, 0x00, true, false));
+  VolumeControl::Get()->Mute(group_id);
+  GetNotificationEvent(conn_id_1, test_address_1, 0x0021, ntf_value_mute);
+  GetNotificationEvent(conn_id_2, test_address_2, 0x0021, ntf_value_mute);
+
+  // Inject autonomous notification with volume and unmute
+  // Make sure that second remote is updated by volume first
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, _, GATT_WRITE, _, _)).Times(0);
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, vol_x10, GATT_WRITE, _, _));
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(_, _, _, _)).Times(0);
+  GetNotificationEvent(conn_id_1, test_address_1, 0x0021, ntf_value_0x10_unmute);
+
+  // After notification of volume change and unexpected unmute, no more update, java callback
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_1, 0x0024, _, GATT_WRITE, _, _)).Times(0);
+  EXPECT_CALL(gatt_queue, WriteCharacteristic(conn_id_2, 0x0024, _, GATT_WRITE, _, _)).Times(0);
+  EXPECT_CALL(callbacks, OnGroupVolumeStateChanged(group_id, 0x10, false, true));
+  GetNotificationEvent(conn_id_2, test_address_2, 0x0021, ntf_value_0x10_unmute);
+}
+
+TEST_F(VolumeControlGroupId, autonomous_test_set_volume_forward_not_required_not_ready) {
   // Connect and ready
   TestConnect(test_address_1);
   GetConnectedEvent(test_address_1, conn_id_1);
@@ -2498,7 +2405,7 @@ TEST_F(VolumeControlGroupId, autonomus_test_set_volume_forward_not_required_not_
   GetNotificationEvent(conn_id_1, test_address_1, 0x0021, ntf);
 }
 
-TEST_F(VolumeControlGroupId, autonomus_test_set_volume_forward_not_required_same_volume) {
+TEST_F(VolumeControlGroupId, autonomous_test_set_volume_forward_not_required_same_volume) {
   // Connect and ready
   TestConnect(test_address_1);
   GetConnectedEvent(test_address_1, conn_id_1);
@@ -2525,7 +2432,7 @@ TEST_F(VolumeControlGroupId, autonomus_test_set_volume_forward_not_required_same
   GetNotificationEvent(conn_id_2, test_address_2, 0x0021, ntf);
 }
 
-TEST_F(VolumeControlGroupId, autonomus_single_device_test_set_volume) {
+TEST_F(VolumeControlGroupId, autonomous_single_device_test_set_volume) {
   // Connect and ready
   TestConnect(test_address_1);
   GetConnectedEvent(test_address_1, conn_id_1);

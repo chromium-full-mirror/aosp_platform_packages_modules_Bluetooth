@@ -22,7 +22,7 @@ import android.os.SystemProperties;
 import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
-import com.android.bluetooth.Utils;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.a2dp.A2dpService;
 import com.android.bluetooth.a2dpsink.A2dpSinkService;
 import com.android.bluetooth.avrcp.AvrcpTargetService;
@@ -85,7 +85,6 @@ public class Config {
         BluetoothProfile.CSIP_SET_COORDINATOR,
         BluetoothProfile.MCP_SERVER,
         BluetoothProfile.LE_CALL_CONTROL,
-        BluetoothProfile.VAPS_SERVER,
     };
 
     /**
@@ -201,14 +200,14 @@ public class Config {
         // This means that the OS will not automatically enable ASHA on these platforms, but these
         // platforms can choose to enable ASHA themselves
         if (BluetoothProperties.isProfileAshaCentralEnabled().isEmpty()) {
-            if (Utils.isAutomotive(ctx) || Utils.isTv(ctx) || Utils.isWatch(ctx)) {
+            if (Util.isAutomotive(ctx) || Util.isTv(ctx) || Util.isWatch(ctx)) {
                 setProfileEnabled(BluetoothProfile.HEARING_AID, false);
             }
         }
 
         // Disable ASHA if BLE is not supported on this platform even if the platform enabled ASHA
         // accidentally
-        if (!Utils.isBleSupported(ctx)) {
+        if (!Util.isBleSupported(ctx)) {
             setProfileEnabled(BluetoothProfile.HEARING_AID, false);
         }
 

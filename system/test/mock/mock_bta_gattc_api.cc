@@ -102,8 +102,14 @@ void BTA_GATTC_Open(tGATT_IF /* client_if */, const RawAddress& /* remote_bda */
 void BTA_GATTC_Open(tGATT_IF /* client_if */, const RawAddress& /* remote_bda */,
                     tBLE_ADDR_TYPE /* addr_type */, tBTM_BLE_CONN_TYPE /* connection_type */,
                     tBT_TRANSPORT /* transport */, bool /* opportunistic */,
-                    uint8_t /* initiating_phys */, uint16_t /* preferred_mtu */,
-                    bool /* prefer_relax_mode */) {
+                    uint16_t /* preferred_mtu */, bool /* prefer_relax_mode */) {
+  inc_func_call_count(__func__);
+}
+void BTA_GATTC_Open(tGATT_IF /* client_if */, const RawAddress& /* remote_bda */,
+                    tBLE_ADDR_TYPE /* addr_type */, tBTM_BLE_CONN_TYPE /* connection_type */,
+                    tBT_TRANSPORT /* transport */, bool /* opportunistic */,
+                    uint16_t /* preferred_mtu */, bool /* prefer_relax_mode */,
+                    bool /* auto_mtu_enabled */) {
   inc_func_call_count(__func__);
 }
 void BTA_GATTC_PrepareWrite(uint16_t /* conn_id */, uint16_t /* handle */, uint16_t /* offset */,
@@ -136,6 +142,18 @@ void BTA_GATTC_Refresh(const RawAddress& /* remote_bda */) { inc_func_call_count
 void BTA_GATTC_SendIndConfirm(uint16_t /* conn_id */, uint16_t /* cid */) {
   inc_func_call_count(__func__);
 }
+tGATT_STATUS BTA_GATTC_SubrateModeRequest(tGATT_IF /*client_if*/, const RawAddress& /*bd_addr*/,
+                                          tGATT_SUBRATE_MODE /*subrate_mode*/) {
+  inc_func_call_count(__func__);
+  return GATT_SUCCESS;
+}
+tGATT_STATUS BTA_GATTC_SubrateModeRequest(tGATT_IF /*client_if*/, const RawAddress& /*bd_addr*/,
+                                          tGATT_SUBRATE_MODE /*subrate_mode*/,
+                                          uint16_t /*subrate_max*/, uint16_t /*subrate_min*/,
+                                          uint16_t /*cont_num*/) {
+  inc_func_call_count(__func__);
+  return GATT_SUCCESS;
+}
 void BTA_GATTC_ServiceSearchAllRequest(uint16_t /* conn_id */) { inc_func_call_count(__func__); }
 void BTA_GATTC_ServiceSearchRequest(uint16_t /* conn_id */, bluetooth::Uuid /* p_srvc_uuid */) {
   inc_func_call_count(__func__);
@@ -158,5 +176,16 @@ void bta_gattc_continue_discovery_if_needed(const RawAddress& /* bd_addr */,
 void bta_gatt_client_dump(int /* fd */) { inc_func_call_count(__func__); }
 
 void bta_gattc_link_cache_for_bonded_device(const RawAddress& /*bd_addr*/) {
+  inc_func_call_count(__func__);
+}
+
+void BTA_GATTC_OffloadCharacteristics(tCONN_ID /* conn_id */,
+                                      std::vector<btgatt_db_element_t> /* service */,
+                                      uint64_t /* endpoint_id */, uint64_t /* hub_id */,
+                                      std::promise<btgatt_offload_result_t> /* promise */) {
+  inc_func_call_count(__func__);
+}
+
+void BTA_GATTC_UnoffloadCharacteristics(tCONN_ID /* conn_id */, int /* session_id */) {
   inc_func_call_count(__func__);
 }

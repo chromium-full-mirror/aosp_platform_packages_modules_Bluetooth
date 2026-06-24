@@ -21,13 +21,14 @@ import android.util.Log;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Random;
 
 /** A class abstracting the storage method of cover art images */
 final class AvrcpCoverArtStorage {
     private static final String TAG = AvrcpCoverArtStorage.class.getSimpleName();
 
     private final Object mHandlesLock = new Object();
-    private int mNextImageHandle = 0;
+    private int mNextImageHandle = new Random().nextInt(10000000);
 
     private final Object mImagesLock = new Object();
     private final int mMaxImages;
@@ -48,7 +49,7 @@ final class AvrcpCoverArtStorage {
 
         mImageHandles = new HashMap<>();
 
-        // Using a LinkedHashMap allows us to having items ordered LRU -> MRU (true param does this)
+        // Using a LinkedHashMap allows us to have items ordered LRU -> MRU (true param does this)
         // This way, if we need run out of space we can remove from the front to remove the least
         // recently accessed items
         mImages = new LinkedHashMap<>(0, 0.75f /* default load factor */, true);
@@ -112,10 +113,6 @@ final class AvrcpCoverArtStorage {
             mImages.clear();
             mImageHandles.clear();
         }
-
-        synchronized (mHandlesLock) {
-            mNextImageHandle = 0;
-        }
     }
 
     private void trimToSize() {
@@ -141,8 +138,7 @@ final class AvrcpCoverArtStorage {
     private String getNextImageHandle() {
         synchronized (mHandlesLock) {
             if (mNextImageHandle > 9999999) {
-                error("No more image handles left");
-                return null;
+                mNextImageHandle = 0;
             }
 
             String handle = String.valueOf(mNextImageHandle);

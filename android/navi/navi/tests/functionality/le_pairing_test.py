@@ -29,11 +29,11 @@ from bumble import smp
 from mobly import test_runner
 
 from navi.tests import navi_test_base
-from navi.tests.smoke import pairing_utils
 from navi.utils import android_constants
 from navi.utils import bl4a_api
 from navi.utils import constants
 from navi.utils import matcher
+from navi.utils import pairing as pairing_utils
 from navi.utils import pyee_extensions
 from navi.utils import retry
 
@@ -92,7 +92,8 @@ class LePairingTest(navi_test_base.TwoDevicesTestBase):
             else:
                 gatt_client = await self.dut.bl4a.connect_gatt_client(
                     address=ref_addr,
-                    address_type=ref_connection_address_type,
+                    address_type=android_constants.AddressTypeStatus(
+                        ref_connection_address_type.value),
                     transport=android_constants.Transport.LE,
                 )
                 self.test_case_context.push(gatt_client)
@@ -508,7 +509,7 @@ class LePairingTest(navi_test_base.TwoDevicesTestBase):
                 expected_dut_pairing_variant = _AndroidPairingVariant.DISPLAY_PASSKEY
                 expected_ref_pairing_variant = (_BumblePairingVariant.PASSKEY_ENTRY_REQUEST)
                 ref_answer = dut_pairing_event.pin if ref_accept else None
-                dut_answer = lambda: None
+                dut_answer = lambda: self.dut.bt.setPairingConfirmation(ref_addr, True)
             case (
                 pairing.PairingDelegate.IoCapability.DISPLAY_OUTPUT_ONLY |
                 pairing.PairingDelegate.IoCapability.DISPLAY_OUTPUT_AND_YES_NO_INPUT,
@@ -599,24 +600,6 @@ class LePairingTest(navi_test_base.TwoDevicesTestBase):
         versa.
       ref_connection_address_type: Address type of the REF device.
     """
-
-        # TODO: Remove this when the patch is merged.
-        class Session(smp.Session):
-
-            def __init__(
-                self,
-                manager: smp.Manager,
-                connection: smp.Connection,
-                pairing_config: pairing.PairingConfig,
-                is_initiator: bool,
-            ) -> None:
-                super().__init__(manager, connection, pairing_config, is_initiator)
-                if pairing_config.oob and (not self.sc or pairing_config.oob.peer_data):
-                    self.oob_data_flag = 1
-                else:
-                    self.oob_data_flag = 0
-
-        self.ref.device.smp_manager.session_proxy = Session
 
         pairing_delegate = pairing_utils.PairingDelegate(
             auto_accept=True,

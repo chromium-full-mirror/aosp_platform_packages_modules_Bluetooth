@@ -2,16 +2,28 @@ package: "com.android.bluetooth.flags"
 container: "com.android.bt"
 
 flag {
-    name: "channel_sounding"
-    is_exported: true
-    namespace: "bluetooth"
-    description: "Enable Channel Sounding"
-    bug: "317683528"
-}
-
-flag {
     name:"channel_sounding_offload"
     namespace: "bluetooth"
     description: "Add mechanism to handle channel sounding offload"
     bug: "423421929"
+}
+
+flag {
+    name: "channel_sounding_26q1_fix"
+    namespace: "bluetooth"
+    description: "Fix issues found in UPF and vendor-reported issues"
+    bug: "445881045"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "add_rssi_and_power_in_distance_measurement_result"
+    namespace: "bluetooth"
+    description: "Add RSSI and power in DistanceMeasurementResult"
+    bug: "462311235"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }

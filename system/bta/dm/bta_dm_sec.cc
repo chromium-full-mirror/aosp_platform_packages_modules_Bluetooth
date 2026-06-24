@@ -16,6 +16,7 @@
 
 #define LOG_TAG "bt_bta_dm_sec"
 
+#include <android_bluetooth_sysprop.h>
 #include <bluetooth/log.h>
 #include <bluetooth/types/address.h>
 #include <bluetooth/types/bt_transport.h>
@@ -46,7 +47,8 @@ static tBTM_STATUS bta_dm_new_link_key_cback(const RawAddress& bd_addr, DEV_CLAS
                                              BD_NAME bd_name, const LinkKey& key, uint8_t key_type,
                                              bool is_ctkd);
 static tBTM_STATUS bta_dm_pin_cback(const RawAddress& bd_addr, DEV_CLASS dev_class,
-                                    const BD_NAME bd_name, bool min_16_digit);
+                                    const BD_NAME bd_name, bool min_16_digit,
+                                    PairingAlgorithm pairing_algorithm);
 static tBTM_STATUS bta_dm_sirk_verification_cback(const RawAddress& bd_addr);
 static void bta_dm_authentication_complete_cback(const RawAddress& bd_addr, DEV_CLASS dev_class,
                                                  BD_NAME bd_name, tHCI_REASON result);
@@ -54,6 +56,7 @@ static void bta_dm_ble_id_key_cback(uint8_t key_type, tBTM_BLE_LOCAL_KEYS* p_key
 static void bta_dm_bond_cancel_complete_cback(tBTM_STATUS result);
 static void bta_dm_remove_sec_dev_entry(const RawAddress& remote_bd_addr);
 static void bta_dm_reset_sec_dev_pending(const RawAddress& remote_bd_addr);
+static BtIoCap bta_dm_le_iocap_from_sysprop();
 
 /* bta security callback */
 const tBTM_APPL_INFO bta_security = {
@@ -139,6 +142,7 @@ void bta_dm_bond(const RawAddress& bd_addr, tBLE_ADDR_TYPE addr_type, tBT_TRANSP
   tBTM_STATUS status = get_btm_client_interface().security.BTM_SecBond(bd_addr, addr_type,
                                                                        transport, device_type);
 
+  // TODO (b/440298497): If the link exist with the bd_addr device, disconnect it now, as per status
   if (bta_dm_sec_cb.p_sec_cback && (status != tBTM_STATUS::BTM_CMD_STARTED)) {
     memset(&sec_event, 0, sizeof(tBTA_DM_SEC));
     sec_event.auth_cmpl.bd_addr = bd_addr;
@@ -181,10 +185,10 @@ void bta_dm_bond_cancel(const RawAddress& bd_addr) {
 void bta_dm_pin_reply(std::unique_ptr<tBTA_DM_API_PIN_REPLY> msg) {
   if (msg->accept) {
     get_btm_client_interface().security.BTM_PINCodeReply(msg->bd_addr, tBTM_STATUS::BTM_SUCCESS,
-                                                         msg->pin_len, msg->p_pin);
+                                                         msg->pin_len, msg->pin_code);
   } else {
-    get_btm_client_interface().security.BTM_PINCodeReply(msg->bd_addr,
-                                                         tBTM_STATUS::BTM_NOT_AUTHORIZED, 0, NULL);
+    get_btm_client_interface().security.BTM_PINCodeReply(
+            msg->bd_addr, tBTM_STATUS::BTM_NOT_AUTHORIZED, 0, PinCode{});
   }
 }
 
@@ -268,7 +272,8 @@ static void bta_dm_pinname_cback(const tBTM_REMOTE_DEV_NAME* p_data) {
  *
  ******************************************************************************/
 static tBTM_STATUS bta_dm_pin_cback(const RawAddress& bd_addr, DEV_CLASS dev_class,
-                                    const BD_NAME bd_name, bool min_16_digit) {
+                                    const BD_NAME bd_name, bool min_16_digit,
+                                    PairingAlgorithm pairing_algorithm) {
   if (!bta_dm_sec_cb.p_sec_cback) {
     return tBTM_STATUS::BTM_NOT_AUTHORIZED;
   }
@@ -293,6 +298,7 @@ static tBTM_STATUS bta_dm_pin_cback(const RawAddress& bd_addr, DEV_CLASS dev_cla
                                    .dev_class = dev_class,
                                    .bd_name = "",
                                    .min_16_digit = min_16_digit,
+                                   .pairing_algorithm = pairing_algorithm,
                            }};
   bd_name_copy(sec_event.pin_req.bd_name, bd_name);
 
@@ -435,7 +441,7 @@ static tBTM_STATUS bta_dm_sp_cback(tBTM_SP_EVT event, tBTM_SP_EVT_DATA* p_data) 
       sec_event.cfm_req.rmt_auth_req = p_data->cfm_req.rmt_auth_req;
       sec_event.cfm_req.loc_io_caps = p_data->cfm_req.loc_io_caps;
       sec_event.cfm_req.rmt_io_caps = p_data->cfm_req.rmt_io_caps;
-
+      sec_event.cfm_req.pairing_algorithm = p_data->cfm_req.pairing_algorithm;
       [[fallthrough]];
     /* Passkey entry mode, mobile device with output capability is very
         unlikely to receive key request, so skip this event */
@@ -485,6 +491,7 @@ static tBTM_STATUS bta_dm_sp_cback(tBTM_SP_EVT event, tBTM_SP_EVT_DATA* p_data) 
       if (BTM_SP_KEY_NOTIF_EVT == event) {
         /* If the device name is not known, save bdaddr and devclass
            and initiate a name request with values from key_notif */
+        sec_event.key_notif.pairing_algorithm = p_data->key_notif.pairing_algorithm;
         if (p_data->key_notif.bd_name[0] == 0) {
           bta_dm_sec_cb.pin_evt = pin_evt;
           bta_dm_sec_cb.pin_bd_addr = p_data->key_notif.bd_addr;
@@ -613,7 +620,7 @@ static void bta_dm_bond_cancel_complete_cback(tBTM_STATUS result) {
   }
 }
 
-static void ble_io_req(const RawAddress& bd_addr, tBTM_IO_CAP* p_io_cap, tBTM_OOB_DATA* p_oob_data,
+static void ble_io_req(const RawAddress& bd_addr, BtIoCap* p_io_cap, tBTM_OOB_DATA* p_oob_data,
                        tBTM_LE_AUTH_REQ* p_auth_req, uint8_t* p_max_key_size,
                        tBTM_LE_KEY_TYPE* p_init_key, tBTM_LE_KEY_TYPE* p_resp_key) {
   /* Retrieve the properties from file system if possible */
@@ -630,19 +637,24 @@ static void ble_io_req(const RawAddress& bd_addr, tBTM_IO_CAP* p_io_cap, tBTM_OO
             bte_appl_cfg.ble_auth_req | (bte_appl_cfg.ble_auth_req & 0x04) | ((*p_auth_req) & 0x04);
   }
 
-  /* if OOB is not supported, this call-out function does not need to do
-   * anything
-   * otherwise, look for the OOB data associated with the address and set
-   * *p_oob_data accordingly.
-   * If the answer can not be obtained right away,
-   * set *p_oob_data to BTA_OOB_UNKNOWN and call bta_dm_ci_io_req() when the
-   * answer is available.
-   */
+  /* If OOB is not supported, this call-out function does not need to do anything.
+   * Otherwise, look for the OOB data associated with the address and set *p_oob_data accordingly.
+   * If the answer can not be obtained right away, set *p_oob_data to BTA_OOB_UNKNOWN and call
+   * bta_dm_ci_io_req() when the answer is available. */
 
-  btif_dm_set_oob_for_le_io_req(bd_addr, p_oob_data, p_auth_req);
+  *p_oob_data = btif_dm_set_oob_for_le_io_req(bd_addr, p_auth_req);
 
-  if (bte_appl_cfg.ble_io_cap <= 4) {
-    *p_io_cap = static_cast<tBTM_IO_CAP>(bte_appl_cfg.ble_io_cap);
+  /* Override priority order:
+  * 1. Application config
+  * 2. System property
+  * The override value must be valid in order to be applied.
+  */
+  if (bte_appl_cfg.ble_io_cap <= kBtIoCapLeMax) {
+    *p_io_cap = static_cast<BtIoCap>(bte_appl_cfg.ble_io_cap);
+  } else {
+    if (com_android_bluetooth_flags_btm_iocaps_sysprop_override()) {
+      *p_io_cap = bta_dm_le_iocap_from_sysprop();
+    }
   }
 
   if (bte_appl_cfg.ble_init_key <= BTM_BLE_INITIATOR_KEY_SIZE) {
@@ -655,6 +667,34 @@ static void ble_io_req(const RawAddress& bd_addr, tBTM_IO_CAP* p_io_cap, tBTM_OO
 
   if (bte_appl_cfg.ble_max_key_size > 7 && bte_appl_cfg.ble_max_key_size <= 16) {
     *p_max_key_size = bte_appl_cfg.ble_max_key_size;
+  }
+}
+
+/**
+ * Returns GAP IO capabilities if defined from system property, to be used for LE Pairing.
+ *
+ * For backwards compatibility, defaults to BtIoCap::KEYBOARD_DISPLAY if the system property value
+ * is invalid or undefined.
+ */
+static BtIoCap bta_dm_le_iocap_from_sysprop() {
+  std::optional<android::sysprop::bluetooth::Core::gap_io_capabilities_values> sysprop_value =
+          android::sysprop::bluetooth::Core::gap_io_capabilities();
+  if (!sysprop_value.has_value()) {
+    return BtIoCap::KEYBOARD_DISPLAY;
+  }
+  switch (sysprop_value.value()) {
+    case android::sysprop::bluetooth::Core::gap_io_capabilities_values::NONE:
+      return BtIoCap::NO_INPUT_NO_OUTPUT;
+    case android::sysprop::bluetooth::Core::gap_io_capabilities_values::DISPLAY_ONLY:
+      return BtIoCap::DISPLAY_ONLY;
+    case android::sysprop::bluetooth::Core::gap_io_capabilities_values::DISPLAY_YESNO:
+      return BtIoCap::DISPLAY_YES_NO;
+    case android::sysprop::bluetooth::Core::gap_io_capabilities_values::KEYBOARD_ONLY:
+      return BtIoCap::KEYBOARD_ONLY;
+    case android::sysprop::bluetooth::Core::gap_io_capabilities_values::KEYBOARD_DISPLAY:
+      return BtIoCap::KEYBOARD_DISPLAY;
+    default:
+      return BtIoCap::KEYBOARD_DISPLAY;
   }
 }
 
@@ -694,6 +734,7 @@ static tBTM_STATUS bta_dm_ble_smp_cback(tBTM_LE_EVT event, const RawAddress& bda
       bd_name_from_char_pointer(sec_event.ble_req.bd_name,
                                 get_btm_client_interface().security.BTM_SecReadDevName(bda));
       sec_event.ble_req.dev_class = dev_class;
+      sec_event.ble_req.pairing_algorithm = p_data->pairing_algorithm;
       bta_dm_sec_cb.p_sec_cback(BTA_DM_BLE_CONSENT_REQ_EVT, &sec_event);
       break;
 
@@ -702,6 +743,7 @@ static tBTM_STATUS bta_dm_ble_smp_cback(tBTM_LE_EVT event, const RawAddress& bda
       bd_name_from_char_pointer(sec_event.ble_req.bd_name,
                                 get_btm_client_interface().security.BTM_SecReadDevName(bda));
       sec_event.ble_req.dev_class = dev_class;
+      sec_event.ble_req.pairing_algorithm = p_data->pairing_algorithm;
       bta_dm_sec_cb.p_sec_cback(BTA_DM_BLE_SEC_REQ_EVT, &sec_event);
       break;
 
@@ -711,6 +753,7 @@ static tBTM_STATUS bta_dm_ble_smp_cback(tBTM_LE_EVT event, const RawAddress& bda
                                 get_btm_client_interface().security.BTM_SecReadDevName(bda));
       sec_event.key_notif.dev_class = dev_class;
       sec_event.key_notif.passkey = p_data->key_notif;
+      sec_event.key_notif.pairing_algorithm = p_data->pairing_algorithm;
       bta_dm_sec_cb.p_sec_cback(BTA_DM_BLE_PASSKEY_NOTIF_EVT, &sec_event);
       break;
 
@@ -719,6 +762,7 @@ static tBTM_STATUS bta_dm_ble_smp_cback(tBTM_LE_EVT event, const RawAddress& bda
       bd_name_from_char_pointer(sec_event.pin_req.bd_name,
                                 get_btm_client_interface().security.BTM_SecReadDevName(bda));
       sec_event.pin_req.dev_class = dev_class;
+      sec_event.pin_req.pairing_algorithm = p_data->pairing_algorithm;
       bta_dm_sec_cb.p_sec_cback(BTA_DM_BLE_PASSKEY_REQ_EVT, &sec_event);
       break;
 
@@ -727,6 +771,7 @@ static tBTM_STATUS bta_dm_ble_smp_cback(tBTM_LE_EVT event, const RawAddress& bda
       bd_name_from_char_pointer(sec_event.rmt_oob.bd_name,
                                 get_btm_client_interface().security.BTM_SecReadDevName(bda));
       sec_event.rmt_oob.dev_class = dev_class;
+      sec_event.rmt_oob.pairing_algorithm = p_data->pairing_algorithm;
       bta_dm_sec_cb.p_sec_cback(BTA_DM_BLE_OOB_REQ_EVT, &sec_event);
       break;
 
@@ -736,11 +781,13 @@ static tBTM_STATUS bta_dm_ble_smp_cback(tBTM_LE_EVT event, const RawAddress& bda
                                 get_btm_client_interface().security.BTM_SecReadDevName(bda));
       sec_event.key_notif.dev_class = dev_class;
       sec_event.key_notif.passkey = p_data->key_notif;
+      sec_event.key_notif.pairing_algorithm = p_data->pairing_algorithm;
       bta_dm_sec_cb.p_sec_cback(BTA_DM_BLE_NC_REQ_EVT, &sec_event);
       break;
 
     case BTM_LE_SC_OOB_REQ_EVT:
       sec_event.rmt_oob.bd_addr = bda;
+      sec_event.rmt_oob.pairing_algorithm = p_data->pairing_algorithm;
       bta_dm_sec_cb.p_sec_cback(BTA_DM_BLE_SC_OOB_REQ_EVT, &sec_event);
       break;
 

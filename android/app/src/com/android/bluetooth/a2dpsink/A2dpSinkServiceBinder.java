@@ -27,8 +27,9 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.IBluetoothA2dpSink;
 import android.content.AttributionSource;
 
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
-import com.android.bluetooth.btservice.ProfileService.IProfileServiceBinder;
+import com.android.bluetooth.profile.ProfileService.IProfileServiceBinder;
 
 import java.util.Collections;
 import java.util.List;
@@ -55,33 +56,13 @@ class A2dpSinkServiceBinder extends IBluetoothA2dpSink.Stub implements IProfileS
             return service;
         }
 
-        if (!Utils.checkServiceAvailable(service, TAG)
+        if (!Util.checkProfileAvailable(service, TAG)
                 || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
-                || !Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
+                || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
             return null;
         }
 
         return service;
-    }
-
-    @Override
-    public boolean connect(BluetoothDevice device, AttributionSource source) {
-        A2dpSinkService service = getService(source);
-        if (service == null) {
-            return false;
-        }
-
-        service.enforceCallingOrSelfPermission(BLUETOOTH_PRIVILEGED, null);
-        return service.connect(device);
-    }
-
-    @Override
-    public boolean disconnect(BluetoothDevice device, AttributionSource source) {
-        A2dpSinkService service = getService(source);
-        if (service == null) {
-            return false;
-        }
-        return service.disconnect(device);
     }
 
     @Override

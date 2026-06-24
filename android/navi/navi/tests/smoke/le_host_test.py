@@ -13,11 +13,13 @@
 #  limitations under the License.
 
 import asyncio
+import contextlib
 import enum
 import itertools
 import uuid
 
 from bumble import core
+from bumble import data_types
 from bumble import device
 from bumble import hci
 from mobly import test_runner
@@ -26,6 +28,7 @@ from navi.tests import navi_test_base
 from navi.utils import android_constants
 from navi.utils import bl4a_api
 from navi.utils import pyee_extensions
+from navi.utils import retry
 
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _MIN_ADVERTISING_INTERVAL_MS = 20
@@ -37,6 +40,7 @@ _AdvertisingData = core.AdvertisingData
 
 class _AdvertisingVariant(enum.Enum):
     LEGACY_NO_ADV_DATA = enum.auto()
+    LEGACY_CCCDK_SERVICE_UUID_AND_DATA = enum.auto()
     EXTENDED_ADV_DATA_1_BYTES = enum.auto()
     EXTENDED_ADV_DATA_200_BYTES = enum.auto()
 
@@ -82,7 +86,7 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
             gatt_client = await self.dut.bl4a.connect_gatt_client(
                 address=ref_address,
                 transport=android_constants.Transport.LE,
-                address_type=ref_address_type,
+                address_type=android_constants.AddressTypeStatus(ref_address_type.value),
             )
             await dut_cb.wait_for_event(event=bl4a_api.AclConnected(
                 address=ref_address, transport=android_constants.Transport.LE),)
@@ -133,6 +137,7 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
 
     @navi_test_base.parameterized(
         _AdvertisingVariant.LEGACY_NO_ADV_DATA,
+        _AdvertisingVariant.LEGACY_CCCDK_SERVICE_UUID_AND_DATA,
         _AdvertisingVariant.EXTENDED_ADV_DATA_1_BYTES,
         _AdvertisingVariant.EXTENDED_ADV_DATA_200_BYTES,
     )
@@ -147,6 +152,10 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
     Args:
       ref_advertising_variant: advertising variant of REF device.
     """
+        scan_filter = bl4a_api.ScanFilter(
+            device=self.ref.address,
+            address_type=android_constants.AddressTypeStatus.PUBLIC,
+        )
         match ref_advertising_variant:
             case _AdvertisingVariant.LEGACY_NO_ADV_DATA:
                 advertising_data = b""
@@ -161,6 +170,22 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
             case _AdvertisingVariant.EXTENDED_ADV_DATA_200_BYTES:
                 advertising_data = bytes(200)
                 advertising_properties = device.AdvertisingEventProperties(is_connectable=True,)
+            case _AdvertisingVariant.LEGACY_CCCDK_SERVICE_UUID_AND_DATA:
+                advertising_data = bytes(
+                    core.AdvertisingData([
+                        data_types.CompleteListOf16BitServiceUUIDs([core.UUID("FFF5")]),
+                        data_types.ServiceData128BitUUID(
+                            core.UUID("5810bbc0-b499-11e9-a2a3-2a2ae2dbcce4"),
+                            bytes.fromhex("01") + bytes.fromhex("0002"),
+                        ),
+                    ]))
+                advertising_properties = device.AdvertisingEventProperties(
+                    is_connectable=True,
+                    is_scannable=True,
+                    is_legacy=True,
+                )
+                scan_filter = bl4a_api.ScanFilter(
+                    service_uuids="0000fff5-0000-1000-8000-00805f9b34fb")
             case _:
                 self.fail(f"Invalid advertising variant {ref_advertising_variant}.")
 
@@ -177,10 +202,7 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
         # [DUT] Start scanning.
         with self.dut.bl4a.start_scanning(
                 scan_settings=bl4a_api.ScanSettings(legacy=False,),
-                scan_filter=bl4a_api.ScanFilter(
-                    device=self.ref.address,
-                    address_type=android_constants.AddressTypeStatus.PUBLIC,
-                ),
+                scan_filter=scan_filter,
         ) as scan_cb:
             # [DUT] Wait for advertising report(scan result) from REF.
             event = await scan_cb.wait_for_event(bl4a_api.ScanResult)
@@ -314,6 +336,95 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
                 case _:
                     self.fail(f"Invalid address type {own_address_type}.")
 
+    async def test_periodic_advertising(self) -> None:
+        """Tests periodic advertising.
+
+    Test steps:
+      1. Start advertising on DUT.
+      2. Start scanning on REF.
+      3. Wait for matched scan result.
+      4. Create PA sync on REF.
+      5. Wait for PA sync establishment.
+      6. Wait for periodic advertisement from REF.
+      7. Check that the periodic advertisement data contains the service UUID
+      from the periodic advertising data.
+    """
+        if not self.dut.bt.isLePeriodicAdvertisingSupported():
+            self.skipTest("DUT does not support periodic advertising.")
+
+        # Generate a random UUID for testing.
+        service_uuid = str(uuid.uuid4())
+        service_uuid_2 = str(uuid.uuid4())
+
+        self.logger.info("[DUT] Start advertising with service UUID.")
+        advertising_set = await self.dut.bl4a.start_extended_advertising_set(
+            bl4a_api.AdvertisingSetParameters(),
+            bl4a_api.AdvertisingData(service_uuids=[service_uuid]),
+            periodic_advertising_parameters=bl4a_api.PeriodicAdvertisingParameters(
+                interval=100,
+                include_tx_power_level=True,
+            ),
+            periodic_advertising_data=bl4a_api.AdvertisingData(service_uuids=[service_uuid_2]),
+        )
+        self.test_case_context.enter_context(advertising_set)
+
+        # [REF] Scan for DUT.
+        advertisements = asyncio.Queue[device.Advertisement]()
+
+        @self.ref.device.on(self.ref.device.EVENT_ADVERTISEMENT)
+        def _(adv: device.Advertisement) -> None:
+            if (service_uuids := adv.data.get(
+                    _AdvertisingData.Type.COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS)
+               ) and service_uuid in service_uuids:
+                advertisements.put_nowait(adv)
+
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT_SECONDS):
+            self.logger.info("[REF] Start scanning")
+            await self.ref.device.start_scanning()
+            self.logger.info("[REF] Wait for advertising report from DUT.")
+            advertisement = await advertisements.get()
+
+        # Periodic Synchronization may fail, so retry the process.
+        @retry.retry_on_exception()
+        async def sync_pa() -> device.PeriodicAdvertisingSync:
+            self.logger.info("[REF] Creating periodic advertising sync.")
+            pa_sync = await self.ref.device.create_periodic_advertising_sync(
+                advertiser_address=advertisement.address, sid=advertisement.sid)
+            if pa_sync.state != pa_sync.State.ESTABLISHED:
+                pa_sync_result = asyncio.get_running_loop().create_future()
+                pa_sync.once(pa_sync.EVENT_ESTABLISHMENT, lambda: pa_sync_result.set_result(None))
+                pa_sync.once(
+                    pa_sync.EVENT_ERROR,
+                    lambda: pa_sync_result.set_exception(hci.HCI_Error(pa_sync.status)),
+                )
+                self.logger.info("[REF] Waiting for PA sync establishment.")
+                try:
+                    await pa_sync_result
+                finally:
+                    if pa_sync.state == pa_sync.State.PENDING:
+                        self.logger.info("[REF] Cancel PA sync.")
+                        await pa_sync.terminate()
+            return pa_sync
+
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT_SECONDS):
+            pa_sync = await sync_pa()
+            periodic_advertisements = asyncio.Queue[device.PeriodicAdvertisement]()
+            pa_sync.on(
+                pa_sync.EVENT_PERIODIC_ADVERTISEMENT,
+                periodic_advertisements.put_nowait,
+            )
+            self.logger.info("[REF] Wait for periodic advertisement.")
+            periodic_advertisement = await periodic_advertisements.get()
+            if not periodic_advertisement.data:  # pytype: disable=attribute-error
+                self.fail("Periodic advertisement data is empty.")
+            # Check that the periodic advertisement data contains the service UUID
+            # from the periodic advertising data.
+            self.assertEqual(
+                periodic_advertisement.data.get(  # pytype: disable=attribute-error
+                    _AdvertisingData.Type.COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS),
+                [service_uuid_2],
+            )
+
     @navi_test_base.retry(max_count=2)
     async def test_le_discovery(self) -> None:
         """Test discover LE devices.
@@ -325,7 +436,8 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
     """
         with self.dut.bl4a.register_callback(bl4a_api.Module.ADAPTER) as dut_cb:
 
-            await self.ref.device.set_scan_enable(inquiry_scan_enabled=0, page_scan_enabled=0)
+            await self.ref.device.set_scan_enable(inquiry_scan_enabled=False,
+                                                  page_scan_enabled=False)
             # [REF] Start advertising.
             await self.ref.device.start_advertising(
                 own_address_type=_OwnAddressType.PUBLIC,
@@ -382,13 +494,17 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
             identity_address = self.ref.address
             identity_address_type = android_constants.AddressTypeStatus.PUBLIC
 
-        self.logger.info("[DUT] Pair with REF.")
-        await self.le_connect_and_pair(identity_address_type)
-        ref_dut_acl = list(self.ref.device.connections.values())[0]
-
-        self.logger.info("[REF] Disconnect.")
         with self.dut.bl4a.register_callback(bl4a_api.Module.ADAPTER) as dut_cb:
-            await ref_dut_acl.disconnect()
+            self.logger.info("[DUT] Pair with REF.")
+            await self.le_connect_and_pair(identity_address_type)
+
+            if ref_dut_acl := self.ref.device.find_connection_by_bd_addr(
+                    hci.Address(self.dut.address, hci.AddressType.PUBLIC_DEVICE),
+                    core.BT_LE_TRANSPORT,
+            ):
+                self.logger.info("[REF] Disconnect.")
+                with contextlib.suppress(hci.HCI_StatusError):
+                    await ref_dut_acl.disconnect()
             await dut_cb.wait_for_event(bl4a_api.AclDisconnected)
 
         self.logger.info("[REF] Start advertising.")
@@ -405,6 +521,102 @@ class LeHostTest(navi_test_base.TwoDevicesTestBase):
             address=identity_address,
             address_type=identity_address_type,
             transport=android_constants.Transport.LE,
+        )
+
+    async def test_scan_with_identify_address_and_irk(self) -> None:
+        """Tests that DUT can scan with identify address and IRK.
+
+    Test steps:
+      1. Generate a static address.
+      2. Start advertising on REF with RPA.
+      3. Start scanning on DUT with static address and REF's IRK.
+      4. Check that DUT can receive scan result from REF.
+    """
+        target_address = hci.Address.generate_static_address().to_string()
+        self.logger.info("[REF] Start advertising.")
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT_SECONDS):
+            await self.ref.device.start_advertising(
+                advertising_type=device.AdvertisingType.UNDIRECTED_CONNECTABLE_SCANNABLE,
+                own_address_type=hci.OwnAddressType.RESOLVABLE_OR_RANDOM,
+            )
+        self.logger.info("[DUT] Start scanning for REF with IRK.")
+        with self.dut.bl4a.start_scanning(
+                scan_settings=bl4a_api.ScanSettings(
+                    scan_mode=android_constants.BleScanMode.LOW_LATENCY,
+                    callback_type=android_constants.BleScanCallbackType.ALL_MATCHES,
+                    match_mode=android_constants.BleScanMatchMode.STICKY,
+                ),
+                scan_filter=bl4a_api.ScanFilter(
+                    device=target_address,
+                    address_type=android_constants.AddressTypeStatus.RANDOM,
+                    irk=self.ref.device.irk,
+                ),
+        ) as scan_cb:
+            # [DUT] Wait for advertising report(scan result) from REF.
+            event = await scan_cb.wait_for_event(bl4a_api.ScanResult)
+            self.assertEqual(event.address, target_address)
+
+    @navi_test_base.parameterized(
+        (android_constants.ConnectionPriority.BALANCED, 30, 50),
+        (android_constants.ConnectionPriority.HIGH, 11.25, 15),
+        (android_constants.ConnectionPriority.LOW_POWER, 100, 150),
+        (android_constants.ConnectionPriority.DCK, 30, 30),
+    )
+    async def test_le_connection_priority(
+        self,
+        priority: android_constants.ConnectionPriority,
+        min_interval: float,
+        max_interval: int,
+    ) -> None:
+        """Tests LE connection priority.
+
+    Test steps:
+      1. Pair then Disconnect with REF.
+      2. Start advertising on REF.
+      3. Start scanning on DUT.
+      4. Wait for matched scan result.
+      5. Connect to REF.
+      6. Request connection priority on DUT.
+      7. Check that the connection parameters is updated on DUT.
+
+    Args:
+      priority: connection priority to be set on DUT.
+      min_interval: minimum connection interval expected on REF.
+      max_interval: maximum connection interval expected on REF.
+    """
+        self.logger.info("[REF] Start advertising")
+        await self.ref.device.start_advertising(
+            own_address_type=hci.OwnAddressType.RANDOM,
+            advertising_type=device.AdvertisingType.UNDIRECTED_CONNECTABLE_SCANNABLE)
+        self.logger.info("[DUT] Connect GATT client to REF")
+        gatt_client = await self.dut.bl4a.connect_gatt_client(
+            address=self.ref.random_address,
+            transport=android_constants.Transport.LE,
+            address_type=android_constants.AddressTypeStatus.RANDOM,
+        )
+        self.test_case_context.push(gatt_client)
+        self.logger.info("[DUT] GATT client connected")
+
+        ref_connection = list(self.ref.device.connections.values())[0]
+        ref_connection_update_future: asyncio.Future[None] = (
+            asyncio.get_running_loop().create_future())
+        ref_connection.once(
+            ref_connection.EVENT_CONNECTION_PARAMETERS_UPDATE,
+            lambda: ref_connection_update_future.set_result(None),
+        )
+        ref_connection.once(
+            ref_connection.EVENT_CONNECTION_PARAMETERS_UPDATE_FAILURE,
+            lambda status: ref_connection_update_future.set_exception(hci.HCI_StatusError(status)),
+        )
+        self.logger.info("[DUT] Request connection priority.")
+        await gatt_client.request_connection_priority(priority)
+        self.logger.info("[REF] Wait for connection priority update.")
+        async with self.assert_not_timeout(_DEFAULT_TIMEOUT_SECONDS):
+            await ref_connection_update_future
+        self.assertBetween(
+            ref_connection.parameters.connection_interval,
+            min_interval,
+            max_interval,
         )
 
 

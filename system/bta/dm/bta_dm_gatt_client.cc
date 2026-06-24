@@ -71,7 +71,7 @@ static gatt_interface_t default_gatt_interface = {
                    BtaAppRegisterCallback cb, bool eatt_support) {
                   gatt_history_.Push(std::format("{:<32s} eatt_support:{:c}", "GATTC_AppRegister",
                                                  eatt_support ? 'T' : 'F'));
-                  BTA_GATTC_AppRegister(name, p_client_cb, cb, eatt_support);
+                  BTA_GATTC_AppRegister(name, p_client_cb, std::move(cb), eatt_support);
                 },
         .BTA_GATTC_Close =
                 [](tCONN_ID conn_id) {
@@ -97,8 +97,7 @@ static gatt_interface_t default_gatt_interface = {
                           "GATTC_Open", remote_bda, client_if, connection_type,
                           opportunistic ? 'T' : 'F'));
                   BTA_GATTC_Open(client_if, remote_bda, BLE_ADDR_PUBLIC, connection_type,
-                                 BT_TRANSPORT_LE, opportunistic, LE_PHY_1M, preferred_mtu,
-                                 prefer_relax_mode);
+                                 BT_TRANSPORT_LE, opportunistic, preferred_mtu, prefer_relax_mode);
                 },
 };
 

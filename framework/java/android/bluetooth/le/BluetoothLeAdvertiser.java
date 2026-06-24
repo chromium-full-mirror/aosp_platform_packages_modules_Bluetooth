@@ -22,6 +22,7 @@ import static android.bluetooth.BluetoothUtils.executeFromBinder;
 
 import static java.util.Objects.requireNonNull;
 
+import android.annotation.Hide;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresNoPermission;
@@ -37,7 +38,6 @@ import android.bluetooth.annotations.RequiresBluetoothAdvertisePermission;
 import android.bluetooth.annotations.RequiresLegacyBluetoothAdminPermission;
 import android.content.AttributionSource;
 import android.os.Handler;
-import android.os.IBinder;
 import android.os.Looper;
 import android.os.ParcelUuid;
 import android.os.RemoteException;
@@ -79,11 +79,8 @@ public final class BluetoothLeAdvertiser {
     private final AttributionSource mAttributionSource;
     private final Handler mHandler;
 
-    /**
-     * Use BluetoothAdapter.getLeAdvertiser() instead.
-     *
-     * @hide
-     */
+    /** Use BluetoothAdapter.getLeAdvertiser() instead. */
+    @Hide
     public BluetoothLeAdvertiser(BluetoothAdapter bluetoothAdapter) {
         mBluetoothAdapter = requireNonNull(bluetoothAdapter);
         mAttributionSource = mBluetoothAdapter.getAttributionSource();
@@ -536,8 +533,8 @@ public final class BluetoothLeAdvertiser {
      *     Advertising feature is made when it's not supported by the controller, or when
      *     maxExtendedAdvertisingEvents is used on a controller that doesn't support the LE Extended
      *     Advertising
-     * @hide
      */
+    @Hide
     @SystemApi
     @SuppressLint("ExecutorRegistration")
     @RequiresBluetoothAdvertisePermission
@@ -634,7 +631,7 @@ public final class BluetoothLeAdvertiser {
             return;
         }
 
-        IAdvertisingSetCallback wrapped = wrap(callback, handler);
+        IAdvertisingSetCallback wrapped = wrap(advertise, callback, handler);
         if (mCallbackWrappers.putIfAbsent(callback, wrapped) != null) {
             throw new IllegalArgumentException(
                     "callback instance already associated with advertising");
@@ -692,11 +689,8 @@ public final class BluetoothLeAdvertiser {
         }
     }
 
-    /**
-     * Cleans up advertisers. Should be called when bluetooth is down.
-     *
-     * @hide
-     */
+    /** Cleans up advertisers. Should be called when bluetooth is down. */
+    @Hide
     @RequiresNoPermission
     public void cleanup() {
         mLegacyAdvertisers.clear();
@@ -775,12 +769,12 @@ public final class BluetoothLeAdvertiser {
         return array == null ? 0 : array.length;
     }
 
-    IAdvertisingSetCallback wrap(AdvertisingSetCallback callback, Handler handler) {
+    private IAdvertisingSetCallback wrap(
+            IBluetoothAdvertise advertise, AdvertisingSetCallback callback, Handler handler) {
         return new IAdvertisingSetCallback.Stub() {
             @Override
             @RequiresNoPermission // Callback to app
-            public void onAdvertisingSetStarted(
-                    IBinder advertiseBinder, int advertiserId, int txPower, int status) {
+            public void onAdvertisingSetStarted(int advertiserId, int txPower, int status) {
                 executeFromBinder(
                         handler::post,
                         () -> {
@@ -792,7 +786,7 @@ public final class BluetoothLeAdvertiser {
 
                             AdvertisingSet advertisingSet =
                                     new AdvertisingSet(
-                                            IBluetoothAdvertise.Stub.asInterface(advertiseBinder),
+                                            advertise,
                                             advertiserId,
                                             mBluetoothAdapter,
                                             mAttributionSource);

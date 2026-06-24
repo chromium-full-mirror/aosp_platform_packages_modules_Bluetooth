@@ -72,6 +72,8 @@ inline std::string avdt_result_text(const tAVDT_RESULT& result) {
   }
 }
 
+std::string DumpAvdtCodecInfo(const uint8_t* data);
+
 /* The index to access the codec type in codec_info[]. */
 #define AVDT_CODEC_TYPE_INDEX 2
 
@@ -591,8 +593,8 @@ void AVDT_AbortReq(uint8_t handle);
  * Returns          AVDT_SUCCESS if successful, otherwise error.
  *
  ******************************************************************************/
-uint16_t AVDT_CreateStream(uint8_t peer_id, uint8_t* p_handle,
-                           const AvdtpStreamConfig& avdtp_stream_config);
+tAVDT_RESULT AVDT_CreateStream(uint8_t peer_id, uint8_t* p_handle,
+                               const AvdtpStreamConfig& avdtp_stream_config);
 
 /*******************************************************************************
  *

@@ -30,10 +30,8 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothLeAudioCodecConfig;
 import android.bluetooth.BluetoothProfile;
-import android.bluetooth.BluetoothProtoEnums;
 import android.bluetooth.BluetoothSinkAudioPolicy;
 import android.bluetooth.BluetoothStatusCodes;
-import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -42,8 +40,7 @@ import android.os.Message;
 import android.util.Log;
 
 import com.android.bluetooth.BluetoothEventLogger;
-import com.android.bluetooth.BluetoothStatsLog;
-import com.android.bluetooth.Utils;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.flags.Flags;
 import com.android.internal.annotations.GuardedBy;
@@ -63,14 +60,14 @@ import java.util.stream.Collectors;
  * The active device manager is responsible to handle a Room database for Bluetooth persistent data.
  */
 public class DatabaseManager {
-    private static final String TAG = Utils.BT_PREFIX + DatabaseManager.class.getSimpleName();
+    private static final String TAG = Util.BT_PREFIX + DatabaseManager.class.getSimpleName();
 
     private static final int LOAD_DATABASE_TIMEOUT_MS = 500;
     private static final int MSG_LOAD_DATABASE = 0;
     private static final int MSG_UPDATE_DATABASE = 1;
     private static final int MSG_DELETE_DATABASE = 2;
     private static final int MSG_CLEAR_DATABASE = 100;
-    private static final String LOCAL_STORAGE = "LocalStorage";
+    public static final String LOCAL_STORAGE = "LocalStorage";
 
     private final AdapterService mAdapterService;
     private HandlerThread mHandlerThread = null;
@@ -85,6 +82,7 @@ public class DatabaseManager {
 
     /** Constructor of the DatabaseManager */
     public DatabaseManager(AdapterService service) {
+        if (Flags.mainlineBetaStorage()) throw new IllegalStateException("mainlineBetaStorage");
         mAdapterService = requireNonNull(service);
     }
 
@@ -197,7 +195,6 @@ public class DatabaseManager {
                 Log.d(TAG, "setCustomMeta: metadata not changed.");
                 return true;
             }
-            logManufacturerInfo(device, key, newValue);
             logMetadataChange(data, "setCustomMeta key=" + key);
             data.setCustomizedMeta(key, newValue);
 
@@ -550,10 +547,12 @@ public class DatabaseManager {
 
         // Only update is_active_a2dp_device if an a2dp device is connected
         if (isActiveA2dp) {
+            Log.d(TAG, "Update " + device + " as A2DP active device");
             metadata.is_active_a2dp_device = true;
         }
 
         if (isActiveHfp) {
+            Log.d(TAG, "Update " + device + " as HFP active device");
             metadata.isActiveHfpDevice = true;
         }
 
@@ -597,21 +596,19 @@ public class DatabaseManager {
     }
 
     /**
-     * Sets device profileId's active status to false if currently true
+     * Sets device profile's active status to false if currently true
      *
      * @param device is the remote bluetooth device with which we have disconnected
-     * @param profileId see {@link BluetoothProfile}
+     * @param profile see {@link BluetoothProfile}
      */
-    public void setDisconnection(BluetoothDevice device, int profileId) {
+    public void setDisconnection(BluetoothDevice device, int profile) {
         if (device == null) {
-            Log.e(TAG, "setDisconnection: device is null, profileId: " + getProfileName(profileId));
+            Log.e(TAG, "setDisconnection: device is null, profile: " + getProfileName(profile));
             return;
         }
-        Log.d(
-                TAG,
-                "setDisconnection: device " + device + "profileId: " + getProfileName(profileId));
+        Log.d(TAG, "setDisconnection(" + device + ", " + getProfileName(profile) + ")");
 
-        if (profileId != BluetoothProfile.A2DP && profileId != BluetoothProfile.HEADSET) {
+        if (profile != BluetoothProfile.A2DP && profile != BluetoothProfile.HEADSET) {
             // there is no change on metadata when profile is neither A2DP nor Headset
             return;
         }
@@ -623,20 +620,14 @@ public class DatabaseManager {
                 return;
             }
             Metadata metadata = mMetadataCache.get(address);
-            if (profileId == BluetoothProfile.A2DP && metadata.is_active_a2dp_device) {
+            if (profile == BluetoothProfile.A2DP && metadata.is_active_a2dp_device) {
                 metadata.is_active_a2dp_device = false;
-                Log.d(
-                        TAG,
-                        "setDisconnection: Updating is_active_device to false for device: "
-                                + device);
+                Log.d(TAG, "Update " + device + ". It is no longer an A2DP active device");
                 updateDatabase(metadata);
             }
-            if (profileId == BluetoothProfile.HEADSET && metadata.isActiveHfpDevice) {
+            if (profile == BluetoothProfile.HEADSET && metadata.isActiveHfpDevice) {
                 metadata.isActiveHfpDevice = false;
-                Log.d(
-                        TAG,
-                        "setDisconnection: Updating isActiveHfpDevice to false for device: "
-                                + device);
+                Log.d(TAG, "Update " + device + ". It is no longer a HFP active device");
                 updateDatabase(metadata);
             }
         }
@@ -1196,46 +1187,8 @@ public class DatabaseManager {
         mHandler.obtainMessage(MSG_DELETE_DATABASE, data.getAddress()).sendToTarget();
     }
 
-    private void logManufacturerInfo(BluetoothDevice device, int key, byte[] bytesValue) {
-        String callingApp =
-                mAdapterService.getPackageManager().getNameForUid(Binder.getCallingUid());
-        String manufacturerName = "";
-        String modelName = "";
-        String hardwareVersion = "";
-        String softwareVersion = "";
-        switch (key) {
-            case BluetoothDevice.METADATA_MANUFACTURER_NAME ->
-                    manufacturerName = Utils.byteArrayToUtf8String(bytesValue);
-            case BluetoothDevice.METADATA_MODEL_NAME ->
-                    modelName = Utils.byteArrayToUtf8String(bytesValue);
-            case BluetoothDevice.METADATA_HARDWARE_VERSION ->
-                    hardwareVersion = Utils.byteArrayToUtf8String(bytesValue);
-            case BluetoothDevice.METADATA_SOFTWARE_VERSION ->
-                    softwareVersion = Utils.byteArrayToUtf8String(bytesValue);
-            default -> {
-                // Do not log anything if metadata doesn't fall into above categories
-                return;
-            }
-        }
-        String[] macAddress = device.getAddress().split(":");
-        BluetoothStatsLog.write(
-                BluetoothStatsLog.BLUETOOTH_DEVICE_INFO_REPORTED,
-                mAdapterService.obfuscateAddress(device),
-                BluetoothProtoEnums.DEVICE_INFO_EXTERNAL,
-                callingApp,
-                manufacturerName,
-                modelName,
-                hardwareVersion,
-                softwareVersion,
-                mAdapterService.getMetricId(device),
-                device.getAddressType(),
-                Integer.parseInt(macAddress[0], 16),
-                Integer.parseInt(macAddress[1], 16),
-                Integer.parseInt(macAddress[2], 16));
-    }
-
     private void logMetadataChange(Metadata data, String log) {
-        String uidPid = Utils.getUidPidString();
+        String uidPid = Util.getUidPidString();
         mMetadataChangedLog.add(uidPid + ": " + data.getAnonymizedAddress() + " " + log);
     }
 

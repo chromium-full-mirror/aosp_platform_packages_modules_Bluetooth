@@ -42,7 +42,6 @@ import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.MetricsLogger;
 import com.android.bluetooth.flags.Flags;
-import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,7 +55,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /** Manages distance measurement operations and interacts with Gabeldorsche stack. */
-@VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
 public class DistanceMeasurementManager {
     private static final String TAG =
             GattUtil.TAG_PREFIX + DistanceMeasurementManager.class.getSimpleName();
@@ -71,7 +69,7 @@ public class DistanceMeasurementManager {
     private static final int CS_HIGH_FREQUENCY_INTERVAL_MS = 100;
     private static final int THREAD_WAIT_TIMEOUT_MS = 2000;
 
-    // sync with system/gd/hic/DistanceMeasurementManager
+    // sync with system/gd/hci/DistanceMeasurementManager
     private static final int INVALID_AZIMUTH_ANGLE_DEGREE = -1;
     private static final int INVALID_ALTITUDE_ANGLE_DEGREE = -91;
 
@@ -90,6 +88,7 @@ public class DistanceMeasurementManager {
 
     DistanceMeasurementManager(
             AdapterService adapterService,
+            GattService gattService,
             DistanceMeasurementNativeInterface nativeInterface,
             Looper looper) {
         mAdapterService = adapterService;
@@ -109,11 +108,14 @@ public class DistanceMeasurementManager {
             mHandler = new Handler(mHandlerThread.getLooper());
         }
 
+        var nativeCallback = new DistanceMeasurementNativeCallback(mAdapterService, this);
         mNativeInterface =
                 requireNonNullElseGet(
-                        nativeInterface, () -> new DistanceMeasurementNativeInterface(this));
+                        nativeInterface,
+                        () -> new DistanceMeasurementNativeInterface(nativeCallback));
         mNativeInterface.init();
-        mDistanceMeasurementBinder = new DistanceMeasurementBinder(adapterService, this);
+        mDistanceMeasurementBinder =
+                new DistanceMeasurementBinder(mAdapterService, gattService, this);
         mHasChannelSoundingFeature =
                 adapterService
                         .getPackageManager()
@@ -177,7 +179,7 @@ public class DistanceMeasurementManager {
             int appUid,
             DistanceMeasurementParams params,
             IDistanceMeasurementCallback callback) {
-        checkThread();
+        enforceThread();
 
         if (mIsTurnedOff) {
             Log.d(TAG, "BT is turned off, no new request is allowed.");
@@ -284,7 +286,7 @@ public class DistanceMeasurementManager {
     }
 
     int stopDistanceMeasurement(UUID uuid, BluetoothDevice device, int method, boolean timeout) {
-        checkThread();
+        enforceThread();
 
         Log.i(
                 TAG,
@@ -315,7 +317,7 @@ public class DistanceMeasurementManager {
     }
 
     int getChannelSoundingMaxSupportedSecurityLevel(BluetoothDevice remoteDevice) {
-        checkThread();
+        enforceThread();
 
         if (mHasChannelSoundingFeature && mAdapterService.isLeChannelSoundingSupported()) {
             return ChannelSoundingParams.CS_SECURITY_LEVEL_ONE;
@@ -324,7 +326,7 @@ public class DistanceMeasurementManager {
     }
 
     int getLocalChannelSoundingMaxSupportedSecurityLevel() {
-        checkThread();
+        enforceThread();
 
         if (mHasChannelSoundingFeature && mAdapterService.isLeChannelSoundingSupported()) {
             return ChannelSoundingParams.CS_SECURITY_LEVEL_ONE;
@@ -333,7 +335,7 @@ public class DistanceMeasurementManager {
     }
 
     Set<Integer> getChannelSoundingSupportedSecurityLevels() {
-        checkThread();
+        enforceThread();
 
         // TODO(b/378685103): get it from the HAL when level 4 is supported and HAL v2 is available.
         if (mHasChannelSoundingFeature && mAdapterService.isLeChannelSoundingSupported()) {
@@ -452,7 +454,7 @@ public class DistanceMeasurementManager {
     }
 
     void onDistanceMeasurementStarted(String address, int method) {
-        checkThread();
+        enforceThread();
 
         logd(
                 "onDistanceMeasurementStarted address:"
@@ -505,7 +507,7 @@ public class DistanceMeasurementManager {
     }
 
     void onDistanceMeasurementStopped(String address, int reason, int method) {
-        checkThread();
+        enforceThread();
         logd(
                 "onDistanceMeasurementStopped address:"
                         + BluetoothUtils.toAnonymizedAddress(address)
@@ -563,12 +565,14 @@ public class DistanceMeasurementManager {
             int altitudeAngle,
             int errorAltitudeAngle,
             long elapsedRealtimeNanos,
+            int remoteTxPower, // TODO(b/462311235): Use this when creating related APIs
+            int reflectorRssi, // TODO(b/462311235): Use this when creating related APIs
             int confidenceLevel,
             double delaySpreadMeters,
             int detectedAttackLevel,
             double velocityMetersPerSecond,
             int method) {
-        checkThread();
+        enforceThread();
         logd(
                 "onDistanceMeasurementResult "
                         + BluetoothUtils.toAnonymizedAddress(address)
@@ -600,6 +604,7 @@ public class DistanceMeasurementManager {
                 if (velocityMetersPerSecond >= 0) {
                     builder.setVelocityMetersPerSecond(velocityMetersPerSecond);
                 }
+                // TODO(b/459954352): Set remoteTxPower and reflectorRssi when creating APIs
                 builder.setDetectedAttackLevel(detectedAttackLevel);
                 handleCsResult(address, builder.build());
             }
@@ -700,10 +705,10 @@ public class DistanceMeasurementManager {
         }
     }
 
-    private void checkThread() {
-        if (Flags.distanceMeasurementThread()
-                && !mHandler.getLooper().isCurrentThread()
-                && !Utils.isInstrumentationTestMode()) {
+    private void enforceThread() {
+        if (Utils.isInstrumentationTestMode()) return;
+
+        if (Flags.distanceMeasurementThread() && !mHandler.getLooper().isCurrentThread()) {
             throw new IllegalStateException("Not on distance measurement thread");
         }
     }

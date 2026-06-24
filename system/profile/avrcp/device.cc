@@ -22,6 +22,8 @@
 #include <bluetooth/types/address.h>
 #include <com_android_bluetooth_flags.h>
 
+#include <algorithm>
+
 #include "abstract_message_loop.h"
 #include "array_utils.h"
 #include "avrcp_common.h"
@@ -37,6 +39,7 @@
 #include "packet/avrcp/set_absolute_volume.h"
 #include "packet/avrcp/set_addressed_player.h"
 #include "packet/avrcp/set_player_application_setting_value.h"
+#include "stack/include/main_thread.h"
 
 template <>
 struct std::formatter<bluetooth::avrcp::PlayState> : enum_formatter<bluetooth::avrcp::PlayState> {};
@@ -52,8 +55,7 @@ Device::Device(const RawAddress& bdaddr, bool avrcp13_compatibility,
                                             std::unique_ptr<::bluetooth::PacketBuilder> message)>
                        send_msg_cb,
                uint16_t ctrl_mtu, uint16_t browse_mtu)
-    : weak_ptr_factory_(this),
-      address_(bdaddr),
+    : address_(bdaddr),
       avrcp13_compatibility_(avrcp13_compatibility),
       send_message_cb_(send_msg_cb),
       ctrl_mtu_(ctrl_mtu),
@@ -129,6 +131,9 @@ void Device::VendorPacketHandler(uint8_t label, std::shared_ptr<VendorPacket> pk
                   RejectBuilder::MakeBuilder(pkt->GetCommandPdu(), Status::INVALID_PARAMETER);
           send_message(label, false, std::move(response));
           active_labels_.erase(label);
+          if (com_android_bluetooth_flags_avrcp_volumechanged_wait_for_interim()) {
+            pending_interim_labels_.erase(label);
+          }
           volume_interface_ = nullptr;
           volume_ = VOL_REGISTRATION_FAILED;
           return;
@@ -430,8 +435,20 @@ void Device::HandleGetCapabilities(uint8_t label,
   }
 }
 
+void Device::SetRcFeatures(RcFeature feature) {
+  log::info("feature={}", static_cast<std::underlying_type_t<RcFeature>>(feature));
+  peer_feature_ = feature;
+}
+
 void Device::HandleNotification(uint8_t label,
                                 const std::shared_ptr<RegisterNotificationRequest>& pkt) {
+  if (pkt->GetLength() == 0) {
+    log::error("invalid param length");
+    auto response =
+            RejectBuilder::MakeBuilder((CommandPdu)pkt->GetCommandPdu(), Status::INTERNAL_ERROR);
+    send_message(label, false, std::move(response));
+    return;
+  }
   if (!pkt->IsValid()) {
     log::warn("{}: Request packet is not valid", address_);
     auto response = RejectBuilder::MakeBuilder(pkt->GetCommandPdu(), Status::INVALID_PARAMETER);
@@ -528,6 +545,9 @@ void Device::RegisterVolumeChanged() {
     if (active_labels_.find(i) == active_labels_.end()) {
       active_labels_.insert(i);
       label = i;
+      if (com_android_bluetooth_flags_avrcp_volumechanged_wait_for_interim()) {
+        pending_interim_labels_.insert(i);
+      }
       break;
     }
   }
@@ -552,6 +572,9 @@ void Device::HandleVolumeChanged(uint8_t label,
   if (pkt->GetCType() == CType::REJECTED) {
     // Disable Absolute Volume
     active_labels_.erase(label);
+    if (com_android_bluetooth_flags_avrcp_volumechanged_wait_for_interim()) {
+      pending_interim_labels_.erase(label);
+    }
     volume_ = VOL_REGISTRATION_FAILED;
     volume_interface_->DeviceConnected(GetAddress());
     return;
@@ -559,9 +582,20 @@ void Device::HandleVolumeChanged(uint8_t label,
 
   // We only update on interim and just re-register on changes.
   if (!pkt->IsInterim()) {
+    if (com_android_bluetooth_flags_avrcp_volumechanged_wait_for_interim() &&
+        pending_interim_labels_.find(label) != pending_interim_labels_.end()) {
+      log::warn("{}: received Changed event before Interim", address_);
+      return;
+    }
+
     active_labels_.erase(label);
     RegisterVolumeChanged();
     return;
+  }
+
+  // Remove label from pending_interim_labels_
+  if (com_android_bluetooth_flags_avrcp_volumechanged_wait_for_interim()) {
+    pending_interim_labels_.erase(label);
   }
 
   // Handle the first volume update.
@@ -682,6 +716,12 @@ void Device::TrackChangedNotificationResponse(uint8_t label, bool interim, std::
 
   auto response = RegisterNotificationResponseBuilder::MakeTrackChangedBuilder(interim, uid);
   send_message_cb_.Run(label, false, std::move(response));
+
+  // Send pending track changed Changed notification
+  if (interim && pending_track_changed_) {
+    log::warn("{}: Sending pending TrackChange notification", address_);
+    HandleTrackUpdate();
+  }
 }
 
 void Device::PlaybackStatusNotificationResponse(uint8_t label, bool interim, PlayStatus status) {
@@ -707,6 +747,21 @@ void Device::PlaybackStatusNotificationResponse(uint8_t label, bool interim, Pla
   if (!interim && state_to_send == last_play_status_.state) {
     log::verbose("Not sending notification due to no state update {}", address_);
     return;
+  }
+
+  log::verbose("last playstate: {}, new playstate: {}, interim: {}", last_play_status_.state,
+               state_to_send, interim);
+
+  // If the state has changed after the last changed event and before the interim, send the last
+  // state as interim and the new state as changed.
+  if (interim && last_play_status_.state != state_to_send &&
+      (last_play_status_.state == PlayState::PAUSED ||
+       last_play_status_.state == PlayState::PLAYING)) {
+    log::verbose("Sending interim with last state and changed with new state");
+    auto lastresponse = RegisterNotificationResponseBuilder::MakePlaybackStatusBuilder(
+            interim, last_play_status_.state);
+    send_message_cb_.Run(label, false, std::move(lastresponse));
+    interim = false;
   }
 
   last_play_status_.state = state_to_send;
@@ -754,6 +809,19 @@ void Device::PlaybackPosNotificationResponse(uint8_t label, bool interim, PlaySt
     log::verbose("Queue next play position update");
     play_pos_update_cb_.Reset(
             base::Bind(&Device::HandlePlayPosUpdate, weak_ptr_factory_.GetWeakPtr()));
+    if (com::android::bluetooth::flags::replace_message_loop_thread_with_gd_handler()) {
+      /**
+       * The `replace_message_loop_thread_with_gd_handler` flag converts libchrome `base::Thread`
+       * usage to `GdThread`. This makes `btbase::AbstractMessageLoop::current_task_runner()` return
+       * `NULL`, so we must post delayed tasks directly to the main thread.
+       *
+       * Considering `play_pos_interval_` is in `seconds` unit.
+       */
+      do_in_main_thread_delayed(play_pos_update_cb_.callback(),
+                                std::chrono::microseconds(play_pos_interval_ * 1000000));
+      return;
+    }
+
     btbase::AbstractMessageLoop::current_task_runner()->PostDelayedTask(
             FROM_HERE, play_pos_update_cb_.callback(),
 #if BASE_VER < 931007
@@ -952,6 +1020,16 @@ void Device::HandlePlayItem(uint8_t label, std::shared_ptr<PlayItemRequest> pkt)
   if (!pkt->IsValid()) {
     log::warn("{}: Request packet is not valid", address_);
     auto response = RejectBuilder::MakeBuilder(pkt->GetCommandPdu(), Status::INVALID_PARAMETER);
+    send_message(label, false, std::move(response));
+    return;
+  }
+
+  if (com_android_bluetooth_flags_fix_play_item_non_playable_folder() &&
+      pkt->GetScope() == Scope::VFS &&
+      non_playable_vfs_uids_.find(pkt->GetUid()) != non_playable_vfs_uids_.end()) {
+    log::warn("{}: Request to play non-playable folder", address_);
+    auto response =
+            RejectBuilder::MakeBuilder(pkt->GetCommandPdu(), Status::FOLDER_ITEM_NOT_PLAYABLE);
     send_message(label, false, std::move(response));
     return;
   }
@@ -1441,11 +1519,25 @@ void Device::GetItemAttributesVFSResponse(uint8_t label,
 void Device::GetMediaPlayerListResponse(uint8_t label, std::shared_ptr<GetFolderItemsRequest> pkt,
                                         uint16_t curr_player,
                                         std::vector<MediaPlayerInfo> players) {
-  log::verbose("");
+  log::info("");
 
   if (players.size() == 0) {
     auto no_items_rsp = GetFolderItemsResponseBuilder::MakePlayerListBuilder(
+            Status::NO_AVAILABLE_PLAYERS, 0x0000, browse_mtu_);
+    send_message(label, true, std::move(no_items_rsp));
+    return;
+  } else if (pkt->GetStartItem() >= players.size()) {
+    auto no_items_rsp = GetFolderItemsResponseBuilder::MakePlayerListBuilder(
             Status::RANGE_OUT_OF_BOUNDS, 0x0000, browse_mtu_);
+    send_message(label, true, std::move(no_items_rsp));
+    return;
+  }
+
+  if (RcFeature::RC_FEAT_UNDEFINED != peer_feature_ &&
+      RcFeature::RC_FEAT_NONE == (peer_feature_ & RcFeature::RC_FEAT_BROWSE)) {
+    log::warn("Browsing is not supported, respond with No Available Players.");
+    auto no_items_rsp = GetFolderItemsResponseBuilder::MakePlayerListBuilder(
+            Status::NO_AVAILABLE_PLAYERS, 0x0000, browse_mtu_);
     send_message(label, true, std::move(no_items_rsp));
     return;
   }
@@ -1499,7 +1591,11 @@ void Device::GetVFSListResponse(uint8_t label, std::shared_ptr<GetFolderItemsReq
   // an operation.
   for (const auto& item : items) {
     if (item.type == ListItem::FOLDER) {
-      vfs_ids_.insert(item.folder.media_id);
+      uint64_t item_uid = vfs_ids_.insert(item.folder.media_id);
+      if (com_android_bluetooth_flags_fix_play_item_non_playable_folder() &&
+          !item.folder.is_playable) {
+        non_playable_vfs_uids_.insert(item_uid);
+      }
     } else if (item.type == ListItem::SONG) {
       vfs_ids_.insert(item.song.media_id);
     }
@@ -1630,8 +1726,10 @@ void Device::SetBrowsedPlayerResponse(uint8_t label, std::shared_ptr<SetBrowsedP
   current_path_ = std::stack<std::string>();
   current_path_.push(current_path);
 
+  uint8_t folder_depth = std::max<uint8_t>(current_path_.size() - 1, 0);
+
   auto response = SetBrowsedPlayerResponseBuilder::MakeBuilder(Status::NO_ERROR, 0x0000, num_items,
-                                                               0, current_path);
+                                                               folder_depth, current_path);
   send_message(label, true, std::move(response));
 }
 
@@ -1675,9 +1773,11 @@ void Device::HandleTrackUpdate() {
   log::verbose("");
   if (!track_changed_.first) {
     log::warn("Device is not registered for track changed updates");
+    pending_track_changed_ = true;
     return;
   }
 
+  pending_track_changed_ = false;
   media_interface_->GetNowPlayingList(base::Bind(&Device::TrackChangedNotificationResponse,
                                                  weak_ptr_factory_.GetWeakPtr(),
                                                  track_changed_.second, false));
@@ -1845,6 +1945,8 @@ void Device::DeviceDisconnected() {
   // to reset the local volume var to be sure we send the correct value
   // to the remote device on the next connection.
   volume_ = VOL_NOT_SUPPORTED;
+
+  pending_track_changed_ = false;
 }
 
 static std::string volumeToStr(int8_t volume) {

@@ -52,8 +52,6 @@
 #include "stack/include/btm_iso_api.h"
 #include "stack/include/btm_sec_api_types.h"
 #include "stack/include/btm_status.h"
-#include "stack/include/btu_hcif.h"
-#include "stack/include/dev_hci_link_interface.h"
 #include "stack/include/hci_error_code.h"
 #include "stack/include/hci_evt_length.h"
 #include "stack/include/inq_hci_link_interface.h"
@@ -71,7 +69,6 @@ using bluetooth::hci::IsoManager;
 static void btu_hcif_authentication_comp_evt(uint8_t* p);
 static void btu_hcif_encryption_change_evt(uint8_t* p);
 static void btu_hcif_encryption_change_evt_v2(uint8_t* p);
-static void btu_hcif_read_rmt_ext_features_comp_evt(uint8_t* p, uint8_t evt_len);
 static void btu_hcif_command_complete_evt(BT_HDR* response, void* context);
 static void btu_hcif_command_status_evt(uint8_t status, BT_HDR* command, void* context);
 static void btu_hcif_mode_change_evt(uint8_t* p);
@@ -238,9 +235,6 @@ static void btu_hcif_process_event(uint8_t /* controller_id */, const BT_HDR* p_
       break;
     case HCI_ENCRYPTION_KEY_REFRESH_COMP_EVT:
       btu_hcif_encryption_key_refresh_cmpl_evt(p);
-      break;
-    case HCI_READ_RMT_EXT_FEATURES_COMP_EVT:
-      btu_hcif_read_rmt_ext_features_comp_evt(p, hci_evt_len);
       break;
     case HCI_COMMAND_COMPLETE_EVT:
       log::error(
@@ -789,30 +783,6 @@ static void btu_hcif_encryption_change_evt_v2(uint8_t* p) {
 
 /*******************************************************************************
  *
- * Function         btu_hcif_read_rmt_ext_features_comp_evt
- *
- * Description      Process event HCI_READ_RMT_EXT_FEATURES_COMP_EVT
- *
- * Returns          void
- *
- ******************************************************************************/
-static void btu_hcif_read_rmt_ext_features_comp_evt(uint8_t* p, uint8_t evt_len) {
-  uint8_t* p_cur = p;
-  uint8_t status;
-  uint16_t handle;
-
-  STREAM_TO_UINT8(status, p_cur);
-
-  if (status == HCI_SUCCESS) {
-    btm_read_remote_ext_features_complete_raw(p, evt_len);
-  } else {
-    STREAM_TO_UINT16(handle, p_cur);
-    btm_read_remote_ext_features_failed(status, handle);
-  }
-}
-
-/*******************************************************************************
- *
  * Function         btu_hcif_esco_connection_comp_evt
  *
  * Description      Process event HCI_ESCO_CONNECTION_COMP_EVT
@@ -893,7 +863,6 @@ static void btu_hcif_hdl_command_complete(uint16_t opcode, uint8_t* p, uint16_t 
       break;
 
     case HCI_DELETE_STORED_LINK_KEY:
-      btm_delete_stored_link_key_complete(p, evt_len);
       break;
 
     case HCI_READ_RSSI:
@@ -1029,7 +998,7 @@ static void btu_hcif_hdl_command_status(uint16_t opcode, uint8_t status, const u
     case HCI_CREATE_CONNECTION:
       if (status != HCI_SUCCESS) {
         STREAM_TO_BDADDR(bd_addr, p_cmd);
-        btm_acl_connected(bd_addr, HCI_INVALID_HANDLE, hci_status, 0);
+        on_acl_br_edr_failed(bd_addr, hci_status, /* locally_initiated */ true);
       }
       break;
     case HCI_AUTHENTICATION_REQUESTED:
@@ -1044,12 +1013,6 @@ static void btu_hcif_hdl_command_status(uint16_t opcode, uint8_t status, const u
         // Device refused to start encryption
         // This is treated as an encryption failure
         btm_sec_encrypt_change(HCI_INVALID_HANDLE, hci_status, false, 0);
-      }
-      break;
-    case HCI_READ_RMT_EXT_FEATURES:
-      if (status != HCI_SUCCESS) {
-        STREAM_TO_UINT16(handle, p_cmd);
-        btm_read_remote_ext_features_failed(status, handle);
       }
       break;
     case HCI_SETUP_ESCO_CONNECTION:
@@ -1369,7 +1332,7 @@ static void btu_hcif_io_cap_response_evt(const uint8_t* p) {
 
   uint8_t io_cap;
   STREAM_TO_UINT8(io_cap, p);
-  evt_data.io_cap = static_cast<tBTM_IO_CAP>(io_cap);
+  evt_data.io_cap = static_cast<BtIoCap>(io_cap);
 
   STREAM_TO_UINT8(evt_data.oob_data, p);
   STREAM_TO_UINT8(evt_data.auth_req, p);
@@ -1396,7 +1359,7 @@ static void btu_hcif_encryption_key_refresh_cmpl_evt(uint8_t* p) {
 
 static void btu_ble_proc_ltk_req(uint8_t* p, uint16_t evt_len) {
   uint16_t ediv, handle;
-  uint8_t* pp;
+  Octet8 rand;
 
   // following the spec in Core_v5.3/Vol 4/Part E
   // / 7.7.65.5 LE Long Term Key Request event
@@ -1411,9 +1374,9 @@ static void btu_ble_proc_ltk_req(uint8_t* p, uint16_t evt_len) {
   }
 
   STREAM_TO_UINT16(handle, p);
-  pp = p + 8;
-  STREAM_TO_UINT16(ediv, pp);
-  btm_ble_ltk_request(handle, p, ediv);
+  STREAM_TO_ARRAY(rand.data(), p, kOctet8Length);
+  STREAM_TO_UINT16(ediv, p);
+  btm_ble_ltk_request(handle, rand, ediv);
   /* This is empty until an upper layer cares about returning event */
 }
 

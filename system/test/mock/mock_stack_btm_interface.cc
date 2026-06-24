@@ -148,7 +148,7 @@ struct btm_client_interface_t default_btm_client_interface = {
                 },
                 .BTM_IsBonded = [](const RawAddress& /* bd_addr */,
                                    tBT_TRANSPORT /* transport */) -> bool { return false; },
-                .BTM_SetSecurityLevel = [](bool /* is_originator */, const char* /*p_name */,
+                .BTM_SetSecurityLevel = [](bool /* outgoing */, const char* /*p_name */,
                                            uint8_t /* service_id */, uint16_t /* sec_level */,
                                            uint16_t /* psm */, uint32_t /* mx_proto_id */,
                                            uint32_t /* mx_chan_id */) -> bool { return false; },
@@ -163,7 +163,7 @@ struct btm_client_interface_t default_btm_client_interface = {
                 .BTM_RemoteOobDataReply = [](tBTM_STATUS /* res */, const RawAddress& /* bd_addr */,
                                              const Octet16& /* c */, const Octet16& /* r */) {},
                 .BTM_PINCodeReply = [](const RawAddress& /* bd_addr */, tBTM_STATUS /* res */,
-                                       uint8_t /* pin_len */, uint8_t* /* p_pin */) {},
+                                       uint8_t /* pin_len */, PinCode /* pin_code */) {},
                 .BTM_SecConfirmReqReply = [](tBTM_STATUS /* res */, tBT_TRANSPORT /* transport */,
                                              const RawAddress /* bd_addr */) {},
                 .BTM_BleSirkConfirmDeviceReply = [](const RawAddress& /* bd_addr */,
@@ -208,8 +208,10 @@ struct btm_client_interface_t default_btm_client_interface = {
         .sco = {
                 .BTM_CreateSco = [](const RawAddress* /* remote_bda */, bool /* is_orig */,
                                     uint16_t /* pkt_types */, uint16_t* /* p_sco_inx */,
-                                    tBTM_SCO_CB* /* p_conn_cb */, tBTM_SCO_CB* /* p_disc_cb */)
-                        -> tBTM_STATUS { return tBTM_STATUS::BTM_SUCCESS; },
+                                    tBTM_SCO_CB* /* p_conn_cb */,
+                                    tBTM_SCO_WITH_REASON_CB* /* p_disc_cb */) -> tBTM_STATUS {
+                  return tBTM_STATUS::BTM_SUCCESS;
+                },
                 .BTM_RegForEScoEvts = [](uint16_t /* sco_inx */,
                                          tBTM_ESCO_CBACK* /* p_esco_cback */) -> tBTM_STATUS {
                   return tBTM_STATUS::BTM_SUCCESS;

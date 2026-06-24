@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,7 +28,9 @@
 namespace bluetooth {
 namespace hci {
 namespace iso_manager {
-struct CigCallbacks {
+
+class CigCallbacks {
+public:
   virtual ~CigCallbacks() = default;
   virtual void OnSetupIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t cig_id) = 0;
   virtual void OnRemoveIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t cig_id) = 0;
@@ -40,13 +43,23 @@ struct CigCallbacks {
   virtual void OnCigEvent(uint8_t event, void* data) = 0;
 };
 
-struct BigCallbacks {
+class BigCallbacks {
+public:
   virtual ~BigCallbacks() = default;
-  virtual void OnSetupIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t big_id) = 0;
-  virtual void OnRemoveIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t big_id) = 0;
+  virtual void OnSetupIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t big_handle) = 0;
+  virtual void OnRemoveIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t big_handle) = 0;
 
-  virtual void OnBigEvent(uint8_t event, void* data) = 0;
+  virtual void OnBisEvent(uint8_t event, void* data) = 0;
+  virtual void OnBigSourceEvent(BigSourceEvent event, void* data) = 0;
+  virtual void OnBigSinkEvent(BigSinkEvent event, void* data) = 0;
 };
+
+struct IsoManagerCallbacks {
+  CigCallbacks* cig_callbacks = nullptr;
+  BigCallbacks* big_callbacks = nullptr;
+  std::function<void(bool)> iso_traffic_active_callback;
+};
+
 }  // namespace iso_manager
 
 class IsoManager {
@@ -60,37 +73,28 @@ public:
   static IsoManager* GetInstance();
 
   /**
-   * Set CIG and CIS related callbacks
-   *
-   * <p> Shall be set by the Le Audio Unicaster implementation
-   *
-   * @param callbacks CigCallbacks implementation
+   * Registers iso manager callbacks for a new client.
+   * @param callbacks A struct of function pointers for IsoManagerCallbacks.
+   * @return A unique client handle or kInvalidIsoClientHandle on failure.
    */
-  virtual void RegisterCigCallbacks(iso_manager::CigCallbacks* callbacks) const;
+  virtual iso_manager::IsoClientHandle RegisterCallbacks(
+          iso_manager::IsoManagerCallbacks callbacks) const;
 
   /**
-   * Set BIG related callbacks
-   *
-   * <p> Shall be set by the Le Audio Broadcaster implementation
-   *
-   * @param callbacks BigCallbacks implementation
+   * Unregisters a client and cleans up its resources.
+   * @param client_handle The handle obtained from RegisterCallbacks.
    */
-  virtual void RegisterBigCallbacks(iso_manager::BigCallbacks* callbacks) const;
-
-  /**
-   * Set true when CIG or BIG is active, false when CIG or BIG is closed
-   *
-   * @param callback function takes bool as parameter and return void
-   */
-  virtual void RegisterOnIsoTrafficActiveCallback(void callback(bool)) const;
+  virtual void DeregisterCallbacks(iso_manager::IsoClientHandle client_handle) const;
 
   /**
    * Creates connected isochronous group (CIG) according to given params.
    *
+   * @param client_handle client handle
    * @param cig_id connected isochronous group id
    * @param cig_params CIG parameters
    */
-  virtual void CreateCig(uint8_t cig_id, struct iso_manager::cig_create_params cig_params);
+  virtual void CreateCig(iso_manager::IsoClientHandle client_handle, uint8_t cig_id,
+                         struct iso_manager::cig_create_params cig_params);
 
   /**
    * Reconfigures connected isochronous group (CIG) according to given params.
@@ -117,6 +121,9 @@ public:
 
   /**
    * Initiates disconnection of connected isochronous stream (CIS).
+   * Note: If function is used for Canceling CIS, which means, CIS was not yet established,
+   * btm_iso will skip OnCisEvent(kIsoEventCisEstablishCmpl) and
+   * will just send OnCisEvent(kIsoEventCisDisconnected) when CIS is canceled.
    *
    * @param conn_handle CIS connection handle
    * @param reason HCI reason for disconnection
@@ -162,18 +169,36 @@ public:
   /**
    * Creates the Broadcast Isochronous Group
    *
-   * @param big_id host assigned BIG identifier
+   * @param client_handle client handle
+   * @param big_handle host assigned BIG identifier
    * @param big_params BIG parameters
    */
-  virtual void CreateBig(uint8_t big_id, struct iso_manager::big_create_params big_params);
+  virtual void CreateBig(iso_manager::IsoClientHandle client_handle, uint8_t big_handle,
+                         struct iso_manager::big_create_params big_params);
 
   /**
    * Terminates the Broadcast Isochronous Group
    *
-   * @param big_id host assigned BIG identifier
+   * @param big_handle host assigned BIG identifier
    * @param reason termination reason data
    */
-  virtual void TerminateBig(uint8_t big_id, uint8_t reason);
+  virtual void TerminateBig(uint8_t big_handle, uint8_t reason);
+
+  /**
+   * Creates sync with Broadcast Isochronous Group
+   *
+   * @param client_handle client handle
+   * @param sync_params BIG sync parameters
+   */
+  virtual void BigCreateSync(iso_manager::IsoClientHandle client_handle,
+                             struct iso_manager::big_create_sync_params sync_params);
+
+  /**
+   * Terminates sync with Broadcast Isochronous Group
+   *
+   * @param big_handle BIG identifier
+   */
+  virtual void BigTerminateSync(uint8_t big_handle);
 
   /* Below are defined handlers called by the legacy code in btu_hcif.cc */
 
@@ -218,6 +243,16 @@ public:
    * Return the current number of ISO channels
    */
   virtual int GetNumberOfActiveIso();
+
+  /**
+   * Set the BIG Channel Map classification using a Vendor-Specific Command.
+   *
+   * @param action The action to perform (ADD, DELETE, CLEAR).
+   * @param big_handle The handle of the BIG to be affected.
+   * @param handles A list of connection handles to be added or deleted.
+   */
+  virtual void SetBigChannelMapClassificationByConnHandles(uint8_t action, uint8_t big_handle,
+                                                           const std::vector<uint16_t>& handles);
 
   /**
    * Starts the IsoManager module

@@ -1095,7 +1095,9 @@ void bta_av_rc_msg(tBTA_AV_CB* p_cb, tBTA_AV_DATA* p_data) {
       if (p_data->rc_msg.msg.vendor.p_vendor_data[0] == AVRC_PDU_INVALID) {
         /* reject it */
         p_data->rc_msg.msg.hdr.ctype = AVRC_RSP_REJ;
-        p_data->rc_msg.msg.vendor.p_vendor_data[4] = AVRC_STS_BAD_CMD;
+        if (p_data->rc_msg.msg.vendor.vendor_len >= 5) {
+          p_data->rc_msg.msg.vendor.p_vendor_data[4] = AVRC_STS_BAD_CMD;
+        }
       } else {
         p_data->rc_msg.msg.hdr.ctype = AVRC_RSP_NOT_IMPL;
       }
@@ -1628,7 +1630,7 @@ void bta_av_sig_chg(tBTA_AV_DATA* p_data) {
           if ((p_cb->p_scb[xx]->state == 1) &&
               alarm_is_scheduled(p_cb->p_scb[xx]->accept_signalling_timer) &&
               interop_match_addr(INTEROP_IGNORE_DISC_BEFORE_SIGNALLING_TIMEOUT,
-                                 &(p_data->str_msg.bd_addr))) {
+                                 p_data->str_msg.bd_addr)) {
             continue;
           }
           log::verbose("Closing timer for AVDTP service");

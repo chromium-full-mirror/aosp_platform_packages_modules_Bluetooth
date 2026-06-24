@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <bluetooth/types/acl_link_spec.h>
 #include <bluetooth/types/ble_address_with_type.h>
 #include <bluetooth/types/hci_role.h>
 #include <bluetooth/types/remote_version.h>
@@ -168,7 +169,7 @@ struct tBTM_PM_MCB {
 };
 
 struct tACL_CONN {
-  tAclLinkSpec link_spec;
+  AclLinkSpec link_spec;
   tBLE_BD_ADDR active_addrt;
 
   bool in_use{false};
@@ -230,6 +231,7 @@ public:
 #define BTM_SEC_RS_NOT_PENDING 0 /* Role Switch not in progress */
 #define BTM_SEC_RS_PENDING 1     /* Role Switch in progress */
 #define BTM_SEC_DISC_PENDING 2   /* Disconnect is pending */
+
 private:
   uint8_t rs_disc_pending = BTM_SEC_RS_NOT_PENDING;
   friend struct StackAclBtmAcl;

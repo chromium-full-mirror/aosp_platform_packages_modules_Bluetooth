@@ -17,6 +17,7 @@
 
 #include <base/functional/bind.h>
 #include <bluetooth/log.h>
+#include <bluetooth/types/bt_octets.h>
 #include <com_android_bluetooth_flags.h>
 #include <stdio.h>
 
@@ -33,7 +34,6 @@
 #include <utility>
 #include <vector>
 
-#include "bt_octets.h"
 #include "bta/include/bta_le_audio_broadcaster_api.h"
 #include "bta/le_audio/broadcaster/state_machine.h"
 #include "bta/le_audio/codec_interface.h"
@@ -44,9 +44,11 @@
 #include "bta_le_audio_api.h"
 #include "btm_iso_api_types.h"
 #include "common/strings.h"
+#include "gd/common/utils.h"
 #include "hardware/ble_advertiser.h"
 #include "hardware/bt_le_audio.h"
 #include "hci/controller.h"
+#include "hci/hci_packets.h"
 #include "hcidefs.h"
 #include "hcimsgs.h"
 #include "internal_include/stack_config.h"
@@ -57,6 +59,7 @@
 #include "osi/include/properties.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/btm_api_types.h"
+#include "stack/include/btm_client_interface.h"
 #include "stack/include/btm_iso_api.h"
 
 #ifdef TARGET_FLOSS
@@ -70,6 +73,11 @@ using bluetooth::hci::IsoManager;
 using bluetooth::hci::iso_manager::big_create_cmpl_evt;
 using bluetooth::hci::iso_manager::big_terminate_cmpl_evt;
 using bluetooth::hci::iso_manager::BigCallbacks;
+using bluetooth::hci::iso_manager::BigSinkEvent;
+using bluetooth::hci::iso_manager::BigSourceEvent;
+using bluetooth::hci::iso_manager::IsoClientHandle;
+using bluetooth::hci::iso_manager::IsoManagerCallbacks;
+using bluetooth::hci::iso_manager::kInvalidIsoClientHandle;
 using bluetooth::le_audio::BasicAudioAnnouncementData;
 using bluetooth::le_audio::BasicAudioAnnouncementSubgroup;
 using bluetooth::le_audio::BroadcastId;
@@ -109,8 +117,8 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
   enum class AudioState { STOPPED, SUSPENDED, ACTIVE };
 
 public:
-  LeAudioBroadcasterImpl(bluetooth::le_audio::LeAudioBroadcasterCallbacks* callbacks_)
-      : callbacks_(callbacks_),
+  LeAudioBroadcasterImpl(bluetooth::le_audio::LeAudioBroadcasterCallbacks* callbacks)
+      : callbacks_(callbacks),
         current_phy_(PHY_LE_2M),
         le_audio_source_hal_client_(nullptr),
         audio_state_(AudioState::SUSPENDED),
@@ -118,29 +126,43 @@ public:
         broadcast_stop_timer_(alarm_new("BroadcastStopTimer")) {
     log::info("");
 
+    iso_callbacks_.big_callbacks = this;
+    iso_callbacks_.iso_traffic_active_callback = [this](bool is_active) {
+      this->IsoTrafficEventCb(is_active);
+    };
+
+    IsoManager::GetInstance()->Start();
+    iso_client_handle_ = IsoManager::GetInstance()->RegisterCallbacks(iso_callbacks_);
+
     /* Register State machine callbacks */
-    BroadcastStateMachine::Initialize(&state_machine_callbacks_, &state_machine_adv_callbacks_);
+    BroadcastStateMachine::Initialize(&state_machine_callbacks_, &state_machine_adv_callbacks_,
+                                      iso_client_handle_);
 
     GenerateBroadcastIds();
   }
 
   ~LeAudioBroadcasterImpl() override {
+    if (iso_client_handle_ != kInvalidIsoClientHandle) {
+      IsoManager::GetInstance()->DeregisterCallbacks(iso_client_handle_);
+    }
+
     alarm_free(big_terminate_timer_);
     alarm_free(broadcast_stop_timer_);
   }
 
   void GenerateBroadcastIds(void) {
-    btsnd_hcic_ble_rand(base::Bind([](BT_OCTET8 rand) {
+    btsnd_hcic_ble_rand(base::BindOnce([](Octet8 rand) {
       if (!instance) {
         return;
       }
 
-      /* LE Rand returns 8 octets. Lets' make 2 outstanding Broadcast Ids out
-       * of it */
+      /* LE Rand returns 8 octets. Lets' make 2 outstanding Broadcast Ids out of it */
+      uint8_t* pp = rand.data();
       for (int i = 0; i < 8; i += 4) {
         BroadcastId broadcast_id = 0;
         /* Broadcast ID should be 3 octets long (BAP v1.0 spec.) */
-        STREAM_TO_UINT24(broadcast_id, rand);
+
+        STREAM_TO_UINT24(broadcast_id, pp);
         if (broadcast_id == bluetooth::le_audio::kBroadcastIdInvalid) {
           continue;
         }
@@ -573,6 +595,12 @@ public:
       }
     }
 
+    if (bluetooth::common::IsPtsTestMode()) {
+      // Mark the reserved bits to 1 if we are running PTS test mode.
+      log::warn("PTS test mode, updating the reserved bits to 1");
+      public_features |= 0xF8;
+    }
+
     for (const std::vector<uint8_t>& metadata : subgroup_metadata) {
       /* Prepare the announcement format */
       bool is_metadata_valid;
@@ -862,26 +890,30 @@ public:
     broadcasts_[broadcast_id]->OnRemoveIsoDataPath(status, conn_handle);
   }
 
-  void OnBigEvent(uint8_t event, void* data) override {
+  void OnBigSourceEvent(BigSourceEvent event, void* data) override {
     switch (event) {
-      case bluetooth::hci::iso_manager::kIsoEventBigOnCreateCmpl: {
+      case BigSourceEvent::kCreateCmpl: {
         auto* evt = static_cast<big_create_cmpl_evt*>(data);
-        auto broadcast_id = BroadcastIdFromBigHandle(evt->big_id);
+        auto broadcast_id = BroadcastIdFromBigHandle(evt->big_handle);
         log::assert_that(broadcasts_.count(broadcast_id) != 0,
                          "assert failed: broadcasts_.count(broadcast_id) != 0");
         broadcasts_[broadcast_id]->HandleHciEvent(HCI_BLE_CREATE_BIG_CPL_EVT, evt);
       } break;
-      case bluetooth::hci::iso_manager::kIsoEventBigOnTerminateCmpl: {
+      case BigSourceEvent::kTerminateCmpl: {
         auto* evt = static_cast<big_terminate_cmpl_evt*>(data);
-        auto broadcast_id = BroadcastIdFromBigHandle(evt->big_id);
+        auto broadcast_id = BroadcastIdFromBigHandle(evt->big_handle);
         log::assert_that(broadcasts_.count(broadcast_id) != 0,
                          "assert failed: broadcasts_.count(broadcast_id) != 0");
         broadcasts_[broadcast_id]->HandleHciEvent(HCI_BLE_TERM_BIG_CPL_EVT, evt);
       } break;
       default:
-        log::error("Invalid event={}", event);
+        log::error("Invalid event={}", static_cast<uint8_t>(event));
     }
   }
+
+  void OnBigSinkEvent(BigSinkEvent /*event*/, void* /*data*/) override {}
+
+  void OnBisEvent(uint8_t /*event*/, void* /*data*/) override {}
 
   void IsoTrafficEventCb(bool is_active) {
     is_iso_running_ = is_active;
@@ -920,6 +952,45 @@ public:
     }
 
     dprintf(fd, "%s", stream.str().c_str());
+  }
+
+  void SetBigChannelMapClassification(uint8_t action, const RawAddress& sink_addr,
+                                      uint32_t broadcast_id) override {
+    if (!com::android::bluetooth::flags::leaudio_broadcast_source_channel_map_classification()) {
+      return;
+    }
+
+    if (instance->broadcasts_.count(broadcast_id) == 0) {
+      log::error("No such broadcast_id={}", broadcast_id);
+      return;
+    }
+
+    auto OwnBroadcaster = instance->broadcasts_.at(broadcast_id).get();
+    if (OwnBroadcaster->GetBigConfig() == std::nullopt) {
+      log::error("Broadcast broadcast_id={} has no valid BIS configurations", broadcast_id);
+      return;
+    }
+
+    uint8_t big_handle = OwnBroadcaster->GetBigConfig()->big_handle;
+    uint16_t conn_handle = HCI_INVALID_HANDLE;
+    // CLEAR action does not require a connection handle, as it applies to all connections
+    // associated with the BIG.
+    if (action !=
+        static_cast<uint8_t>(bluetooth::hci::LeSetBigChannelMapClassificationAction::CLEAR)) {
+      conn_handle =
+              get_btm_client_interface().peer.BTM_GetHCIConnHandle(sink_addr, BT_TRANSPORT_LE);
+      if (conn_handle == HCI_INVALID_HANDLE) {
+        log::error("Could not get connection handle for connected device {}", sink_addr);
+        return;
+      }
+    }
+    std::vector<uint16_t> handles = {conn_handle};
+
+    log::info("Issuing SetBigChannelMapClassificationVSC: action={}, big_handle={}, conn_handle={}",
+              action, big_handle, conn_handle);
+
+    IsoManager::GetInstance()->SetBigChannelMapClassificationByConnHandles(action, big_handle,
+                                                                           handles);
   }
 
 private:
@@ -1383,6 +1454,9 @@ private:
   static constexpr uint64_t kBroadcastStopTimeoutMs = 30 * 60 * 1000;
   alarm_t* big_terminate_timer_;
   alarm_t* broadcast_stop_timer_;
+
+  IsoClientHandle iso_client_handle_;
+  IsoManagerCallbacks iso_callbacks_;
 };
 
 /* Static members definitions */
@@ -1394,7 +1468,7 @@ LeAudioBroadcasterImpl::BroadcastAdvertisingCallbacks
 } /* namespace */
 
 void LeAudioBroadcaster::Initialize(bluetooth::le_audio::LeAudioBroadcasterCallbacks* callbacks,
-                                    base::Callback<bool()> audio_hal_verifier) {
+                                    base::OnceCallback<bool()> audio_hal_verifier) {
   std::scoped_lock<std::mutex> lock(instance_mutex);
   log::info("");
   if (instance) {
@@ -1411,17 +1485,7 @@ void LeAudioBroadcaster::Initialize(bluetooth::le_audio::LeAudioBroadcasterCallb
     log::fatal("HAL requirements not met. Init aborted.");
   }
 
-  IsoManager::GetInstance()->Start();
-
   instance = new LeAudioBroadcasterImpl(callbacks);
-  /* Register HCI event handlers */
-  IsoManager::GetInstance()->RegisterBigCallbacks(instance);
-  /* Register for active traffic */
-  IsoManager::GetInstance()->RegisterOnIsoTrafficActiveCallback([](bool is_active) {
-    if (instance) {
-      instance->IsoTrafficEventCb(is_active);
-    }
-  });
 }
 
 bool LeAudioBroadcaster::IsLeAudioBroadcasterRunning() { return instance; }

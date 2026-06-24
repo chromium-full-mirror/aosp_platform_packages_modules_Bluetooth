@@ -33,7 +33,7 @@ void gatt::SetMockBtaGattInterface(MockBtaGattInterface* mock_bta_gatt_interface
 void BTA_GATTC_AppRegister(const std::string& name, tBTA_GATTC_CBACK* p_client_cb,
                            BtaAppRegisterCallback cb, bool eatt_support) {
   log::assert_that(gatt_interface != nullptr, "Mock GATT interface not set!");
-  gatt_interface->AppRegister(name, p_client_cb, cb, eatt_support);
+  gatt_interface->AppRegister(name, p_client_cb, std::move(cb), eatt_support);
 }
 
 void BTA_GATTC_AppDeregister(tGATT_IF client_if) {
@@ -123,6 +123,21 @@ void BTA_GATTC_ConfigureMTU(tCONN_ID conn_id, uint16_t mtu) {
   gatt_interface->ConfigureMTU(conn_id, mtu);
 }
 
+tGATT_STATUS BTA_GATTC_SubrateModeRequest(tGATT_IF client_if, const RawAddress& bd_addr,
+                                          tGATT_SUBRATE_MODE subrate_mode) {
+  log::assert_that(gatt_interface != nullptr, "Mock GATT interface not set!");
+  return gatt_interface->SubrateModeRequest(client_if, bd_addr, subrate_mode);
+}
+
+tGATT_STATUS BTA_GATTC_SubrateModeRequest(tGATT_IF client_if, const RawAddress& bd_addr,
+                                          tGATT_SUBRATE_MODE subrate_mode,
+                                          uint16_t subrate_max, uint16_t subrate_min,
+                                          uint16_t cont_num) {
+  log::assert_that(gatt_interface != nullptr, "Mock GATT interface not set!");
+  gatt_interface->UpdateSubrateConfig(subrate_mode, subrate_max, subrate_min, cont_num);
+  return gatt_interface->SubrateModeRequest(client_if, bd_addr, subrate_mode);
+}
+
 void BTA_GATTS_Disable(void) {
   log::assert_that(gatt_server_interface != nullptr, "Mock GATT server interface not set!");
   gatt_server_interface->Disable();
@@ -147,7 +162,7 @@ void BTA_GATTS_Close(uint16_t conn_id) {
 void BTA_GATTS_AddService(tGATT_IF server_if, std::vector<btgatt_db_element_t> service,
                           BTA_GATTS_AddServiceCb cb) {
   log::assert_that(gatt_server_interface != nullptr, "Mock GATT server interface not set!");
-  gatt_server_interface->AddService(server_if, service, cb);
+  gatt_server_interface->AddService(server_if, service, std::move(cb));
 }
 void BTA_GATTS_DeleteService(uint16_t service_id) {
   log::assert_that(gatt_server_interface != nullptr, "Mock GATT server interface not set!");

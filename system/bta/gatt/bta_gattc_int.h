@@ -107,11 +107,11 @@ typedef struct {
   tGATT_IF client_if;
   tBTM_BLE_CONN_TYPE connection_type;
   tBT_TRANSPORT transport;
-  uint8_t initiating_phys;
   bool opportunistic;
   tBT_DEVICE_TYPE remote_addr_type;
   uint16_t preferred_mtu;
   bool prefer_relax_mode;
+  bool auto_mtu_enabled;
 } tBTA_GATTC_API_OPEN;
 
 typedef struct {
@@ -325,7 +325,6 @@ typedef uint32_t tBTA_GATTC_CIF_MASK;
 typedef struct {
   bool in_use;
   RawAddress remote_bda;
-  tBTA_GATTC_CIF_MASK cif_mask;
   std::unordered_set<tGATT_IF> cif_set;
 } tBTA_GATTC_BG_TCK;
 
@@ -346,10 +345,8 @@ typedef struct {
 
   tBTA_GATTC_CONN conn_track[GATT_MAX_PHY_CHANNEL];
   tBTA_GATTC_BG_TCK bg_track[BTA_GATTC_KNOWN_SR_MAX];
-  tBTA_GATTC_RCB cl_rcb[BTA_GATTC_CL_MAX];
   std::unordered_map<tGATT_IF, std::unique_ptr<tBTA_GATTC_RCB>> cl_rcb_map;
 
-  tBTA_GATTC_CLCB clcb[BTA_GATTC_CLCB_MAX];
   std::unordered_set<std::unique_ptr<tBTA_GATTC_CLCB>> clcb_set;
   // A set of clcbs that are pending to be deallocated. see bta_gattc_clcb_dealloc
   std::unordered_set<tBTA_GATTC_CLCB*> clcb_pending_dealloc;
@@ -417,6 +414,10 @@ void bta_gattc_send_open_cback(tBTA_GATTC_RCB* p_clreg, tGATT_STATUS status,
                                tBT_TRANSPORT transport, uint16_t mtu);
 void bta_gattc_process_api_refresh(const RawAddress& remote_bda);
 void bta_gattc_cfg_mtu(tBTA_GATTC_CLCB* p_clcb, const tBTA_GATTC_DATA* p_data);
+tGATT_STATUS bta_gattc_subrate_mode_request(tGATT_IF client_if, const RawAddress& bd_addr,
+                                            tGATT_SUBRATE_MODE subrate_mode,
+                                            uint16_t subrate_max, uint16_t subrate_min,
+                                            uint16_t cont_num);
 void bta_gattc_listen(tBTA_GATTC_DATA* p_msg);
 void bta_gattc_broadcast(tBTA_GATTC_DATA* p_msg);
 
@@ -437,6 +438,7 @@ tBTA_GATTC_SERV* bta_gattc_srcb_alloc(const RawAddress& bda);
 tBTA_GATTC_SERV* bta_gattc_find_scb_by_cid(tCONN_ID conn_id);
 tBTA_GATTC_CLCB* bta_gattc_find_int_conn_clcb(tBTA_GATTC_DATA* p_msg);
 tBTA_GATTC_CLCB* bta_gattc_find_int_disconn_clcb(tBTA_GATTC_DATA* p_msg);
+tBTA_GATTC_RCB* bta_gattc_get_regcb_by_notification_handle(uint16_t handle, const RawAddress& bda);
 
 enum BtaEnqueuedResult_t {
   ENQUEUED_READY_TO_SEND,

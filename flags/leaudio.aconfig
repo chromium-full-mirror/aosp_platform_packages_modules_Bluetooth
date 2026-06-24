@@ -2,35 +2,53 @@ package: "com.android.bluetooth.flags"
 container: "com.android.bt"
 
 flag {
-    name: "leaudio_broadcast_monitor_source_sync_status"
-    is_exported: true
+    name: "leaudio_improve_state_machine_invalid_status"
     namespace: "bluetooth"
-    description: "New APIs to improve broadcast source sync"
-    bug: "307406671"
+    description: "Improve handling state machine internal invalid status"
+    bug: "447120781"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
-    name: "leaudio_broadcast_volume_control_for_connected_devices"
-    is_exported: true
+    name: "leaudio_support_confirm_suspend"
     namespace: "bluetooth"
-    description: "Allow volume control for connected devices"
-    bug: "307408418"
+    description: "Add support for confirm suspend"
+    bug: "446634001"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
-    name: "metadata_api_inactive_audio_device_upon_connection"
-    is_exported: true
+    name: "leaudio_fix_stop_stream_race"
     namespace: "bluetooth"
-    description: "API to set device as inactive audio device upon connection"
-    bug: "322387487"
+    description: "Fix race when resume is called just after stream release"
+    bug: "455775663"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
-    name: "leaudio_multiple_vocs_instances_api"
-    is_exported: true
+    name: "leaudio_software_bt_request_lock_fix"
     namespace: "bluetooth"
-    description: "Support multiple audio outputs for volume offset"
-    bug: "323156655"
+    description: "Fix minor locking issue"
+    bug: "446619006"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "csis_quirk_for_single_device_with_sirk_all_zeros"
+    namespace: "bluetooth"
+    description: "Allow LeAudio device with invalid CSIS when set size is 1 and sirk is ALL zeros"
+    bug: "447588233"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
@@ -44,27 +62,30 @@ flag {
 }
 
 flag {
-    name: "le_ase_read_multiple_variable"
+    name: "leaudio_config_profile_enabling"
     namespace: "bluetooth"
-    description: "Use GATT read multiple variable length characteristic values"
-    bug: "352085435"
+    description: "Change how LE Audio profiles are configured and enabled"
+    bug: "379178585"
+}
+
+flag {
+    name: "leaudio_game_detector"
+    namespace: "bluetooth"
+    description: "LeAudio starts detects game applications."
+    bug: "454841160"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
 }
 
 flag {
-    name: "leaudio_set_codec_config_preference"
+    name: "leaudio_fix_allocation_in_codec_config"
     namespace: "bluetooth"
-    description: "New apis to set codec config preference"
-    bug: "353909820"
-}
-
-flag {
-    name: "leaudio_config_profile_enabling"
-    namespace: "bluetooth"
-    description: "Change how LE Audio profiles are configured and enabled"
-    bug: "379178585"
+    description: "Fix not setting allocation LTV in CodecConfig for mono allication"
+    bug: "454311602"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
@@ -108,26 +129,6 @@ flag {
 }
 
 flag {
-    name: "leaudio_broadcast_remove_sink_metadata_on_switch_to_local"
-    namespace: "bluetooth"
-    description: "Allow to remove sink metadata while switching to local broadcast"
-    bug: "404752913"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "leaudio_broadcast_allow_monitoring_on_resume"
-    namespace: "bluetooth"
-    description: "Allow broadcast monitoring on resume from suspend"
-    bug: "404797794"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
     name: "leaudio_fix_stop_reconfiguration_timeout"
     namespace: "bluetooth"
     description: "Fix for stop the reconfiguration timeout"
@@ -153,16 +154,6 @@ flag {
     namespace: "bluetooth"
     description: "Use the codec extensibility API for passing DSA parameters"
     bug: "406747076"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "leaudio_bis_sync_control"
-    namespace: "bluetooth"
-    description: "Allow to control BIS sync state from BASS service level"
-    bug: "407928525"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
@@ -308,10 +299,212 @@ flag {
 }
 
 flag {
+    name: "leaudio_vaps_improvements"
+    namespace: "bluetooth"
+    description: "LE Audio VAPS improvements"
+    bug: "444029563"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_always_use_group_size_to_check_audio_config"
+    namespace: "bluetooth"
+    description: "When checking support for audio configuration, take into account all the devices"
+    bug: "441436893"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
     name: "leaudio_intent_broadcast_in_state_machine_cleanup"
     namespace: "bluetooth"
     description: "Broadcast connection changed intent when state machine is cleaned up"
     bug: "441564325"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_creation_timeout_fix"
+    namespace: "bluetooth"
+    description: "Properly clean up state after a broadcast creation timeout"
+    bug: "443811487"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_sync_handle_to_device_fix"
+    namespace: "bluetooth"
+    description: "Fix updating sync handle to device map for the same device"
+    bug: "444365749"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_improve_source_operations"
+    namespace: "bluetooth"
+    description: "Improve broadcast source operations"
+    bug: "444010402"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_reactivate_autonomously_inactivated_group_by_broadcast"
+    namespace: "bluetooth"
+    description: "Reactivate group autonomously deactivated due to broadcast sync"
+    bug: "439502201"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_treat_empty_rs_explicitly"
+    namespace: "bluetooth"
+    description: "Treat remote source removal as a final state for broadcast assistant"
+    bug: "460351363"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_extend_audio_active_state"
+    namespace: "bluetooth"
+    description: "Add Audio Active State to BASE and parser for metadata"
+    bug: "463606623"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_improve_unicast_monitor"
+    namespace: "bluetooth"
+    description: "Improve unicast monitor mode robustness"
+    bug: "440506873"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_stop_big_monitoring_based_on_bis_sync"
+    namespace: "bluetooth"
+    description: "Disable BIG monitoring when no BIS are selected to be synced to."
+    bug: "441243548"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_fallback_group_selection"
+    namespace: "bluetooth"
+    description: "Allow only local broadcast receiver device to be select as fallback"
+    bug: "445133566"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_add_source_from_peer_device"
+    namespace: "bluetooth"
+    description: "After connected adding broadcast source from the peer device"
+    bug: "447646642"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_cancel_stream_request_when_invalid_group"
+    namespace: "bluetooth"
+    description: "Cancel stream request when active group is invalid"
+    bug: "447083886"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_sink_feature"
+    namespace: "bluetooth"
+    description: "LE Audio Broadcast Sink Feature"
+    bug: "452247122"
+}
+
+flag {
+    name: "core_ipu_support"
+    namespace: "bluetooth"
+    description: "Update CIG/CIS parameter without destroying the group"
+    bug: "450606834"
+}
+
+flag {
+    name: "lea_asrc_rotate_burst_buffer"
+    namespace: "bluetooth"
+    description: "Use burst buffer with pool rotation"
+    bug: "453508454"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "coordinated_remove_bond"
+    namespace: "bluetooth"
+    description: "Remove all coordinated set members when any member is requested to be removed"
+    bug: "454419225"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_broadcast_sw_config_quality_logic"
+    namespace: "bluetooth"
+    description: "Improve broadcast config selection by using quality-based logic instead of context type"
+    bug: "450213446"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_bass_read_characteristics_after_encryption"
+    namespace: "bluetooth"
+    description: "Read Bass characteristics after encryption is established"
+    bug: "459915166"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "leaudio_over_hdt_phy_api"
+    is_exported: true
+    namespace: "bluetooth"
+    description: "Configure LE Audio over HDT PHY API"
+    bug: "455581672"
+}
+
+flag {
+    name: "leaudio_cancel_open_with_direct_flag_when_connecting"
+    namespace: "bluetooth"
+    description: "Close gatt channel while it is connecting"
+    bug: "459264847"
     metadata {
         purpose: PURPOSE_BUGFIX
     }

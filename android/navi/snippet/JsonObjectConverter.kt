@@ -20,11 +20,13 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
+import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothQualityReport
 import android.bluetooth.OobData
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.AdvertisingSetParameters
+import android.bluetooth.le.PeriodicAdvertisingParameters
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -292,6 +294,16 @@ class JsonObjectConverter : SnippetObjectConverter {
             }
             .build()
 
+    private fun JSONObject.toPeriodicAdvertisingParameters(): PeriodicAdvertisingParameters =
+        PeriodicAdvertisingParameters.Builder()
+            .apply {
+                getOrNull<Int>(SnippetConstants.ADV_PARAMETER_INTERVAL)?.let { setInterval(it) }
+                getOrNull<Boolean>(SnippetConstants.ADV_DATA_INCLUDE_TX_POWER_LEVEL)?.let {
+                    setIncludeTxPower(it)
+                }
+            }
+            .build()
+
     private fun JSONObject.toBluetoothGattDescriptor() =
         BluetoothGattDescriptor(
             UUID.fromString(optString(SnippetConstants.FIELD_UUID)),
@@ -332,7 +344,15 @@ class JsonObjectConverter : SnippetObjectConverter {
                             SnippetConstants.FIELD_ADDRESS_TYPE,
                             BluetoothDevice.ADDRESS_TYPE_PUBLIC,
                         )
-                    setDeviceAddress(it, addressType)
+                    val irk =
+                        getOrNull<JSONArray>(SnippetConstants.FIELD_IRK)
+                            ?.toList<Byte>()
+                            ?.toByteArray()
+                    if (irk != null) {
+                        setDeviceAddress(it, addressType, irk)
+                    } else {
+                        setDeviceAddress(it, addressType)
+                    }
                 }
                 getOrNull<String>(SnippetConstants.ADV_DATA_SERVICE_UUID)?.let {
                     setServiceUuid(ParcelUuid.fromString(it))
@@ -373,6 +393,9 @@ class JsonObjectConverter : SnippetObjectConverter {
                 getOrNull<Int>(SnippetConstants.SCAN_PARAM_SCAN_MODE)?.let { setScanMode(it) }
                 getOrNull<Int>(SnippetConstants.SCAN_PARAM_CALLBACK_TYPE)?.let {
                     setCallbackType(it)
+                }
+                getOrNull<Int>(SnippetConstants.SCAN_PARAM_MATCH_MODE)?.let {
+                    val unused = setMatchMode(it)
                 }
                 getOrNull<Int>(SnippetConstants.SCAN_PARAM_SCAN_RESULT_TYPE)?.let {
                     setScanResultType(it)
@@ -440,6 +463,18 @@ class JsonObjectConverter : SnippetObjectConverter {
         throw IllegalArgumentException("OobData must have either leDeviceRole or classicLength")
     }
 
+    private fun JSONObject.toSDPSettings(): BluetoothHidDeviceAppSdpSettings {
+        val name = getOrNull<String>(SnippetConstants.HID_DEVICE_APP_NAME)
+        val description = getOrNull<String>(SnippetConstants.HID_DEVICE_APP_DESCRIPTION)
+        val provider = getOrNull<String>(SnippetConstants.HID_DEVICE_APP_PROVIDER)
+        val subclass =
+            getOrNull<Int>(SnippetConstants.HID_DEVICE_APP_SUBCLASS)?.toByte() ?: 0.toByte()
+        val descriptorsArray = getJSONArray(SnippetConstants.HID_DEVICE_APP_DESCRIPTORS)
+        val descriptors = descriptorsArray.toList<Byte>().toByteArray()
+
+        return BluetoothHidDeviceAppSdpSettings(name, description, provider, subclass, descriptors)
+    }
+
     /**
      * Serializes JVM object [parameter] to a [JSONObject], or returns null if there is no viable
      * conversion.
@@ -481,6 +516,9 @@ class JsonObjectConverter : SnippetObjectConverter {
         if (type === AdvertisingSetParameters::class.java) {
             return jsonObject?.toAdvertisingSetParameters()
         }
+        if (type === PeriodicAdvertisingParameters::class.java) {
+            return jsonObject?.toPeriodicAdvertisingParameters()
+        }
         if (type === BluetoothGattService::class.java) {
             return jsonObject?.toBluetoothGattService()
         }
@@ -495,6 +533,9 @@ class JsonObjectConverter : SnippetObjectConverter {
         }
         if (type === OobData::class.java) {
             return jsonObject?.toOobData()
+        }
+        if (type === BluetoothHidDeviceAppSdpSettings::class.java) {
+            return jsonObject?.toSDPSettings()
         }
         return null
     }

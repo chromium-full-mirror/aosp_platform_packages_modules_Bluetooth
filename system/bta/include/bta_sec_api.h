@@ -21,6 +21,7 @@
 #include <base/functional/callback.h>
 #include <bluetooth/log.h>
 #include <bluetooth/types/address.h>
+#include <bluetooth/types/bt_octets.h>
 
 #include <cstdint>
 
@@ -28,7 +29,6 @@
 #include "include/hardware/bluetooth.h"
 #include "stack/include/bt_device_type.h"
 #include "stack/include/bt_name.h"
-#include "stack/include/bt_octets.h"
 #include "stack/include/btm_ble_sec_api_types.h"
 #include "stack/include/btm_sec_api_types.h"
 #include "stack/include/hci_error_code.h"
@@ -79,6 +79,7 @@ typedef struct {
   BD_NAME bd_name;     /* Name of peer device. */
 
   bool min_16_digit;   /* true if the pin returned must be at least 16 digits */
+  PairingAlgorithm pairing_algorithm;
 } tBTA_DM_PIN_REQ;
 
 /* BLE related definition */
@@ -128,6 +129,8 @@ typedef struct {
   RawAddress bd_addr; /* peer address */
   DEV_CLASS dev_class;
   BD_NAME bd_name;    /* peer device name */
+
+  PairingAlgorithm pairing_algorithm;
 } tBTA_DM_BLE_SEC_REQ;
 
 typedef struct {
@@ -180,8 +183,9 @@ typedef struct {
   bool just_works;            /* true, if "Just Works" association model */
   tBTM_AUTH_REQ loc_auth_req; /* Authentication required for local device */
   tBTM_AUTH_REQ rmt_auth_req; /* Authentication required for peer device */
-  tBTM_IO_CAP loc_io_caps;    /* IO Capabilities of local device */
-  tBTM_IO_CAP rmt_io_caps;    // IO Capabilities of remote device
+  BtIoCap loc_io_caps;        /* IO Capabilities of local device */
+  BtIoCap rmt_io_caps;        // IO Capabilities of remote device
+  PairingAlgorithm pairing_algorithm;
 } tBTA_DM_SP_CFM_REQ;
 
 /* Structure associated with BTA_DM_SP_KEY_NOTIF_EVT */
@@ -194,6 +198,7 @@ typedef struct {
 
   uint32_t passkey;    /* the numeric value for comparison. If just_works, do not
                           show this number to UI */
+  PairingAlgorithm pairing_algorithm;
 } tBTA_DM_SP_KEY_NOTIF;
 
 /* Structure associated with BTA_DM_SP_RMT_OOB_EVT */
@@ -203,6 +208,8 @@ typedef struct {
   RawAddress bd_addr;  /* peer address */
   DEV_CLASS dev_class; /* peer CoD */
   BD_NAME bd_name;     /* peer device name */
+
+  PairingAlgorithm pairing_algorithm;
 } tBTA_DM_SP_RMT_OOB;
 
 /* Structure associated with BTA_DM_BOND_CANCEL_CMPL_EVT */

@@ -201,6 +201,7 @@ pub mod ffi {
             self: Pin<&mut BleScannerIntf>,
             sid: u8,
             address: RawAddress,
+            address_type: u8,
             skip: u16,
             timeout: u16,
         );
@@ -586,7 +587,7 @@ pub enum GattClientCallbacks {
     ReadRemoteRssi(i32, RawAddress, i32, GattStatus),
     ConfigureMtu(i32, GattStatus, i32),
     Congestion(i32, bool),
-    GetGattDb(i32, Vec<BtGattDbElement>, i32),
+    GetGattDb(i32, Vec<BtGattDbElement>),
     PhyUpdated(i32, u8, u8, GattStatus),
     ConnUpdated(i32, u16, u16, u16, GattStatus),
     ServiceChanged(i32),
@@ -597,13 +598,13 @@ pub enum GattClientCallbacks {
 pub enum GattServerCallbacks {
     RegisterServer(GattStatus, i32, Uuid),
     Connection(i32, i32, i32, i32, RawAddress),
-    ServiceAdded(GattStatus, i32, Vec<BtGattDbElement>, usize),
+    ServiceAdded(GattStatus, i32, Vec<BtGattDbElement>),
     ServiceStopped(GattStatus, i32, i32),
     ServiceDeleted(GattStatus, i32, i32),
     RequestReadCharacteristic(i32, i32, RawAddress, i32, i32, bool),
     RequestReadDescriptor(i32, i32, RawAddress, i32, i32, bool),
-    RequestWriteCharacteristic(i32, i32, RawAddress, i32, i32, bool, bool, Vec<u8>, usize),
-    RequestWriteDescriptor(i32, i32, RawAddress, i32, i32, bool, bool, Vec<u8>, usize),
+    RequestWriteCharacteristic(i32, i32, RawAddress, i32, i32, bool, bool, Vec<u8>),
+    RequestWriteDescriptor(i32, i32, RawAddress, i32, i32, bool, bool, Vec<u8>),
     RequestExecWrite(i32, i32, RawAddress, i32),
     ResponseConfirmation(i32, i32),
     IndicationSent(i32, GattStatus),
@@ -612,7 +613,7 @@ pub enum GattServerCallbacks {
     PhyUpdated(i32, u8, u8, GattStatus),
     ConnUpdated(i32, u16, u16, u16, GattStatus),
     ReadPhy(i32, RawAddress, u8, u8, GattStatus),
-    SubrateChanged(i32, u16, u16, u16, u16, GattStatus),
+    SubrateChanged(i32, u16, u16, u16, u16, u8, GattStatus),
 }
 
 pub struct GattClientCallbacksDispatcher {
@@ -733,7 +734,7 @@ cb_variant!(
 cb_variant!(
     GattClientCb,
     gc_get_gatt_db_cb -> GattClientCallbacks::GetGattDb,
-    i32, *const BtGattDbElement, i32, {
+    i32, *const BtGattDbElement, i32 -> _, {
         let _1 = ptr_to_vec(_1, _2 as usize);
     }
 );
@@ -780,7 +781,7 @@ cb_variant!(
 cb_variant!(
     GattServerCb,
     gs_service_added_cb -> GattServerCallbacks::ServiceAdded,
-    i32 -> GattStatus, i32, *const BtGattDbElement, usize, {
+    i32 -> GattStatus, i32, *const BtGattDbElement, usize -> _, {
         let _2 = ptr_to_vec(_2, _3);
     }
 );
@@ -816,7 +817,7 @@ cb_variant!(
 cb_variant!(
     GattServerCb,
     gs_request_write_characteristic_cb -> GattServerCallbacks::RequestWriteCharacteristic,
-    i32, i32, *const RawAddress, i32, i32, bool, bool, *const u8, usize, {
+    i32, i32, *const RawAddress, i32, i32, bool, bool, *const u8, usize -> _, {
         let _2 = unsafe { *_2 };
         let _7 = ptr_to_vec(_7, _8);
     }
@@ -825,7 +826,7 @@ cb_variant!(
 cb_variant!(
     GattServerCb,
     gs_request_write_descriptor_cb -> GattServerCallbacks::RequestWriteDescriptor,
-    i32, i32, *const RawAddress, i32, i32, bool, bool, *const u8, usize, {
+    i32, i32, *const RawAddress, i32, i32, bool, bool, *const u8, usize -> _, {
         let _2 = unsafe { *_2 };
         let _7 = ptr_to_vec(_7, _8);
     }
@@ -883,7 +884,7 @@ cb_variant!(
 cb_variant!(
     GattServerCb,
     gs_subrate_chg_cb -> GattServerCallbacks::SubrateChanged,
-    i32, u16, u16, u16, u16, u8 -> GattStatus, {}
+    i32, u16, u16, u16, u16, u8, u8 -> GattStatus, {}
 );
 
 /// Scanning callbacks used by the GD implementation of BleScannerInterface.
@@ -1218,9 +1219,9 @@ impl GattClient {
         is_direct: bool,
         transport: i32,
         opportunistic: bool,
-        initiating_phys: i32,
         preferred_mtu: i32,
         prefer_relax_mode: bool,
+        auto_mtu_enabled: bool,
     ) -> BtStatus {
         BtStatus::from(ccall!(
             self,
@@ -1231,9 +1232,9 @@ impl GattClient {
             is_direct,
             transport,
             opportunistic,
-            initiating_phys,
             preferred_mtu,
-            prefer_relax_mode
+            prefer_relax_mode,
+            auto_mtu_enabled
         ))
     }
 
@@ -1408,11 +1409,6 @@ impl GattClient {
     #[log_args]
     pub fn read_phy(&mut self, client_if: i32, addr: &RawAddress) -> BtStatus {
         BtStatus::from_i32(mutcxxcall!(self, read_phy, client_if, *addr)).unwrap()
-    }
-
-    #[log_args]
-    pub fn test_command(&self, command: i32, params: &BtGattTestParams) -> BtStatus {
-        BtStatus::from(ccall!(self, test_command, command, params))
     }
 }
 
@@ -1707,8 +1703,15 @@ impl BleScanner {
     }
 
     #[log_args]
-    pub fn start_sync(&mut self, sid: u8, addr: RawAddress, skip: u16, timeout: u16) {
-        mutcxxcall!(self, StartSync, sid, addr, skip, timeout);
+    pub fn start_sync(
+        &mut self,
+        sid: u8,
+        addr: RawAddress,
+        addr_type: u8,
+        skip: u16,
+        timeout: u16,
+    ) {
+        mutcxxcall!(self, StartSync, sid, addr, addr_type, skip, timeout);
     }
 
     #[log_args]
@@ -1982,6 +1985,7 @@ impl Gatt {
             services_removed_cb: None,
             services_added_cb: None,
             subrate_chg_cb: None,
+            characteristics_unoffloaded_cb: None,
         });
 
         let gatt_server_callbacks = Box::new(btgatt_server_callbacks_t {
@@ -2002,6 +2006,7 @@ impl Gatt {
             phy_updated_cb: Some(gs_phy_updated_cb),
             conn_updated_cb: Some(gs_conn_updated_cb),
             subrate_chg_cb: Some(gs_subrate_chg_cb),
+            characteristics_unoffloaded_cb: None,
         });
 
         let callbacks = Box::new(btgatt_callbacks_t {

@@ -17,9 +17,7 @@ import contextlib
 import datetime
 import logging
 import pathlib
-import re
 import time
-from typing import cast
 
 from mobly.controllers import android_device
 from mobly.controllers.android_device_lib import adb
@@ -68,25 +66,32 @@ def download_btsnoop(
     destination_base_path: destination base path.
     filename_prefix: (Optional) destination file name prefix.
   """
-    filename = '_'.join(([filename_prefix] if filename_prefix else []) + [device.serial, 'btsnoop'])
+    filename_prefix = '_'.join(([filename_prefix] if filename_prefix else []) + [device.serial])
+    dest = pathlib.Path(destination_base_path)
 
-    device_snoop_paths = [
-        '/data/misc/bluetooth/logs/btsnoop_hci.log',
-        '/data/misc/bluetooth/logs/btsnoop_hci.log.last',
-        '/data/vendor/bluetooth/btsnoop_hci_vnd.log',
-        '/data/vendor/bluetooth/btsnoop_hci_vnd.log.last',
-    ]
-    host_snoop_paths = [
-        str(pathlib.Path(destination_base_path) / f'{filename}.log'),
-        str(pathlib.Path(destination_base_path) / f'{filename}.log.last'),
-        str(pathlib.Path(destination_base_path) / f'{filename}_vnd.log'),
-        str(pathlib.Path(destination_base_path) / f'{filename}_vnd.log.last'),
-    ]
+    for directory in (
+            '/data/misc/bluetooth/logs',
+            '/data/vendor/bluetooth',
+    ):
+        files = (device.adb.shell(['ls', directory, '||', 'true']).decode('utf-8').splitlines())
+        for filename in files:
+            device_snoop_path = pathlib.Path(directory, filename).as_posix()
+            host_snoop_path = dest / f'{filename_prefix}_{filename}'
+            device.adb.pull([device_snoop_path, str(host_snoop_path)])
 
-    for device_snoop_path, host_snoop_path in zip(device_snoop_paths, host_snoop_paths):
-        # If target file doesn't exist, an AdbError will be raised.
+
+def cleanup_btsnoop(device: android_device.AndroidDevice) -> None:
+    """Cleanup Bluetooth snoop log from Android device.
+
+  Args:
+    device: Android device to download log.
+  """
+    for path in (
+            '/data/misc/bluetooth/logs/*',
+            '/data/vendor/bluetooth/*',
+    ):
         with contextlib.suppress(adb.AdbError):
-            device.adb.pull([device_snoop_path, host_snoop_path])
+            device.adb.shell(['rm', '-rf', path])
 
 
 def download_dumpsys(
@@ -129,14 +134,3 @@ def enable_bluetooth(device: android_device.AndroidDevice, enable: bool) -> None
         ])
     except android_device.adb.AdbError:
         time.sleep(1)
-
-
-def get_bluetooth_flags(device: android_device.AndroidDevice,) -> dict[str, bool]:
-    """Get Bluetooth flags from Android device."""
-    pattern = re.compile(r'\[(■| )\]: (\w+)')
-
-    output = cast(
-        bytes,
-        device.adb.shell("dumpsys bluetooth_manager | sed -n '/🚩Flag dump:/,/^$/p'"),
-    ).decode('utf8')
-    return {match[1]: match[0] == '■' for match in pattern.findall(output)}

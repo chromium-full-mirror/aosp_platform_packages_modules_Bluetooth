@@ -119,6 +119,7 @@ using bluetooth::le_audio::GroupStreamStatus;
 using bluetooth::le_audio::LeAudioDevice;
 using bluetooth::le_audio::LeAudioDeviceGroup;
 using bluetooth::le_audio::LeAudioGroupStateMachine;
+using bluetooth::le_audio::StateMachineInvalidStatus;
 
 using bluetooth::hci::ErrorCode;
 using bluetooth::hci::ErrorCodeText;
@@ -155,9 +156,10 @@ LeAudioGroupStateMachineImpl* instance;
 
 class LeAudioGroupStateMachineImpl : public LeAudioGroupStateMachine {
 public:
-  LeAudioGroupStateMachineImpl(Callbacks* state_machine_callbacks)
+  LeAudioGroupStateMachineImpl(Callbacks* state_machine_callbacks,
+                               bluetooth::hci::iso_manager::IsoClientHandle iso_client_handle)
       : state_machine_callbacks_(state_machine_callbacks),
-        watchdog_(alarm_new("LeAudioStateMachineTimer")) {
+        watchdog_(alarm_new("LeAudioStateMachineTimer")), iso_client_handle_(iso_client_handle) {
     log_history_ = LeAudioLogHistory::Get();
   }
 
@@ -315,6 +317,7 @@ public:
 
         // Even stream is already configured for the context, update the metadata.
         group->SetMetadataContexts(metadata_context_types);
+        group->UpdateMetadataForActiveAndNotStreamingAses(ccid_lists);
 
         if (wait_for_cig_removal) {
           log::debug("Continue after CIG is removed");
@@ -644,8 +647,9 @@ public:
         AseStateMachineProcessReleasing(arh, ase, group, leAudioDevice);
         break;
       default:
-        log::error("Wrong AES status: {}", static_cast<int>(arh.state));
-        StopStream(group);
+        log::error("Wrong AES state: {}", static_cast<int>(arh.state));
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE);
         break;
     }
   }
@@ -680,7 +684,8 @@ public:
       group->cig.SetState(CigState::NONE);
       log::error(", failed to create CIG, reason: 0x{:02x}, new cig state: {}", status,
                  ToString(group->cig.GetState()));
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIG);
       return;
     }
 
@@ -721,13 +726,15 @@ public:
               "Could not recover from the COMMAND DISALLOAD on CigCreate. Status "
               "on CIG remove is 0x{:02x}",
               status);
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIG);
       return;
     }
     log::info("Succeed on CIG Recover - back to creating CIG");
     if (!CigCreate(group)) {
       log::error("Could not create CIG. Stop the stream for group {}", group->group_id_);
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIG);
     }
   }
 
@@ -747,7 +754,8 @@ public:
     if (status != HCI_SUCCESS) {
       log::error("Could not remove the cig for group_id: {}", group->group_id_);
       group->cig.SetState(CigState::CREATED);
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::FAILED_TO_REMOVE_CIG);
       return;
     }
 
@@ -787,8 +795,8 @@ public:
       case CigState::NONE:
       case CigState::CREATING:
       case CigState::CREATED:
-        log::fatal("Invalid CIG state {} for group {} - controller issue",
-                   ToString(cig_state), group->group_id_);
+        log::fatal("Invalid CIG state {} for group {} - controller issue", ToString(cig_state),
+                   group->group_id_);
         break;
     }
   }
@@ -808,7 +816,8 @@ public:
       if (ase) {
         set_ase_data_path(leAudioDevice->address_, ase, DataPathState::IDLE);
       }
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::FAILED_TO_SETUP_ISO_DATA_PATH);
 
       return;
     }
@@ -1202,7 +1211,8 @@ public:
         RemoveCigForGroup(group);
       }
 
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIS);
       return;
     }
 
@@ -1227,7 +1237,8 @@ public:
         log::info("{} got CIS is in disconnecting state", leAudioDevice->address_);
       } else {
         log::error("Unintended CIS establishment event came for group id: {}", group->group_id_);
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_CIS_ESTABLISHED_EVENT);
       }
 
       return;
@@ -1540,6 +1551,8 @@ private:
   Callbacks* state_machine_callbacks_;
   alarm_t* watchdog_;
   LeAudioLogHistory* log_history_;
+  bluetooth::hci::iso_manager::IsoClientHandle iso_client_handle_ =
+          bluetooth::hci::iso_manager::kInvalidIsoClientHandle;
 
   /* This callback is called on timeout during transition to target state */
   void OnStateTransitionTimeout(int group_id) {
@@ -1654,8 +1667,7 @@ private:
     log::info(
             "Added {} Stream Configuration. CIS Connection Handle: {}, Audio "
             "Channel Allocation: {}, Number Of Devices: {}, Number Of Channels: {}",
-            (ase->direction == bluetooth::le_audio::types::kLeAudioDirectionSink ? "Sink"
-                                                                                 : "Source"),
+            ase->direction == bluetooth::le_audio::types::kLeAudioDirectionSink ? "Sink" : "Source",
             cis_conn_hdl, ase_audio_channel_allocation, params.num_of_devices,
             params.num_of_channels);
 
@@ -1874,7 +1886,7 @@ private:
                                 kLogCigCreateOp + "#CIS: " + std::to_string(param.cis_cfgs.size()));
 
     group->cig.SetState(CigState::CREATING);
-    IsoManager::GetInstance()->CreateCig(group->group_id_, std::move(param));
+    IsoManager::GetInstance()->CreateCig(iso_client_handle_, group->group_id_, std::move(param));
     log::debug("Group: {}, id: {} cig state: {}", std::format_ptr(group), group->group_id_,
                ToString(group->cig.GetState()));
     return true;
@@ -2131,7 +2143,8 @@ private:
                    ToString(ase->state), ToString(AseState::BTA_LE_AUDIO_ASE_STATE_IDLE),
                    leAudioDevice->address_, ase->id);
         group->PrintDebugState();
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
     }
   }
@@ -2176,7 +2189,8 @@ private:
 
     if (!group->cig.AssignCisIds(leAudioDevice)) {
       log::error("unable to assign CIS IDs");
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::UNABLE_TO_ASSIGN_CISES);
       return false;
     }
 
@@ -2279,7 +2293,8 @@ private:
          * configuration/reconfiguration
          */
         if (!ParseAseStatusCodecConfiguredStateParams(rsp, len, data)) {
-          StopStream(group);
+          state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                  group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_PARAMETERS);
           return;
         }
 
@@ -2297,7 +2312,8 @@ private:
               (ase->direction == bluetooth::le_audio::types::kLeAudioDirectionSource &&
                cig_curr_max_trans_lat_stom > rsp.max_transport_latency)) {
             group->SetPendingConfiguration();
-            StopStream(group);
+            state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                    group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_PARAMETERS);
             return;
           }
         }
@@ -2362,7 +2378,8 @@ private:
             PrepareAndSendQoSToTheGroup(group);
           } else if (!CigCreate(group)) {
             log::error("Could not create CIG. Stop the stream for group {}", group->group_id_);
-            StopStream(group);
+            state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                    group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIG);
           }
           return;
         }
@@ -2391,8 +2408,8 @@ private:
 
         log::error(", invalid state transition, from: {} to {}", ToString(group->GetState()),
                    ToString(group->GetTargetState()));
-        StopStream(group);
-
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
       }
       case AseState::BTA_LE_AUDIO_ASE_STATE_QOS_CONFIGURED:
@@ -2411,7 +2428,8 @@ private:
          * configuration/reconfiguration
          */
         if (!ParseAseStatusCodecConfiguredStateParams(rsp, len, data)) {
-          StopStream(group);
+          state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                  group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_PARAMETERS);
           return;
         }
 
@@ -2463,7 +2481,8 @@ private:
             PrepareAndSendConfigQos(group, leAudioDevice);
           } else if (!CigCreate(group)) {
             log::error("Could not create CIG. Stop the stream for group {}", group->group_id_);
-            StopStream(group);
+            state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                    group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIG);
           }
           return;
         }
@@ -2540,7 +2559,8 @@ private:
                    ToString(AseState::BTA_LE_AUDIO_ASE_STATE_CODEC_CONFIGURED),
                    leAudioDevice->address_, ase->id);
         group->PrintDebugState();
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
     }
   }
@@ -2615,7 +2635,8 @@ private:
           /* Source ASE cannot go from Streaming to QoS Configured state */
           log::error("invalid state transition, from: {}, to: {}", static_cast<int>(ase->state),
                      static_cast<int>(AseState::BTA_LE_AUDIO_ASE_STATE_QOS_CONFIGURED));
-          StopStream(group);
+          state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                  group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
           return;
         }
 
@@ -2685,7 +2706,8 @@ private:
         } else {
           log::error(", invalid state transition, from: {}, to: {}", ToString(group->GetState()),
                      ToString(group->GetTargetState()));
-          StopStream(group);
+          state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                  group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
           return;
         }
         break;
@@ -2702,7 +2724,8 @@ private:
         log::error("Invalid state transition from {} to {}, {}, ase_id: {}. Stopping the stream.",
                    ToString(ase->state), ToString(AseState::BTA_LE_AUDIO_ASE_STATE_QOS_CONFIGURED),
                    leAudioDevice->address_, ase->id);
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
     }
   }
@@ -2986,7 +3009,8 @@ private:
       if (!group->GetPresentationDelay(&ase->qos_config.presentation_delay, ase->direction)) {
         log::error("inconsistent presentation delay for group");
         group->PrintDebugState();
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_PARAMETERS);
         return;
       }
       ase->qos_config.framing = group->GetFraming();
@@ -3005,7 +3029,8 @@ private:
       if (!conf.sdu_interval) {
         log::error("unsupported SDU interval for group");
         group->PrintDebugState();
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_PARAMETERS);
         return;
       }
 
@@ -3041,7 +3066,8 @@ private:
     if (confs.size() == 0 || !validate_transport_latency || !validate_max_sdu_size) {
       log::error("Invalid configuration or latency or sdu size");
       group->PrintDebugState();
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_PARAMETERS);
       return;
     }
 
@@ -3208,7 +3234,8 @@ private:
           if (ase->cis_state < CisState::CONNECTING) {
             /* We are here because of the reconnection of the single device. */
             if (!CisCreateForDevice(group, leAudioDevice)) {
-              StopStream(group);
+              state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                      group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIS);
               return;
             }
           }
@@ -3248,7 +3275,8 @@ private:
       default:
         log::error("invalid state transition, from: {}, to: {}", static_cast<int>(ase->state),
                    static_cast<int>(AseState::BTA_LE_AUDIO_ASE_STATE_ENABLING));
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
     }
   }
@@ -3282,7 +3310,8 @@ private:
         log::error("{}, ase_id: {}, moving from QoS Configured to Streaming is impossible.",
                    leAudioDevice->address_, ase->id);
         group->PrintDebugState();
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
 
       case AseState::BTA_LE_AUDIO_ASE_STATE_ENABLING: {
@@ -3336,13 +3365,15 @@ private:
 
         log::error(", invalid state transition, from: {}, to: {}", ToString(group->GetState()),
                    ToString(group->GetTargetState()));
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
 
         break;
       }
       case AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING: {
         if (!valid_response) {
-          StopStream(group);
+          state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                  group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_PARAMETERS);
           return;
         }
 
@@ -3356,7 +3387,8 @@ private:
       default:
         log::error("invalid state transition, from: {}, to: {}", static_cast<int>(ase->state),
                    static_cast<int>(AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING));
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
     }
   }
@@ -3374,7 +3406,8 @@ private:
       /* Sink ASE state machine does not have Disabling state */
       log::error(", invalid state transition, from: {} , to: {}", ToString(group->GetState()),
                  ToString(group->GetTargetState()));
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
       return;
     }
 
@@ -3407,7 +3440,8 @@ private:
       default:
         log::error("invalid state transition, from: {}, to: {}", static_cast<int>(ase->state),
                    static_cast<int>(AseState::BTA_LE_AUDIO_ASE_STATE_DISABLING));
-        StopStream(group);
+        state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+                group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
         break;
     }
   }
@@ -3564,13 +3598,15 @@ private:
     if (group->GetTargetState() != AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING) {
       log::error(", invalid state transition, from: {} , to: {}", ToString(group->GetState()),
                  ToString(group->GetTargetState()));
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
       return;
     }
 
     /* Try to create CISes for the group */
     if (!CisCreate(group)) {
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::FAILED_TO_CREATE_CIG);
     }
   }
 
@@ -3599,7 +3635,8 @@ private:
     } else {
       log::error(", invalid state transition, from: {} , to: {}", ToString(group->GetState()),
                  ToString(group->GetTargetState()));
-      StopStream(group);
+      state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+              group->group_id_, StateMachineInvalidStatus::INVALID_ASE_STATE_TRANSITION);
     }
   }
 
@@ -3616,19 +3653,22 @@ private:
     }
 
     /* If there is no more ASEs streaming, just stop the stream */
-    StopStream(group);
+    state_machine_callbacks_->OnStateMachineInvalidStatusCb(
+            group->group_id_, StateMachineInvalidStatus::AUTONOMOUS_DISABLE);
   }
 };
 }  // namespace
 
 namespace bluetooth::le_audio {
-void LeAudioGroupStateMachine::Initialize(Callbacks* state_machine_callbacks_) {
+void LeAudioGroupStateMachine::Initialize(
+        Callbacks* state_machine_callbacks_,
+        bluetooth::hci::iso_manager::IsoClientHandle iso_client_handle) {
   if (instance) {
     log::error("Already initialized");
     return;
   }
 
-  instance = new LeAudioGroupStateMachineImpl(state_machine_callbacks_);
+  instance = new LeAudioGroupStateMachineImpl(state_machine_callbacks_, iso_client_handle);
 }
 
 void LeAudioGroupStateMachine::Cleanup() {

@@ -304,7 +304,7 @@ public:
    ** Returns          LE_PSM to use if success. Otherwise returns 0.
    **
    ******************************************************************************/
-  virtual uint16_t L2CA_AllocateLePSM(void) = 0;
+  virtual uint16_t L2CA_AllocateLePSM(int fixed_psm_slots) = 0;
 
   /*******************************************************************************
    **
@@ -655,7 +655,10 @@ public:
    ******************************************************************************/
   virtual void L2CA_Consolidate(const RawAddress& identity_addr, const RawAddress& rpa) = 0;
   virtual tHCI_ROLE L2CA_GetBleConnRole(const RawAddress& bd_addr) = 0;
+  virtual uint16_t L2CA_GetBleSubrateFactor(const RawAddress& bd_addr) = 0;
   virtual uint16_t L2CA_GetBleConnInterval(const RawAddress& bd_addr) = 0;
+  virtual uint16_t L2CA_GetBlePeriphLatency(const RawAddress& bd_addr) = 0;
+  virtual uint16_t L2CA_GetBleSupervisionTimeout(const RawAddress& bd_addr) = 0;
 
   /*******************************************************************************
    **

@@ -16,7 +16,7 @@
 
 package com.android.bluetooth.le_scan;
 
-import static com.android.bluetooth.le_scan.ScanUtil.DEFAULT_REPORT_DELAY_FLOOR_MS;
+import static com.android.bluetooth.le_scan.BatchScanUtil.DEFAULT_REPORT_DELAY_FLOOR_MS;
 
 import static java.util.Objects.requireNonNull;
 
@@ -24,7 +24,7 @@ import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.util.Log;
 
-import com.android.bluetooth.Utils.TimeProvider;
+import com.android.bluetooth.util.TimeProvider;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.Set;
@@ -35,7 +35,8 @@ import java.util.Set;
  * longer when the screen is off.
  */
 class BatchScanThrottler {
-    private static final String TAG = BatchScanThrottler.class.getSimpleName();
+    private static final String TAG =
+            ScanUtil.TAG_PREFIX + BatchScanThrottler.class.getSimpleName();
 
     // Minimum batch trigger interval to check for batched results when the screen is off
     private static final String SCREEN_OFF_MINIMUM_DELAY_FLOOR_PROP =
@@ -153,7 +154,7 @@ class BatchScanThrottler {
         for (ScanClient client : batchClients) {
             if (client.getSettings().getReportDelayMillis() > 0) {
                 long clientReportDelayMs = client.getSettings().getReportDelayMillis();
-                if (client.getFilters().isEmpty() && clientReportDelayMs < unfilteredFloor) {
+                if (!client.isFiltered() && clientReportDelayMs < unfilteredFloor) {
                     clientReportDelayMs = unfilteredFloor;
                 }
                 minimumReportDelayMs = Math.min(minimumReportDelayMs, clientReportDelayMs);

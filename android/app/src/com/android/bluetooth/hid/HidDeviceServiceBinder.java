@@ -29,8 +29,9 @@ import android.bluetooth.IBluetoothHidDeviceCallback;
 import android.content.AttributionSource;
 import android.util.Log;
 
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
-import com.android.bluetooth.btservice.ProfileService.IProfileServiceBinder;
+import com.android.bluetooth.profile.ProfileService.IProfileServiceBinder;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -58,9 +59,9 @@ class HidDeviceServiceBinder extends IBluetoothHidDevice.Stub implements IProfil
         if (Utils.isInstrumentationTestMode()) {
             return service;
         }
-        if (!Utils.checkServiceAvailable(service, TAG)
+        if (!Util.checkProfileAvailable(service, TAG)
                 || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
-                || !Utils.checkConnectPermissionForDataDelivery(service, source, TAG)) {
+                || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
             return null;
         }
         return service;
@@ -148,22 +149,6 @@ class HidDeviceServiceBinder extends IBluetoothHidDevice.Stub implements IProfil
             return false;
         }
         return service.disconnect(device);
-    }
-
-    @Override
-    public boolean setConnectionPolicy(
-            BluetoothDevice device, int connectionPolicy, AttributionSource source) {
-        Log.d(
-                TAG,
-                "setConnectionPolicy():"
-                        + (" device=" + device)
-                        + (" connectionPolicy=" + connectionPolicy));
-
-        HidDeviceService service = getService(source);
-        if (service == null) {
-            return false;
-        }
-        return service.setConnectionPolicy(device, connectionPolicy);
     }
 
     @Override

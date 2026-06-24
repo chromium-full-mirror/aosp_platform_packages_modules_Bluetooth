@@ -22,6 +22,15 @@
         android:configChanges="orientation|screenSize|keyboard|keyboardHidden"
         android:exported="false">
     </activity>
+    <activity
+        android:name="com.google.android.bluetooth.snippet.VoiceCommandActivity"
+        android:configChanges="orientation|screenSize|keyboard|keyboardHidden"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.VOICE_COMMAND" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+    </activity>
     <provider
         android:name="androidx.core.content.FileProvider"
         android:authorities="com.google.android.bluetooth.snippet.FileProvider"
@@ -49,6 +58,7 @@
                        com.google.android.bluetooth.snippet.BluetoothHapClientSnippet,
                        com.google.android.bluetooth.snippet.BluetoothHfpAgSnippet,
                        com.google.android.bluetooth.snippet.BluetoothHfpHfSnippet,
+                       com.google.android.bluetooth.snippet.BluetoothHidDeviceSnippet,
                        com.google.android.bluetooth.snippet.BluetoothHidHostSnippet,
                        com.google.android.bluetooth.snippet.BluetoothL2capSnippet,
                        com.google.android.bluetooth.snippet.BluetoothLeAudioSnippet,
@@ -58,6 +68,7 @@
                        com.google.android.bluetooth.snippet.BluetoothPanSnippet,
                        com.google.android.bluetooth.snippet.BluetoothProfileSnippet,
                        com.google.android.bluetooth.snippet.BluetoothRfcommSnippet,
+                       com.google.android.bluetooth.snippet.BluetoothVolumeControlSnippet,
                        com.google.android.bluetooth.snippet.DistanceMeasurementSnippet,
                        com.google.android.bluetooth.snippet.InputSnippet,
                        com.google.android.bluetooth.snippet.OtherSnippet,

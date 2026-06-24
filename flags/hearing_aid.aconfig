@@ -7,3 +7,13 @@ flag {
     description: "When Service Changed event was received, do not perform GATT operations on outdated handles"
     bug: "419703276"
 }
+
+flag {
+    name: "asha_retry_reconnect_when_in_set"
+    namespace: "bluetooth"
+    description: "When one of the hearing aids in set connects and the other fails, retry reconnect"
+    bug: "452898614"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}

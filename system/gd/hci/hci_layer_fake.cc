@@ -191,6 +191,18 @@ void HciLayerFake::IncomingEvent(std::unique_ptr<EventBuilder> event_builder) {
   }
 }
 
+void HciLayerFake::IncomingVendorSpecificEvent(
+        std::unique_ptr<VendorSpecificEventBuilder> event_builder) {
+  std::lock_guard lock(mutex_);
+  auto packet = GetPacketView(std::move(event_builder));
+  EventView event = EventView::Create(packet);
+  VendorSpecificEventView vs_event_view = VendorSpecificEventView::Create(event);
+  ASSERT_TRUE(vs_event_view.IsValid());
+  VseSubeventCode subevent_code = vs_event_view.GetSubeventCode();
+  ASSERT_TRUE(registered_vs_events_.find(subevent_code) != registered_vs_events_.end());
+  registered_vs_events_[subevent_code](vs_event_view);
+}
+
 void HciLayerFake::IncomingLeMetaEvent(std::unique_ptr<LeMetaEventBuilder> event_builder) {
   std::lock_guard lock(mutex_);
   auto packet = GetPacketView(std::move(event_builder));
@@ -243,11 +255,26 @@ void HciLayerFake::SetClassicAclDataConsumer(ClassicAclDataConsumer* classic_acl
 
 void HciLayerFake::IncomingAclData(uint16_t handle, std::unique_ptr<AclBuilder> acl_builder) {
   std::lock_guard lock(mutex_);
+  auto packet = GetPacketView(std::move(acl_builder));
+  auto acl_view = AclView::Create(packet);
+  ASSERT_TRUE(acl_view.IsValid());
+  ASSERT_EQ(handle, acl_view.GetHandle());
+  if (vendor_connection_handle_min_ > 0 && handle >= vendor_connection_handle_min_ &&
+      handle <= vendor_connection_handle_max_) {
+    if (vendor_specific_acl_handler_) {
+      auto payload = acl_view.GetPayload();
+      std::vector<uint8_t> data(payload.begin(), payload.end());
+      handler_->Post(common::BindOnce(
+              [](common::ContextualCallback<void(uint16_t, std::vector<uint8_t>)> handler,
+                 uint16_t handle, std::vector<uint8_t> data) { handler(handle, std::move(data)); },
+              vendor_specific_acl_handler_, handle, std::move(data)));
+    }
+    return;
+  }
+
   auto* queue_end = acl_queue_.GetDownEnd();
   std::promise<void> promise;
   auto future = promise.get_future();
-  auto packet = GetPacketView(std::move(acl_builder));
-  auto acl_view = AclView::Create(packet);
   queue_end->RegisterEnqueue(
           handler_, common::Bind(
                             [](decltype(queue_end) queue_end, uint16_t /* handle */, AclView acl2,
@@ -294,6 +321,23 @@ void HciLayerFake::Disconnect(uint16_t handle, ErrorCode reason) {
 
 void HciLayerFake::do_disconnect(uint16_t handle, ErrorCode reason) {
   HciLayer::Disconnect(handle, reason);
+}
+
+void HciLayerFake::SetVendorAclHandleRange(uint16_t min, uint16_t max) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  vendor_connection_handle_min_ = min;
+  vendor_connection_handle_max_ = max;
+}
+
+void HciLayerFake::RegisterVendorSpecificAclHandler(
+        common::ContextualCallback<void(uint16_t, std::vector<uint8_t>)> handler) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  vendor_specific_acl_handler_ = handler;
+}
+
+void HciLayerFake::UnregisterVendorSpecificAclHandler() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  vendor_specific_acl_handler_ = {};
 }
 
 HciLayerFake::HciLayerFake(os::Handler* handler)

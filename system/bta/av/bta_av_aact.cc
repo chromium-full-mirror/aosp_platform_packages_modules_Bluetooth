@@ -135,10 +135,12 @@ enum {
 
 /* the call out functions for audio stream */
 const tBTA_AV_CO_FUNCTS bta_av_a2dp_cos = {
-        bta_av_co_audio_init,      bta_av_co_audio_disc_res,   bta_av_co_audio_getconfig,
-        bta_av_co_audio_setconfig, bta_av_co_audio_open,       bta_av_co_audio_close,
-        bta_av_co_audio_start,     bta_av_co_audio_stop,       bta_av_co_audio_source_data_path,
-        bta_av_co_audio_delay,     bta_av_co_audio_update_mtu, bta_av_co_get_scmst_info};
+        bta_av_co_audio_init,      bta_av_co_audio_disc_res,
+        bta_av_co_audio_getconfig, bta_av_co_audio_setconfig,
+        bta_av_co_audio_open,      bta_av_co_audio_close,
+        bta_av_co_audio_start,     bta_av_co_audio_source_data_path,
+        bta_av_co_audio_delay,     bta_av_co_audio_update_mtu,
+        bta_av_co_get_scmst_info};
 
 /* these tables translate AVDT events to SSM events */
 static const uint16_t bta_av_stream_evt_ok[] = {
@@ -808,8 +810,8 @@ void bta_av_do_disc_a2dp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
 
   p_scb->uuid_int = p_data->api_open.uuid;
   if (p_scb->AvdtpVersion() != 0 &&
-      interop_match_addr_or_name(INTEROP_A2DP_SKIP_SDP_DURING_RECONNECTION, &p_scb->PeerAddress(),
-                                 &btif_storage_get_remote_device_property)) {
+      interop_match_addr_or_name(INTEROP_A2DP_SKIP_SDP_DURING_RECONNECTION, p_scb->PeerAddress(),
+                                 btif_storage_get_remote_device_property)) {
     log::info("Skip SDP with valid AVDTP version 0x{:04x}", p_scb->AvdtpVersion());
     bta_av_a2dp_sdp_cback(true, nullptr, p_scb->PeerAddress());
     return;
@@ -1117,7 +1119,16 @@ void bta_av_setconfig_rsp(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     } else if (p_scb->uuid_int == 0) {
       p_scb->uuid_int = p_scb->open_api.uuid;
     }
-    bta_av_discover_req(p_scb, NULL);
+    if (com_android_bluetooth_flags_a2dp_skip_discover_after_set_config()) {
+      if (interop_match_addr(INTEROP_AVDTP_SKIP_DISCOVER_AFTER_CONFIG, p_scb->PeerAddress())) {
+        log::info("IOP workaround for {}: skip discover after set config", p_scb->PeerAddress());
+      } else {
+        bta_av_discover_req(p_scb, NULL);
+      }
+    } else {
+      bta_av_discover_req(p_scb, NULL);
+    }
+
     // Set timer to initiate stream opening if peer doesn't
     if (!p_scb->accept_open_timer) {
       p_scb->accept_open_timer = alarm_new("accept_open_timer");
@@ -1159,7 +1170,7 @@ void bta_av_str_opened(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
   // Don't use AVDTP SUSPEND for restrict listed devices
   btif_storage_get_stored_remote_name(p_scb->PeerAddress(), remote_name);
   if (interop_match_name(INTEROP_DISABLE_AVDTP_SUSPEND, remote_name) ||
-      interop_match_addr(INTEROP_DISABLE_AVDTP_SUSPEND, &p_scb->PeerAddress())) {
+      interop_match_addr(INTEROP_DISABLE_AVDTP_SUSPEND, p_scb->PeerAddress())) {
     log::info("disable AVDTP SUSPEND: interop matched name {} address {}", remote_name,
               p_scb->PeerAddress());
     p_scb->suspend_sup = false;
@@ -1212,7 +1223,7 @@ void bta_av_str_opened(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
         open.edr |= BTA_AV_EDR_2MBPS;
       }
       if (HCI_EDR_ACL_3MPS_SUPPORTED(p)) {
-        if (!interop_match_addr(INTEROP_2MBPS_LINK_ONLY, &p_scb->PeerAddress())) {
+        if (!interop_match_addr(INTEROP_2MBPS_LINK_ONLY, p_scb->PeerAddress())) {
           open.edr |= BTA_AV_EDR_3MBPS;
         }
       }
@@ -1928,8 +1939,6 @@ void bta_av_str_stopped(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
 
     bta_av_stream_chg(p_scb, false);
     p_scb->co_started = false;
-
-    p_scb->p_cos->stop(p_scb->hndl, p_scb->PeerAddress());
   }
 
   if (com_android_bluetooth_flags_delay_sniff_subrating()) {
@@ -2406,7 +2415,6 @@ void bta_av_start_ok(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
       p_scb->role |= BTA_AV_ROLE_SUSPEND;
       p_scb->cong = true; /* do not allow the media data to go through */
       /* do not duplicate the media packets to this channel */
-      p_scb->p_cos->stop(p_scb->hndl, p_scb->PeerAddress());
       p_scb->co_started = false;
       tBTA_AV_API_STOP stop = {
               .hdr = {},
@@ -2594,10 +2602,7 @@ void bta_av_suspend_cfm(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     }
     bta_av_stream_chg(p_scb, false);
 
-    {
-      p_scb->co_started = false;
-      p_scb->p_cos->stop(p_scb->hndl, p_scb->PeerAddress());
-    }
+    p_scb->co_started = false;
   }
 
   {
@@ -2839,8 +2844,7 @@ void bta_av_rcfg_cfm(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* p_data) {
     char remote_name[BD_NAME_LEN] = "";
     if (btif_storage_get_stored_remote_name(p_scb->PeerAddress(), remote_name)) {
       if (interop_match_name(INTEROP_DISABLE_AVDTP_RECONFIGURE, remote_name) ||
-          interop_match_addr(INTEROP_DISABLE_AVDTP_RECONFIGURE,
-                             (const RawAddress*)&p_scb->PeerAddress())) {
+          interop_match_addr(INTEROP_DISABLE_AVDTP_RECONFIGURE, p_scb->PeerAddress())) {
         log::info("disable AVDTP RECONFIGURE: interop matched name {} address {}", remote_name,
                   p_scb->PeerAddress());
         disable_avdtp_reconfigure = true;
@@ -2889,9 +2893,6 @@ void bta_av_rcfg_open(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* /* p_data */) {
                p_scb->num_disc_snks);
 
   if (p_scb->num_disc_snks == 0) {
-    /* Need to update call-out module so that it will be ready for discover */
-    p_scb->p_cos->stop(p_scb->hndl, p_scb->PeerAddress());
-
     /* send avdtp discover request */
     AVDT_DiscoverReq(p_scb->PeerAddress(), p_scb->hdi, p_scb->sep_info, BTA_AV_NUM_SEPS,
                      &bta_av_proc_stream_evt);
@@ -3229,7 +3230,10 @@ void bta_av_offload_req(tBTA_AV_SCB* p_scb, tBTA_AV_DATA* /*p_data*/) {
   }
 
   A2dpCodecConfig* codec_config = bta_av_get_a2dp_current_codec();
-  log::assert_that(codec_config != nullptr, "assert failed: codec_config != nullptr");
+  if (codec_config == nullptr) {
+    log::error("current codec is null, ignore request");
+    return;
+  }
 
   if (codec_config->isHardwareProviderCodec()) {
     bta_av_vendor_offload_start_v2(p_scb, static_cast<A2dpCodecConfigExt*>(codec_config));

@@ -44,10 +44,12 @@ import android.os.SystemProperties;
 import android.util.Log;
 
 import com.android.bluetooth.R;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.hid.HidHostService;
+import com.android.bluetooth.storage.BluetoothStorageManager;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.time.Duration;
@@ -68,7 +70,7 @@ import java.util.Set;
 // will try to connect other profiles on the same device. This is to avoid collision if devices
 // somehow end up trying to connect at same time or general connection issues.
 public class PhonePolicy implements AdapterService.BluetoothStateCallback {
-    private static final String TAG = Utils.BT_PREFIX + PhonePolicy.class.getSimpleName();
+    private static final String TAG = Util.BT_PREFIX + PhonePolicy.class.getSimpleName();
 
     private static final String AUTO_CONNECT_PROFILES_PROPERTY =
             "bluetooth.auto_connect_profiles.enabled";
@@ -82,7 +84,8 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
 
     @VisibleForTesting static final Duration CONNECT_OTHER_PROFILES_TIMEOUT = Duration.ofSeconds(6);
 
-    private final DatabaseManager mDatabaseManager;
+    private final DatabaseManager mDatabaseManager; // Migrating
+    private final BluetoothStorageManager mStorage;
     private final AdapterService mAdapterService;
     private final Handler mHandler;
     private final Set<BluetoothDevice> mHeadsetRetrySet = new HashSet<>();
@@ -92,9 +95,15 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
     @VisibleForTesting boolean mAutoConnectProfilesSupported;
     @VisibleForTesting boolean mLeAudioEnabledByDefault;
 
-    PhonePolicy(AdapterService adapterService, Looper looper) {
+    PhonePolicy(AdapterService adapterService, Looper looper, BluetoothStorageManager storage) {
         mAdapterService = adapterService;
-        mDatabaseManager = requireNonNull(mAdapterService.getDatabaseManager());
+        if (Flags.mainlineBetaStorage()) {
+            mStorage = requireNonNull(storage);
+            mDatabaseManager = null;
+        } else {
+            mDatabaseManager = requireNonNull(mAdapterService.getDatabaseManager()); // Migrating
+            mStorage = null;
+        }
         mHandler = new Handler(looper);
         mAutoConnectProfilesSupported =
                 SystemProperties.getBoolean(AUTO_CONNECT_PROFILES_PROPERTY, false);
@@ -388,13 +397,8 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
                 && (volumeControl.get().getConnectionPolicy(device) == CONNECTION_POLICY_UNKNOWN)) {
             if (isLeAudioProfileAllowed) {
                 Log.d(TAG, log + "Setting VCP priority");
-                if (mAutoConnectProfilesSupported && !Flags.vcpOnMainLooper()) {
+                if (mAutoConnectProfilesSupported) {
                     volumeControl.get().setConnectionPolicy(device, CONNECTION_POLICY_ALLOWED);
-                } else if (mAutoConnectProfilesSupported && Flags.vcpOnMainLooper()) {
-                    volumeControl
-                            .get()
-                            .syncPost(
-                                    v -> v.setConnectionPolicy(device, CONNECTION_POLICY_ALLOWED));
                 } else {
                     mAdapterService.setProfileConnectionPolicy(
                             device, BluetoothProfile.VOLUME_CONTROL, CONNECTION_POLICY_ALLOWED);
@@ -606,7 +610,13 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
             connectOtherProfile(device);
         } else if (nextState == STATE_DISCONNECTED) {
             if (prevState == STATE_CONNECTING || prevState == STATE_DISCONNECTING) {
-                mDatabaseManager.setDisconnection(device, profile);
+                if (Flags.mainlineBetaStorage()) {
+                    if (profile == BluetoothProfile.A2DP || profile == BluetoothProfile.HEADSET) {
+                        mStorage.onDeviceDisconnected(device, profile);
+                    }
+                } else {
+                    mDatabaseManager.setDisconnection(device, profile); // Migrating
+                }
             }
             handleAllProfilesDisconnected(device);
         }
@@ -627,7 +637,11 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
             return;
         }
 
-        mDatabaseManager.setConnection(device, profile);
+        if (Flags.mainlineBetaStorage()) {
+            mStorage.onDeviceConnected(device, profile);
+        } else {
+            mDatabaseManager.setConnection(device, profile); // Migrating
+        }
 
         boolean isDualMode = isDualModeAudioEnabled();
         Log.d(TAG, log + "isDualMode=" + isDualMode);
@@ -668,7 +682,9 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
 
     private void processDeviceConnected(BluetoothDevice device) {
         Log.d(TAG, "processDeviceConnected(" + device + ")");
-        mDatabaseManager.setConnection(device);
+        if (!Flags.mainlineBetaStorage()) {
+            mDatabaseManager.setConnection(device); // Migrating
+        }
     }
 
     private boolean handleAllProfilesDisconnected(BluetoothDevice device) {
@@ -738,24 +754,34 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
             return;
         }
 
-        final BluetoothDevice mostRecentlyActiveA2dpDevice =
-                mDatabaseManager.getMostRecentlyConnectedA2dpDevice();
+        final BluetoothDevice mostRecentlyActiveA2dpDevice;
+        if (Flags.mainlineBetaStorage()) {
+            mostRecentlyActiveA2dpDevice = mStorage.getMostRecentlyActiveA2dpDevice();
+        } else {
+            mostRecentlyActiveA2dpDevice =
+                    mDatabaseManager.getMostRecentlyConnectedA2dpDevice(); // Migrating
+        }
         if (mostRecentlyActiveA2dpDevice != null) {
-            Log.d(TAG, log + "Attempting most recent A2DP device" + mostRecentlyActiveA2dpDevice);
+            Log.d(TAG, log + "Most recent A2DP device " + mostRecentlyActiveA2dpDevice);
             autoConnectHeadset(mostRecentlyActiveA2dpDevice);
             autoConnectA2dp(mostRecentlyActiveA2dpDevice);
             autoConnectHidHost(mostRecentlyActiveA2dpDevice);
             return;
         }
 
-        final List<BluetoothDevice> mostRecentlyConnectedHfpDevices =
-                mDatabaseManager.getMostRecentlyActiveHfpDevices();
+        final List<BluetoothDevice> mostRecentlyConnectedHfpDevices;
+        if (Flags.mainlineBetaStorage()) {
+            mostRecentlyConnectedHfpDevices = mStorage.getMostRecentlyActiveHfpDevices();
+        } else {
+            mostRecentlyConnectedHfpDevices =
+                    mDatabaseManager.getMostRecentlyActiveHfpDevices(); // Migrating
+        }
         for (BluetoothDevice hfpDevice : mostRecentlyConnectedHfpDevices) {
-            Log.d(TAG, log + "Attempting HFP device" + hfpDevice);
+            Log.d(TAG, log + "Most recent HFP device " + hfpDevice);
             autoConnectHeadset(hfpDevice);
         }
         if (mostRecentlyConnectedHfpDevices.size() == 0) {
-            Log.d(TAG, log + "No hfp device to connect");
+            Log.d(TAG, log + "There was no A2DP/HFP device to auto connect to");
         }
     }
 
@@ -910,19 +936,7 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
                 csipSetCoordinator.get().connect(device);
             }
         }
-        if (Flags.vcpOnMainLooper()) {
-            volumeControl.ifPresent(
-                    vcs -> {
-                        List<BluetoothDevice> vcConnDevList = vcs.getConnectedDevices();
-                        if (!vcConnDevList.contains(device)
-                                && (vcs.getConnectionPolicy(device) == CONNECTION_POLICY_ALLOWED)
-                                && (vcs.getConnectionState(device) == STATE_DISCONNECTED)) {
-                            Log.d(TAG, log + "Retrying VCP connection");
-                            vcs.connect(device);
-                        }
-                    });
-        }
-        if (!Flags.vcpOnMainLooper() && volumeControl.isPresent()) {
+        if (volumeControl.isPresent()) {
             List<BluetoothDevice> vcConnDevList = volumeControl.get().getConnectedDevices();
             if (!vcConnDevList.contains(device)
                     && (volumeControl.get().getConnectionPolicy(device)
@@ -1009,6 +1023,9 @@ public class PhonePolicy implements AdapterService.BluetoothStateCallback {
      * @param device is the remote device whose services have been discovered
      */
     void onRemoveBondRequest(BluetoothDevice device) {
+        if (Flags.mainlineBetaStorage()) {
+            throw new IllegalStateException("mainlineBetaStorage is enabled");
+        }
         Log.d(TAG, "onRemoveBondRequest(" + device + "): Disabling all profiles");
         // Don't allow any profiles to connect to the device.
         for (int profileId = BluetoothProfile.HEADSET;

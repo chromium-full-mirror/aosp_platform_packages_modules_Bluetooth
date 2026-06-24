@@ -16,6 +16,8 @@
 
 #include "os/handler.h"
 
+#include <base/functional/bind.h>
+#include <base/functional/callback.h>
 #include <bluetooth/log.h>
 #include <com_android_bluetooth_flags.h>
 #include <sys/timerfd.h>
@@ -23,37 +25,37 @@
 #include <chrono>
 #include <ctime>
 
-#include "common/bind.h"
-#include "common/callback.h"
 #include "os/reactor.h"
 namespace bluetooth {
 namespace os {
-using common::OnceClosure;
 
 Handler::Handler(Thread* thread)
-    : tasks_(new std::queue<OnceClosure>()),
+    : tasks_(new std::queue<base::OnceClosure>()),
       thread_(thread),
       delayed_tasks_(new DelayedTaskQueue()) {
   alarm_ = new Alarm(thread_, false);
   event_ = thread_->GetReactor()->NewEvent();
   reactable_ = thread_->GetReactor()->Register(
-          event_->Id(), common::Bind(&Handler::handle_next_event, common::Unretained(this)),
-          common::Closure());
+          event_->Id(), base::BindRepeating(&Handler::handle_next_event, base::Unretained(this)),
+          base::RepeatingClosure());
 }
 
 Handler::~Handler() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    log::assert_that(was_cleared(), "Handlers must be cleared before they are destroyed");
+    log::assert_that(was_cleared(),
+                     "Handlers must be cleared before they are destroyed, thread: {}",
+                     thread_->GetThreadName());
   }
   event_->Close();
 }
 
-void Handler::Post(OnceClosure closure) {
+void Handler::Post(base::OnceClosure closure) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (was_cleared()) {
-      log::warn("Posting to a handler which has been cleared");
+      log::warn("Posting to a handler which has been cleared, thread: {}",
+                thread_->GetThreadName());
       return;
     }
     tasks_->emplace(std::move(closure));
@@ -62,14 +64,15 @@ void Handler::Post(OnceClosure closure) {
 }
 
 void Handler::Clear() {
-  std::queue<OnceClosure>* tmp = nullptr;
+  std::queue<base::OnceClosure>* tmp = nullptr;
   Reactor::Reactable* reactable = nullptr;
   DelayedTaskQueue* delayed_tasks = nullptr;
   Alarm* alarm = nullptr;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    log::assert_that(!was_cleared(), "Handlers must only be cleared once");
+    log::assert_that(!was_cleared(), "Handlers must only be cleared once, thread: {}",
+                     thread_->GetThreadName());
     std::swap(tasks_, tmp);
     std::swap(reactable_, reactable);
     std::swap(delayed_tasks_, delayed_tasks);
@@ -81,7 +84,7 @@ void Handler::Clear() {
   delete tmp;
   delete delayed_tasks;
   delete alarm;
-  // TODO:: Log all the pending tasks from the queue.
+  // TODO: Log all the pending tasks from the queue.
 
   event_->Clear();
 
@@ -91,14 +94,15 @@ void Handler::Clear() {
 void Handler::WaitUntilStopped(std::chrono::milliseconds timeout) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    log::assert_that(reactable_ == nullptr, "assert failed: reactable_ == nullptr");
+    log::assert_that(reactable_ == nullptr, "assert failed: reactable_ == nullptr, for thread: {}",
+                     thread_->GetThreadName());
   }
   log::assert_that(thread_->GetReactor()->WaitForUnregisteredReactable(timeout),
                    "assert failed: thread_->GetReactor()->WaitForUnregisteredReactable(timeout)");
 }
 
 void Handler::handle_next_event() {
-  common::OnceClosure closure;
+  base::OnceClosure closure;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     bool has_data = event_->Read();
@@ -106,15 +110,30 @@ void Handler::handle_next_event() {
     if (was_cleared()) {
       return;
     }
-    log::assert_that(has_data, "Notified for work but no work available");
+    log::assert_that(has_data, "Notified for work but no work available, thread: {}",
+                     thread_->GetThreadName());
 
     closure = std::move(tasks_->front());
     tasks_->pop();
+    notify_promise_if_idle();
   }
+
   std::move(closure).Run();
 }
 
-bool Handler::PostWithDelay(OnceClosure closure, std::chrono::milliseconds delay) {
+std::future<void> Handler::NotifyWhenIdle() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  log::assert_that(!promise_to_quit_when_idle_.has_value(),
+                   "assert failed: called more than once before setting the promise, thread: {}",
+                   thread_->GetThreadName());
+
+  promise_to_quit_when_idle_ = std::promise<void>();
+  std::future<void> future = promise_to_quit_when_idle_.value().get_future();
+  notify_promise_if_idle();
+  return future;
+}
+
+bool Handler::PostWithDelay(base::OnceClosure closure, std::chrono::milliseconds delay) {
   if (delay == std::chrono::milliseconds::zero()) {
     Post(std::move(closure));
     return true;
@@ -124,7 +143,8 @@ bool Handler::PostWithDelay(OnceClosure closure, std::chrono::milliseconds delay
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (was_cleared()) {
-      log::warn("Posting to a handler which has been cleared");
+      log::warn("Posting to a handler which has been cleared, thread: {}",
+                thread_->GetThreadName());
       return false;
     }
 
@@ -150,7 +170,7 @@ void Handler::handle_delayed_event() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (was_cleared()) {
-      log::warn("Timer expired, but found no tasks to post");
+      log::warn("Timer expired, but found no tasks to post, thread: {}", thread_->GetThreadName());
       return;
     }
 
@@ -158,7 +178,8 @@ void Handler::handle_delayed_event() {
     // Either the task is expired (<= deadline), or the task is due in less than 1ms.
     while (!delayed_tasks_->empty() &&
            ((delayed_tasks_->top().first - deadline) <= std::chrono::milliseconds(1))) {
-      OnceClosure closure = std::move(const_cast<OnceClosure&>(delayed_tasks_->top().second));
+      base::OnceClosure closure =
+              std::move(const_cast<base::OnceClosure&>(delayed_tasks_->top().second));
       delayed_tasks_->pop();
       tasks_->emplace(std::move(closure));
       num_tasks_posted++;
@@ -187,7 +208,7 @@ void Handler::reschedule_delayed_tasks() {
   std::chrono::milliseconds next_task_time_ms =
           std::max(std::chrono::duration_cast<std::chrono::milliseconds>(next_task_time),
                    std::chrono::milliseconds(1));
-  alarm_->Schedule(common::BindOnce(&Handler::handle_delayed_event, common::Unretained(this)),
+  alarm_->Schedule(base::BindOnce(&Handler::handle_delayed_event, base::Unretained(this)),
                    next_task_time_ms);
 }
 

@@ -17,21 +17,27 @@
 package com.android.bluetooth.btservice;
 
 import static android.Manifest.permission.BLUETOOTH_CONNECT;
+import static android.bluetooth.BluetoothClass.Device.Major.UNCATEGORIZED;
 import static android.bluetooth.BluetoothDevice.BATTERY_LEVEL_UNKNOWN;
 import static android.bluetooth.BluetoothDevice.TRANSPORT_BREDR;
 import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTING;
 
+import static androidx.test.espresso.intent.matcher.BundleMatchers.hasEntry;
 import static androidx.test.espresso.intent.matcher.IntentMatchers.hasAction;
 import static androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra;
 
 import static com.android.bluetooth.TestUtils.getTestDevice;
 import static com.android.bluetooth.TestUtils.mockGetBluetoothManager;
 import static com.android.bluetooth.TestUtils.mockGetSystemService;
+import static com.android.bluetooth.btservice.RemoteDevices.ACL_CONNECTION_DELIVERY_GROUP_POLICY;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.hamcrest.core.AnyOf.anyOf;
+import static org.hamcrest.core.Is.isA;
+import static org.hamcrest.core.IsNull.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -45,6 +51,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import android.app.BroadcastOptions;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothAssignedNumbers;
 import android.bluetooth.BluetoothDevice;
@@ -59,7 +66,9 @@ import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.HandlerThread;
 import android.os.Message;
+import android.os.SystemProperties;
 import android.os.TestLooperManager;
+import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.SetFlagsRule;
 
@@ -97,7 +106,10 @@ import java.util.Optional;
 @MediumTest
 @RunWith(ParameterizedAndroidJunit4.class)
 public class RemoteDevicesTest {
-    @Rule public final StaticMockitoRule mMockitoRule = new StaticMockitoRule(Config.class);
+    @Rule
+    public final StaticMockitoRule mMockitoRule =
+            new StaticMockitoRule(Config.class, SystemProperties.class);
+
     @Rule public final SetFlagsRule mSetFlagsRule;
 
     @Mock private AdapterService mAdapterService;
@@ -112,7 +124,7 @@ public class RemoteDevicesTest {
 
     @Parameters(name = "{0}")
     public static List<FlagsWrapper> getParams() {
-        return FlagsWrapper.progressionOf(Flags.FLAG_WATCH_DEVICE_OVERRIDE_AIRPLANE_MODE);
+        return FlagsWrapper.progressionOf();
     }
 
     public RemoteDevicesTest(FlagsWrapper flags) {
@@ -124,19 +136,18 @@ public class RemoteDevicesTest {
         mInOrder = inOrder(mAdapterService);
         mHandlerThread = new HandlerThread("RemoteDevicesTestHandlerThread");
         mHandlerThread.start();
-        mTestLooperManager =
-                InstrumentationRegistry.getInstrumentation()
-                        .acquireLooperManager(mHandlerThread.getLooper());
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        mTestLooperManager = instrumentation.acquireLooperManager(mHandlerThread.getLooper());
 
         mockGetBluetoothManager(mAdapterService);
         mockGetSystemService(mAdapterService, CompanionDeviceManager.class);
         doReturn(mPackageManager).when(mAdapterService).getPackageManager();
+        doReturn(UNCATEGORIZED).when(mAdapterService).getRemoteClass(mDevice);
+
         mRemoteDevices = new RemoteDevices(mAdapterService, mHandlerThread.getLooper());
         verify(mAdapterService).getSystemService(BluetoothManager.class);
-        if (Flags.watchDeviceOverrideAirplaneMode()) {
-            verify(mAdapterService, times(2)).getPackageManager();
-            verify(mAdapterService).getSystemService(CompanionDeviceManager.class);
-        }
+        verify(mAdapterService, times(2)).getPackageManager();
+        verify(mAdapterService).getSystemService(CompanionDeviceManager.class);
         assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
     }
 
@@ -291,9 +302,46 @@ public class RemoteDevicesTest {
     }
 
     @Test
+    @EnableFlags(Flags.FLAG_COALESCE_ACL_CONNECTION_BROADCASTS)
     public void testResetBatteryLevel_testAclStateChangeCallback() {
         int batteryLevel = 10;
+        int transport = 2; // LE transport
+        // Verify that updating battery level triggers ACTION_BATTERY_LEVEL_CHANGED intent
+        mRemoteDevices.updateBatteryLevel(mDevice, batteryLevel, /* fromBas= */ false);
+        verifyBatteryLevelUpdate(batteryLevel);
 
+        // Verify that when device is completely disconnected, RemoteDevices reset battery level to
+        // BluetoothDevice.BATTERY_LEVEL_UNKNOWN
+        when(mAdapterService.getState()).thenReturn(BluetoothAdapter.STATE_ON);
+        mRemoteDevices.aclStateChangeCallback(
+                0,
+                Utils.getByteAddress(mDevice),
+                0, // Public address type
+                transport,
+                AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
+                19,
+                BluetoothDevice.ERROR); // HCI code 19 remote terminated
+        // Verify ACTION_ACL_DISCONNECTED and BATTERY_LEVEL_CHANGED intent are sent
+        final Bundle expectedBundle =
+                BroadcastOptions.makeBasic()
+                        .setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT)
+                        .setDeliveryGroupMatchingKey(
+                                ACL_CONNECTION_DELIVERY_GROUP_POLICY,
+                                transport + "/" + mDevice.getAddress())
+                        .toBundle();
+        verifyIntentSent(
+                hasAction(BluetoothDevice.ACTION_ACL_DISCONNECTED), hasExtras(expectedBundle));
+
+        int newBatteryLevel = 20;
+        // Verify that updating battery level triggers ACTION_BATTERY_LEVEL_CHANGED intent again
+        mRemoteDevices.updateBatteryLevel(mDevice, newBatteryLevel, /* fromBas= */ false);
+        verifyBatteryLevelUpdate(newBatteryLevel);
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_COALESCE_ACL_CONNECTION_BROADCASTS)
+    public void testResetBatteryLevel_testAclStateChangeCallback_withBroadcastCoalescingDisabled() {
+        int batteryLevel = 10;
         // Verify that updating battery level triggers ACTION_BATTERY_LEVEL_CHANGED intent
         mRemoteDevices.updateBatteryLevel(mDevice, batteryLevel, /* fromBas= */ false);
         verifyBatteryLevelUpdate(batteryLevel);
@@ -590,6 +638,25 @@ public class RemoteDevicesTest {
     }
 
     @Test
+    @EnableFlags(Flags.FLAG_CONSISTENT_BATTERY_LEVEL)
+    public void testResetBasBatteryLevel_withNoHfpLevel_resetsInstantly() {
+        int batteryLevelBas = 50;
+
+        // Set an initial battery level from BAS.
+        mRemoteDevices.updateBatteryLevel(mDevice, batteryLevelBas, /* fromBas= */ true);
+        verifyBatteryLevelUpdate(batteryLevelBas);
+        DeviceProperties deviceProp = mRemoteDevices.getDeviceProperties(mDevice);
+        assertThat(deviceProp).isNotNull();
+        assertThat(deviceProp.getBatteryLevel()).isEqualTo(batteryLevelBas);
+
+        // Reset the battery level from BAS (e.g., device disconnected).
+        // Since HFP level is unknown, the overall level should reset to UNKNOWN.
+        mRemoteDevices.resetBatteryLevel(mDevice, /* fromBas= */ true);
+        verifyBatteryLevelUpdate(BATTERY_LEVEL_UNKNOWN);
+        assertThat(deviceProp.getBatteryLevel()).isEqualTo(BATTERY_LEVEL_UNKNOWN);
+    }
+
+    @Test
     public void testUpdateBatteryLevelWithSameValue_notSendBroadcast() {
         int batteryLevel = 10;
 
@@ -696,22 +763,6 @@ public class RemoteDevicesTest {
     @Test
     public void testIsDeviceNull() {
         assertThat(mRemoteDevices.getDeviceProperties(null)).isNull();
-    }
-
-    private static Object[] getXEventArray(int batteryLevel, int numLevels) {
-        ArrayList<Object> list = new ArrayList<>();
-        list.add(BluetoothHeadset.VENDOR_SPECIFIC_HEADSET_EVENT_XEVENT_BATTERY_LEVEL);
-        list.add(batteryLevel);
-        list.add(numLevels);
-        list.add(0);
-        list.add(0);
-        return list.toArray();
-    }
-
-    private void makeBatteryServiceAvailable(BluetoothDevice device) {
-        BatteryService batteryService = mock(BatteryService.class);
-        when(batteryService.getConnectionState(device)).thenReturn(STATE_CONNECTED);
-        doReturn(Optional.of(batteryService)).when(mAdapterService).getBatteryService();
     }
 
     @Test
@@ -853,6 +904,152 @@ public class RemoteDevicesTest {
         assertThat(deviceProp.getConnectionHandle(transport)).isEqualTo(BluetoothDevice.ERROR);
     }
 
+    @Test
+    @EnableFlags(Flags.FLAG_FIX_INTENT_SELECTION_FOR_ACL)
+    public void aclStateChangeCallback_bleOnWithFixIntentFlag_sendsAclIntent() {
+        final int transport = TRANSPORT_BREDR;
+        when(mAdapterService.getState()).thenReturn(BluetoothAdapter.STATE_BLE_ON);
+
+        // Test ACL Connected
+        mRemoteDevices.aclStateChangeCallback(
+                AbstractionLayer.BT_STATUS_SUCCESS,
+                Utils.getByteAddress(mDevice),
+                mDevice.getAddressType(),
+                transport,
+                AbstractionLayer.BT_ACL_STATE_CONNECTED,
+                0, // hciReason
+                1); // handle
+        verifyIntentSent(
+                hasAction(BluetoothDevice.ACTION_ACL_CONNECTED),
+                hasExtra(BluetoothDevice.EXTRA_TRANSPORT, transport));
+
+        // Test ACL Disconnected
+        mRemoteDevices.aclStateChangeCallback(
+                AbstractionLayer.BT_STATUS_SUCCESS,
+                Utils.getByteAddress(mDevice),
+                mDevice.getAddressType(),
+                transport,
+                AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
+                0, // hciReason
+                1); // handle
+        verifyIntentSent(
+                hasAction(BluetoothDevice.ACTION_ACL_DISCONNECTED),
+                hasExtra(BluetoothDevice.EXTRA_TRANSPORT, transport));
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_FIX_INTENT_SELECTION_FOR_ACL)
+    public void aclStateChangeCallback_bleOnWithoutFixIntentFlag_sendsBleAclIntent() {
+        final int transport = TRANSPORT_BREDR;
+        when(mAdapterService.getState()).thenReturn(BluetoothAdapter.STATE_BLE_ON);
+
+        // Test ACL Connected
+        mRemoteDevices.aclStateChangeCallback(
+                AbstractionLayer.BT_STATUS_SUCCESS,
+                Utils.getByteAddress(mDevice),
+                mDevice.getAddressType(),
+                transport,
+                AbstractionLayer.BT_ACL_STATE_CONNECTED,
+                0, // hciReason
+                1); // handle
+        verifyIntentSent(hasAction(BluetoothAdapter.ACTION_BLE_ACL_CONNECTED));
+
+        // Test ACL Disconnected
+        mRemoteDevices.aclStateChangeCallback(
+                AbstractionLayer.BT_STATUS_SUCCESS,
+                Utils.getByteAddress(mDevice),
+                mDevice.getAddressType(),
+                transport,
+                AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
+                0, // hciReason
+                1); // handle
+        verifyIntentSent(hasAction(BluetoothAdapter.ACTION_BLE_ACL_DISCONNECTED));
+    }
+
+    @Test
+    public void deviceFoundCallback_callsDiscoveryResultHandler() {
+        // When discovery result restriction is disabled
+        ExtendedMockito.doReturn(false)
+                .when(
+                        () ->
+                                SystemProperties.getBoolean(
+                                        "bluetooth.restrict_discovered_device.enabled", false));
+
+        // And device properties exist
+        DeviceProperties deviceProp =
+                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+        assertThat(deviceProp).isNotNull();
+
+        // Then discovery result handler should be called
+        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        verify(mAdapterService).discoveryResultHandler(eq(deviceProp));
+    }
+
+    @Test
+    public void deviceFoundCallback_noProperties_doesNothing() {
+        // When device properties do not exist for a device
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
+
+        // Then discovery result handler should not be called
+        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        verify(mAdapterService, never()).discoveryResultHandler(any());
+    }
+
+    @Test
+    public void deviceFoundCallback_restrictedNoName_doesNothing() {
+        // When discovery result restriction is enabled
+        ExtendedMockito.doReturn(true)
+                .when(
+                        () ->
+                                SystemProperties.getBoolean(
+                                        "bluetooth.restrict_discovered_device.enabled", false));
+
+        // And device properties exist but device name is null
+        DeviceProperties deviceProp =
+                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+        assertThat(deviceProp).isNotNull();
+        assertThat(deviceProp.getName()).isNull();
+
+        // Then discovery result handler should not be called
+        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        verify(mAdapterService, never()).discoveryResultHandler(any());
+    }
+
+    @Test
+    public void deviceFoundCallback_restrictedWithName_callsDiscoveryResultHandler() {
+        // When discovery result restriction is enabled
+        ExtendedMockito.doReturn(true)
+                .when(
+                        () ->
+                                SystemProperties.getBoolean(
+                                        "bluetooth.restrict_discovered_device.enabled", false));
+
+        // And device properties exist with a valid device name
+        DeviceProperties deviceProp =
+                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+        deviceProp.setName("Test Device");
+
+        // Then discovery result handler should be called
+        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        verify(mAdapterService).discoveryResultHandler(eq(deviceProp));
+    }
+
+    private static Object[] getXEventArray(int batteryLevel, int numLevels) {
+        ArrayList<Object> list = new ArrayList<>();
+        list.add(BluetoothHeadset.VENDOR_SPECIFIC_HEADSET_EVENT_XEVENT_BATTERY_LEVEL);
+        list.add(batteryLevel);
+        list.add(numLevels);
+        list.add(0);
+        list.add(0);
+        return list.toArray();
+    }
+
+    private void makeBatteryServiceAvailable(BluetoothDevice device) {
+        BatteryService batteryService = mock(BatteryService.class);
+        when(batteryService.getConnectionState(device)).thenReturn(STATE_CONNECTED);
+        doReturn(Optional.of(batteryService)).when(mAdapterService).getBatteryService();
+    }
+
     private void verifyBatteryLevelUpdate(int batteryLevel) {
         verifyIntentSent(
                 hasAction(BluetoothDevice.ACTION_BATTERY_LEVEL_CHANGED),
@@ -871,10 +1068,32 @@ public class RemoteDevicesTest {
     }
 
     private void verifyIntentSent(Matcher<Intent>... matchers) {
+        verifyIntentSent(AllOf.allOf(matchers), anyOf(isA(Bundle.class), nullValue(Bundle.class)));
+    }
+
+    private void verifyIntentSent(Matcher<Intent> intentMatcher, Matcher<Bundle> bundleMatcher) {
         mInOrder.verify(mAdapterService)
                 .sendBroadcast(
-                        MockitoHamcrest.argThat(AllOf.allOf(matchers)),
+                        (Intent) MockitoHamcrest.argThat(intentMatcher),
                         eq(BLUETOOTH_CONNECT),
-                        any(Bundle.class));
+                        (Bundle) MockitoHamcrest.argThat(bundleMatcher));
+    }
+
+    /**
+     * Creates a {@code Matcher<Bundle>} that verifies all key/value pairs in the {@code
+     * expectedBundle} exist in the actual Bundle.
+     */
+    public static Matcher<Bundle> hasExtras(Bundle expectedBundle) {
+        if (expectedBundle == null) {
+            return nullValue(Bundle.class);
+        }
+
+        // Create a list of individual Matcher<Bundle> for each key-value pair
+        final List<Matcher<Bundle>> matchers = new ArrayList<>();
+        for (String key : expectedBundle.keySet()) {
+            matchers.add(hasEntry(key, expectedBundle.get(key)));
+        }
+
+        return AllOf.allOf(matchers.toArray(new Matcher[0]));
     }
 }

@@ -162,7 +162,6 @@ public class TbsGeneric {
             }
         }
     }
-    ;
 
     TbsGeneric(AdapterService adapterService, TbsGatt tbsGatt) {
         mAdapterService = requireNonNull(adapterService);
@@ -1100,12 +1099,8 @@ public class TbsGeneric {
         mAdapterService
                 .getLeAudioService()
                 .ifPresentOrElse(
-                        leAudio -> {
-                            leAudio.setActiveDevice(device);
-                        },
-                        () -> {
-                            Log.w(TAG, "mLeAudioService not available");
-                        });
+                        leAudio -> leAudio.setActiveDevice(device),
+                        () -> Log.w(TAG, "mLeAudioService not available"));
     }
 
     private static boolean isCallStateTransitionValid(int callState, int requestedOpcode) {
@@ -1153,14 +1148,14 @@ public class TbsGeneric {
      * @param sb string builder object that TBS module will be appending
      */
     public void dump(StringBuilder sb) {
-        sb.append("\tRinger Mode: ").append(mStoredRingerMode);
+        sb.append("    Ringer Mode: ").append(mStoredRingerMode);
 
-        sb.append("\n\tCurrent call list:");
+        sb.append("\n    Current call list:");
         for (TbsCall call : mCurrentCallsList.values()) {
-            sb.append("\n\t\tFriendly name: ").append(call.getSafeFriendlyName());
-            sb.append("\n\t\t\tState: ").append(TbsCall.stateToString(call.getState()));
-            sb.append("\n\t\t\tURI: ").append(call.getSafeUri());
-            sb.append("\n\t\t\tFlags: ").append(TbsCall.flagsToString(call.getFlags()));
+            sb.append("\n      Friendly name: ").append(call.getSafeFriendlyName());
+            sb.append("\n        State: ").append(TbsCall.stateToString(call.getState()));
+            sb.append("\n        URI: ").append(call.getSafeUri());
+            sb.append("\n        Flags: ").append(TbsCall.flagsToString(call.getFlags()));
         }
 
         mTbsGatt.dump(sb);

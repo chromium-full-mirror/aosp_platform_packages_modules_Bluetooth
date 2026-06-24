@@ -47,6 +47,7 @@
 #include "stack/include/bt_psm_types.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/bt_uuid16.h"
+#include "stack/include/btm_client_interface.h"
 #include "stack/include/btm_sec_api.h"
 #include "stack/include/l2cdefs.h"
 #include "stack/include/sdp_api.h"
@@ -170,8 +171,8 @@ void gatt_delete_dev_from_srv_chg_clt_list(const RawAddress& bd_addr) {
  * Returns        None
  *
  ******************************************************************************/
-void gatt_set_srv_chg(void) {
-  log::verbose("");
+void gatt_set_srv_chg(uint16_t start_handle) {
+  log::verbose("start_handle {:#x}", start_handle);
 
   if (fixed_queue_is_empty(gatt_cb.srv_chg_clt_q)) {
     return;
@@ -182,9 +183,10 @@ void gatt_set_srv_chg(void) {
     log::verbose("found a srv_chg clt");
 
     tGATTS_SRV_CHG* p_buf = (tGATTS_SRV_CHG*)list_node(node);
-    if (!p_buf->srv_changed) {
-      log::verbose("set srv_changed to true");
+    if (!p_buf->srv_changed || (start_handle < p_buf->start_handle)) {
       p_buf->srv_changed = true;
+      p_buf->start_handle = start_handle;
+      log::verbose("set srv_changed to true from {:#x}", p_buf->start_handle);
       tGATTS_SRV_CHG_REQ req;
       memcpy(&req.srv_chg, p_buf, sizeof(tGATTS_SRV_CHG));
       if (gatt_cb.cb_info.p_srv_chg_callback) {
@@ -1422,11 +1424,7 @@ void gatt_sr_reset_cback_cnt(tGATT_TCB& tcb, uint16_t cid) {
  * Returns        None
  *
  ******************************************************************************/
-void gatt_sr_reset_prep_cnt(tGATT_TCB& tcb) {
-  for (uint8_t i = 0; i < GATT_MAX_APPS; i++) {
-    tcb.prep_cnt[i] = 0;
-  }
-}
+void gatt_sr_reset_prep_cnt(tGATT_TCB& tcb) { tcb.prep_cnt_map.clear(); }
 
 /* Get pointer to server command on given cid */
 tGATT_SR_CMD* gatt_sr_get_cmd_by_cid(tGATT_TCB& tcb, uint16_t cid) {
@@ -1762,6 +1760,11 @@ void gatt_cleanup_upon_disc(const RawAddress& bda, tGATT_DISCONN_REASON reason,
     return;
   }
 
+  if (com::android::bluetooth::flags::gatt_offload_api()) {
+    /* Notify disconnection to offload HAL */
+    gatt_offload_clear_sessions_by_acl_handle(gatt_get_acl_handle_by_tcb(p_tcb));
+  }
+
   gatt_set_ch_state(p_tcb, GATT_CH_CLOSE);
 
   if (transport == BT_TRANSPORT_LE) {
@@ -1860,6 +1863,14 @@ uint16_t gatt_get_mtu_pref(const tGATT_REG* p_reg, const RawAddress& bda) {
   return 0;
 }
 
+bool is_app_prefer_auto_mtu(tGATT_REG* p_reg, const RawAddress& bda) {
+  auto mtu_pref = p_reg->auto_mtu_enabled.find(bda);
+  if (mtu_pref != p_reg->auto_mtu_enabled.cend()) {
+    return mtu_pref->second;
+  }
+  return false;
+}
+
 uint16_t gatt_get_apps_preferred_mtu(const RawAddress& bda) {
   uint16_t preferred_mtu = 0;
   for (auto& [i, p_reg] : gatt_cb.cl_rcb_map) {
@@ -1880,4 +1891,48 @@ void gatt_remove_apps_mtu_prefs(const RawAddress& bda) {
     }
     p_reg.get()->mtu_prefs.erase(bda);
   }
+}
+
+/*******************************************************************************
+ *
+ * Function         gatt_get_acl_handle_by_tcb
+ *
+ * Description      The function gets ACL handle
+ *
+ * Returns           GATT_INVALID_ACL_HANDLE if p_tcb is not valid.
+ *
+ ******************************************************************************/
+uint16_t gatt_get_acl_handle_by_tcb(tGATT_TCB* p_tcb) {
+  if (!p_tcb->in_use || p_tcb->ch_state != GATT_CH_OPEN) {
+    return GATT_INVALID_ACL_HANDLE;
+  }
+  return get_btm_client_interface().peer.BTM_GetHCIConnHandle(p_tcb->peer_bda, p_tcb->transport);
+}
+
+/*******************************************************************************
+ *
+ * Function         gatt_find_tcb_by_acl_handle
+ *
+ * Description      The function searches for an entry
+ *                   in registration info table for ACL handle
+ *
+ * Returns           NULL if not found. Otherwise pointer to the rcb.
+ *
+ ******************************************************************************/
+tGATT_TCB* gatt_find_tcb_by_acl_handle(uint16_t acl_handle) {
+  if (acl_handle == GATT_INVALID_ACL_HANDLE) {
+    log::error("acl_handle: 0x{:x} is not valid", acl_handle);
+    return nullptr;
+  }
+  for (uint8_t i = 0; i < gatt_get_max_phy_channel(); i++) {
+    tGATT_TCB& tcb = gatt_cb.tcb[i];
+    if (!tcb.in_use || tcb.ch_state != GATT_CH_OPEN) {
+      continue;
+    }
+    uint16_t handle = gatt_get_acl_handle_by_tcb(&tcb);
+    if (acl_handle == handle) {
+      return &tcb;
+    }
+  }
+  return nullptr;
 }

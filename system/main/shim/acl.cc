@@ -372,7 +372,7 @@ public:
     if (send_data_upwards_ == nullptr) {
       log::warn("Dropping ACL data with no callback");
       osi_free(p_buf);
-    } else if (do_in_main_thread(base::BindOnce(send_data_upwards_, p_buf)) != BT_STATUS_SUCCESS) {
+    } else if (!do_in_main_thread(base::BindOnce(send_data_upwards_, p_buf))) {
       osi_free(p_buf);
     }
   }
@@ -1350,8 +1350,8 @@ void shim::Acl::OnLeLinkDisconnected(HciHandle handle, hci::ErrorCode reason) {
           reason));
 }
 
-void shim::Acl::OnConnectSuccess(
-        std::unique_ptr<hci::acl_manager::ClassicAclConnection> connection) {
+void shim::Acl::OnConnectSuccess(std::unique_ptr<hci::acl_manager::ClassicAclConnection> connection,
+                                 hci::Role role) {
   log::assert_that(connection != nullptr, "assert failed: connection != nullptr");
   auto handle = connection->GetHandle();
   bool locally_initiated = connection->locally_initiated_;
@@ -1369,7 +1369,8 @@ void shim::Acl::OnConnectSuccess(
   pimpl_->handle_to_classic_connection_map_[handle]->ReadRemoteControllerInformation();
 
   TRY_POSTING_ON_MAIN(acl_interface_.connection.classic.on_connected, bd_addr, handle, false,
-                      locally_initiated);
+                      locally_initiated,
+                      role == hci::Role::CENTRAL ? HCI_ROLE_CENTRAL : HCI_ROLE_PERIPHERAL);
   log::debug("Connection successful classic remote:{} handle:{} initiator:{}", remote_address,
              handle, (locally_initiated) ? "local" : "remote");
   metrics::LogAclCompletionEvent(remote_address, hci::ErrorCode::SUCCESS, locally_initiated);
@@ -1417,9 +1418,6 @@ void shim::Acl::OnLeConnectSuccess(hci::AddressWithType address_with_type,
               (uint64_t)osi_property_get_int32(kWakelockTimeoutMsSysprop, 0));
     }
   }
-
-  // Save the peer address, if any
-  hci::AddressWithType peer_address_with_type = connection->peer_address_with_type_;
 
   hci::Role connection_role = connection->GetRole();
   bool locally_initiated = connection->locally_initiated_;

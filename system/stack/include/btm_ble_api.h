@@ -342,7 +342,7 @@ tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr, uint16_t tx_pdu_leng
  *
  ******************************************************************************/
 void BTM_BleReadPhy(const RawAddress& bd_addr,
-                    base::Callback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb);
+                    base::OnceCallback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb);
 
 /*******************************************************************************
  *
@@ -370,23 +370,14 @@ void BTM_BleSetPhy(const RawAddress& bd_addr, uint8_t tx_phys, uint8_t rx_phys,
 bool btm_ble_get_acl_remote_addr(uint16_t hci_handle, RawAddress& conn_addr,
                                  tBLE_ADDR_TYPE* p_addr_type);
 
-using StartSyncCb = base::Callback<void(
+using StartSyncCb = base::RepeatingCallback<void(
         uint8_t /*status*/, uint16_t /*sync_handle*/, uint8_t /*advertising_sid*/,
         uint8_t /*address_type*/, RawAddress /*address*/, uint8_t /*phy*/, uint16_t /*interval*/)>;
 using SyncReportCb =
-        base::Callback<void(uint16_t /*sync_handle*/, int8_t /*tx_power*/, int8_t /*rssi*/,
-                            uint8_t /*status*/, std::vector<uint8_t> /*data*/)>;
-using SyncLostCb = base::Callback<void(uint16_t /*sync_handle*/)>;
-using BigInfoReportCb = base::Callback<void(uint16_t /*sync_handle*/, bool /*encrypted*/)>;
-
-void btm_ble_periodic_adv_sync_established(uint8_t status, uint16_t sync_handle, uint8_t adv_sid,
-                                           uint8_t address_type, const RawAddress& addr,
-                                           uint8_t phy, uint16_t interval,
-                                           uint8_t adv_clock_accuracy);
-void btm_ble_periodic_adv_report(uint16_t sync_handle, uint8_t tx_power, int8_t rssi,
-                                 uint8_t cte_type, uint8_t data_status, uint8_t data_len,
-                                 const uint8_t* periodic_data);
-void btm_ble_periodic_adv_sync_lost(uint16_t sync_handle);
+        base::RepeatingCallback<void(uint16_t /*sync_handle*/, int8_t /*tx_power*/, int8_t /*rssi*/,
+                                     uint8_t /*status*/, std::vector<uint8_t> /*data*/)>;
+using SyncLostCb = base::RepeatingCallback<void(uint16_t /*sync_handle*/)>;
+using BigInfoReportCb = base::RepeatingCallback<void(uint16_t /*sync_handle*/, bool /*encrypted*/)>;
 
 /*******************************************************************************
  *
@@ -412,5 +403,16 @@ bool BTM_BleConfigPrivacy(bool enable);
  *
  ******************************************************************************/
 bool BTM_BleLocalPrivacyEnabled(void);
+
+/*******************************************************************************
+ *
+ * Function         BTM_BleIsFilteringSupported
+ *
+ * Description      Checks if the device supports filtering.
+ *
+ * Returns          Return true if filtering is supported else false
+ *
+ ******************************************************************************/
+bool BTM_BleIsFilteringSupported(void);
 
 #endif

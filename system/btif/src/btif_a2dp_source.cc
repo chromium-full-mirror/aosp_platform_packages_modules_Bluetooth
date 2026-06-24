@@ -260,10 +260,6 @@ static void btif_a2dp_source_start_session_delayed(const RawAddress& peer_addres
 static void btif_a2dp_source_audio_tx_start_event(void);
 static void btif_a2dp_source_audio_tx_stop_event(void);
 static void btif_a2dp_source_audio_tx_flush_event(void);
-// Set up the A2DP Source codec, and prepare the encoder.
-// The peer address is |peer_addr|.
-// This function should be called prior to starting A2DP streaming.
-static void btif_a2dp_source_setup_codec(const RawAddress& peer_addr);
 static void btif_a2dp_source_cleanup_codec_delayed();
 static void btif_a2dp_source_encoder_user_config_update_event(
         const RawAddress& peer_address,
@@ -412,6 +408,11 @@ class A2dpStreamCallbacks : public bluetooth::audio::a2dp::StreamCallbacks {
     btif_av_set_low_latency(low_latency);
     return Status::SUCCESS;
   }
+
+  Status SourceMetadataChanged(btav_a2dp_codec_audio_context_t audio_context) const override {
+    btif_av_source_metadata_changed(audio_context);
+    return Status::SUCCESS;
+  }
 };
 
 static const A2dpStreamCallbacks a2dp_stream_callbacks;
@@ -473,8 +474,8 @@ bool btif_a2dp_source_start_session(const RawAddress& peer_address,
 
   btif_a2dp_source_audio_tx_flush_req();
 
-  if (do_in_main_thread(base::BindOnce(&btif_a2dp_source_start_session_delayed, peer_address,
-                                       std::move(peer_ready_promise))) != BT_STATUS_SUCCESS) {
+  if (!do_in_main_thread(base::BindOnce(&btif_a2dp_source_start_session_delayed, peer_address,
+                                        std::move(peer_ready_promise)))) {
     log::fatal("peer_address={} state={} fails to context switch", peer_address,
                btif_a2dp_source_cb.StateStr());
     return false;
@@ -483,11 +484,85 @@ bool btif_a2dp_source_start_session(const RawAddress& peer_address,
   return true;
 }
 
+/// Return the MTU for the active peer audio connection.
+static uint16_t btif_a2dp_get_peer_mtu(A2dpCodecConfig* a2dp_config) {
+  uint8_t codec_info[AVDT_CODEC_SIZE];
+  a2dp_config->copyOutOtaCodecConfig(codec_info);
+
+  RawAddress peer_addr = btif_av_source_active_peer();
+  tA2DP_ENCODER_INIT_PEER_PARAMS peer_params;
+  bta_av_co_get_peer_params(peer_addr, &peer_params);
+  uint16_t peer_mtu = peer_params.peer_mtu;
+  uint16_t effective_mtu = bta_av_co_get_encoder_effective_frame_size(peer_addr);
+
+  if (effective_mtu > 0 && effective_mtu < peer_mtu) {
+    peer_mtu = effective_mtu;
+  }
+
+  // b/188020925
+  // When SBC headsets report middle quality bitpool under a larger MTU, we
+  // reduce the packet size to prevent the hardware encoder from putting too
+  // many frames in one packet.
+  if (a2dp_config->codecIndex() == BTAV_A2DP_CODEC_INDEX_SOURCE_SBC &&
+      codec_info[2] /* maxBitpool */ <= A2DP_SBC_BITPOOL_MIDDLE_QUALITY) {
+    peer_mtu = MAX_2MBPS_AVDTP_MTU;
+  }
+
+  // b/177205770
+  // Fix the MTU value not to be greater than an AVDTP packet, so the data
+  // encoded by A2DP hardware encoder can be fitted into one AVDTP packet
+  // without fragmented
+  if (peer_mtu > MAX_3MBPS_AVDTP_MTU) {
+    peer_mtu = MAX_3MBPS_AVDTP_MTU;
+  }
+
+  return peer_mtu;
+}
+
 static void btif_a2dp_source_start_session_delayed(const RawAddress& peer_address,
                                                    std::promise<void> peer_ready_promise) {
   log::info("peer_address={} state={}", peer_address, btif_a2dp_source_cb.StateStr());
 
-  btif_a2dp_source_setup_codec(peer_address);
+  tA2DP_ENCODER_INIT_PEER_PARAMS peer_params;
+  bta_av_co_get_peer_params(peer_address, &peer_params);
+  if (!bta_av_co_set_active_source_peer(peer_address)) {
+    log::error("Cannot stream audio: cannot set active peer to {}", peer_address);
+    return;
+  }
+
+  const tA2DP_ENCODER_INTERFACE* encoder_interface = bta_av_co_get_encoder_interface(peer_address);
+  if (encoder_interface == nullptr) {
+    log::error("Cannot stream audio: no source encoder interface");
+    return;
+  }
+
+  A2dpCodecConfig* a2dp_codec_config = bta_av_get_a2dp_current_codec();
+  if (a2dp_codec_config == nullptr) {
+    log::error("Cannot stream audio: current codec is not set");
+    return;
+  }
+
+  encoder_interface->encoder_init(&peer_params, a2dp_codec_config, btif_a2dp_source_read_callback,
+                                  btif_a2dp_source_enqueue_callback);
+
+  // Save a local copy of the encoder_interval_ms
+  btif_a2dp_source_cb.encoder_interface = encoder_interface;
+  btif_a2dp_source_cb.encoder_interval_ms =
+          btif_a2dp_source_cb.encoder_interface->get_encoder_interval_ms();
+
+  if (bluetooth::audio::a2dp::is_hal_enabled()) {
+    bluetooth::audio::a2dp::ahal_codec_configuration config = {
+            .peer_mtu = btif_a2dp_get_peer_mtu(a2dp_codec_config),
+            .preferred_encoding_interval_us = bta_av_co_get_encoder_preferred_interval_us(),
+            .codec_bitrate = a2dp_codec_config->getTrackBitRate(),
+            .codec_config = a2dp_codec_config->getCodecConfig(),
+    };
+    a2dp_codec_config->copyOutOtaCodecConfig(config.codec_specific_information_elements);
+
+    log::verbose("{}", config.ToString());
+
+    bluetooth::audio::a2dp::setup_codec(config);
+  }
 
   if (btif_a2dp_source_cb.State() != BtifA2dpSource::kStateRunning) {
     log::error("A2DP Source media task is not running");
@@ -500,6 +575,9 @@ static void btif_a2dp_source_start_session_delayed(const RawAddress& peer_addres
     bluetooth::audio::a2dp::set_remote_delay(btif_av_get_audio_delay(A2dpType::kSource));
   }
 
+  if (com_android_bluetooth_flags_a2dp_control_codec_state_reports()) {
+    bta_av_co_report_codec_config_changed(peer_address);
+  }
   peer_ready_promise.set_value();
 }
 
@@ -600,86 +678,6 @@ void btif_a2dp_source_cleanup(void) {
 // This runs on worker thread
 bool btif_a2dp_source_is_streaming(void) { return btif_a2dp_source_cb.media_alarm.IsScheduled(); }
 
-/// Return the MTU for the active peer audio connection.
-static uint16_t btif_a2dp_get_peer_mtu(A2dpCodecConfig* a2dp_config) {
-  uint8_t codec_info[AVDT_CODEC_SIZE];
-  a2dp_config->copyOutOtaCodecConfig(codec_info);
-
-  RawAddress peer_addr = btif_av_source_active_peer();
-  tA2DP_ENCODER_INIT_PEER_PARAMS peer_params;
-  bta_av_co_get_peer_params(peer_addr, &peer_params);
-  uint16_t peer_mtu = peer_params.peer_mtu;
-  uint16_t effective_mtu = bta_av_co_get_encoder_effective_frame_size(peer_addr);
-
-  if (effective_mtu > 0 && effective_mtu < peer_mtu) {
-    peer_mtu = effective_mtu;
-  }
-
-  // b/188020925
-  // When SBC headsets report middle quality bitpool under a larger MTU, we
-  // reduce the packet size to prevent the hardware encoder from putting too
-  // many frames in one packet.
-  if (a2dp_config->codecIndex() == BTAV_A2DP_CODEC_INDEX_SOURCE_SBC &&
-      codec_info[2] /* maxBitpool */ <= A2DP_SBC_BITPOOL_MIDDLE_QUALITY) {
-    peer_mtu = MAX_2MBPS_AVDTP_MTU;
-  }
-
-  // b/177205770
-  // Fix the MTU value not to be greater than an AVDTP packet, so the data
-  // encoded by A2DP hardware encoder can be fitted into one AVDTP packet
-  // without fragmented
-  if (peer_mtu > MAX_3MBPS_AVDTP_MTU) {
-    peer_mtu = MAX_3MBPS_AVDTP_MTU;
-  }
-
-  return peer_mtu;
-}
-
-static void btif_a2dp_source_setup_codec(const RawAddress& peer_address) {
-  log::info("peer_address={} state={}", peer_address, btif_a2dp_source_cb.StateStr());
-
-  tA2DP_ENCODER_INIT_PEER_PARAMS peer_params;
-  bta_av_co_get_peer_params(peer_address, &peer_params);
-  if (!bta_av_co_set_active_source_peer(peer_address)) {
-    log::error("Cannot stream audio: cannot set active peer to {}", peer_address);
-    return;
-  }
-
-  const tA2DP_ENCODER_INTERFACE* encoder_interface = bta_av_co_get_encoder_interface(peer_address);
-  if (encoder_interface == nullptr) {
-    log::error("Cannot stream audio: no source encoder interface");
-    return;
-  }
-
-  A2dpCodecConfig* a2dp_codec_config = bta_av_get_a2dp_current_codec();
-  if (a2dp_codec_config == nullptr) {
-    log::error("Cannot stream audio: current codec is not set");
-    return;
-  }
-
-  encoder_interface->encoder_init(&peer_params, a2dp_codec_config, btif_a2dp_source_read_callback,
-                                  btif_a2dp_source_enqueue_callback);
-
-  // Save a local copy of the encoder_interval_ms
-  btif_a2dp_source_cb.encoder_interface = encoder_interface;
-  btif_a2dp_source_cb.encoder_interval_ms =
-          btif_a2dp_source_cb.encoder_interface->get_encoder_interval_ms();
-
-  if (bluetooth::audio::a2dp::is_hal_enabled()) {
-    bluetooth::audio::a2dp::ahal_codec_configuration config = {
-            .peer_mtu = btif_a2dp_get_peer_mtu(a2dp_codec_config),
-            .preferred_encoding_interval_us = bta_av_co_get_encoder_preferred_interval_us(),
-            .codec_bitrate = a2dp_codec_config->getTrackBitRate(),
-            .codec_config = a2dp_codec_config->getCodecConfig(),
-    };
-    a2dp_codec_config->copyOutOtaCodecConfig(config.codec_specific_information_elements);
-
-    log::verbose("{}", config.ToString());
-
-    bluetooth::audio::a2dp::setup_codec(config);
-  }
-}
-
 static void btif_a2dp_source_cleanup_codec_delayed() {
   log::info("state={}", btif_a2dp_source_cb.StateStr());
   if (btif_a2dp_source_cb.encoder_interface != nullptr) {
@@ -707,9 +705,9 @@ void btif_a2dp_source_encoder_user_config_update_req(
   log::info("peer_address={} state={} {} codec_preference(s)", peer_address,
             btif_a2dp_source_cb.StateStr(), codec_user_preferences.size());
 
-  if (do_in_main_thread(base::BindOnce(&btif_a2dp_source_encoder_user_config_update_event,
-                                       peer_address, codec_user_preferences,
-                                       std::move(peer_ready_promise))) != BT_STATUS_SUCCESS) {
+  if (!do_in_main_thread(base::BindOnce(&btif_a2dp_source_encoder_user_config_update_event,
+                                        peer_address, codec_user_preferences,
+                                        std::move(peer_ready_promise)))) {
     // cannot set promise but triggers crash
     log::fatal("peer_address={} state={} fails to context switch", peer_address,
                btif_a2dp_source_cb.StateStr());
@@ -891,13 +889,6 @@ static void btif_a2dp_source_audio_tx_stop_event(void) {
 
   if (!btif_a2dp_source_is_streaming()) {
     return;
-  }
-
-  if (!com_android_bluetooth_flags_a2dp_fmq_read_exact()) {
-    /* Drain data still left in the queue */
-    static constexpr size_t AUDIO_STREAM_OUTPUT_BUFFER_SZ = 28 * 512;
-    uint8_t p_buf[AUDIO_STREAM_OUTPUT_BUFFER_SZ * 2];
-    bluetooth::audio::a2dp::read(p_buf, sizeof(p_buf));
   }
 
   /* Stop the timer first */

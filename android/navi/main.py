@@ -16,14 +16,17 @@
 import sys
 from mobly import suite_runner
 from navi.tests.smoke import a2dp_test
+from navi.tests.smoke import avrcp_test
 from navi.tests.smoke import asha_test
+from navi.tests.smoke import bluetooth_service_test
 from navi.tests.smoke import classic_host_test
 from navi.tests.smoke import classic_pairing_test
 from navi.tests.smoke import gatt_client_test
 from navi.tests.smoke import gatt_server_test
 from navi.tests.smoke import hfp_ag_test
 from navi.tests.smoke import hfp_hf_test
-from navi.tests.smoke import hid_test
+from navi.tests.smoke import hid_device_test
+from navi.tests.smoke import hid_host_test
 from navi.tests.smoke import hogp_test
 from navi.tests.smoke import l2cap_test
 from navi.tests.smoke import le_audio_unicast_client_test
@@ -34,7 +37,13 @@ from navi.tests.smoke import pan_test
 from navi.tests.smoke import pbap_test
 from navi.tests.smoke import rfcomm_test
 from navi.tests.functionality import a2dp_sink_test
+from navi.tests.functionality import a2dp_source_test
+from navi.tests.functionality import aics_test
+from navi.tests.functionality import coex_test
+from navi.tests.functionality import hap_test
+from navi.tests.functionality import hfp_ag_test as hfp_ag_test_venti
 from navi.tests.functionality import le_pairing_test
+from navi.tests.functionality import rfcomm_socket_test
 
 if __name__ == "__main__":
     # Take test args
@@ -43,6 +52,7 @@ if __name__ == "__main__":
         sys.argv = sys.argv[:1] + sys.argv[index + 1:]
     suite_runner.run_suite([
         a2dp_test.A2dpTest,
+        avrcp_test.AvrcpTest,
         a2dp_sink_test.A2dpSinkTest,
         asha_test.AshaTest,
         classic_host_test.ClassicHostTest,
@@ -51,7 +61,8 @@ if __name__ == "__main__":
         gatt_server_test.GattServerTest,
         hfp_ag_test.HfpAgTest,
         hfp_hf_test.HfpHfTest,
-        hid_test.HidTest,
+        hid_device_test.HidDeviceTest,
+        hid_host_test.HidHostTest,
         hogp_test.HogpTest,
         l2cap_test.L2capTest,
         le_host_test.LeHostTest,
@@ -62,4 +73,11 @@ if __name__ == "__main__":
         rfcomm_test.RfcommTest,
         le_audio_unicast_client_test.LeAudioUnicastClientTest,
         le_pairing_test.LePairingTest,
+        hap_test.HapTest,
+        bluetooth_service_test.BluetoothServiceTest,
+        a2dp_source_test.A2dpSourceTest,
+        aics_test.AicsTest,
+        coex_test.CoexTest,
+        hfp_ag_test_venti.HfpAgTest,
+        rfcomm_socket_test.RfcommSocketTest,
     ])

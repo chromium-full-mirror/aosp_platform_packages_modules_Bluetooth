@@ -16,7 +16,6 @@
 
 package com.android.bluetooth.avrcpcontroller;
 
-import static android.Manifest.permission.BLUETOOTH_CONNECT;
 import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
 
@@ -27,7 +26,6 @@ import static com.android.bluetooth.Utils.getBytesFromAddress;
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyByte;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -40,13 +38,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import android.bluetooth.BluetoothAvrcpController;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.media.AudioManager;
-import android.os.Bundle;
 import android.os.Looper;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.support.v4.media.MediaMetadataCompat;
@@ -64,6 +60,7 @@ import com.android.bluetooth.R;
 import com.android.bluetooth.TestUtils;
 import com.android.bluetooth.a2dpsink.A2dpSinkService;
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.media_audio.sink.BluetoothMediaBrowserService;
 import com.android.tests.bluetooth.MockitoRule;
 
 import org.junit.After;
@@ -71,7 +68,6 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 
 import java.util.ArrayList;
@@ -95,7 +91,9 @@ public class AvrcpControllerStateMachineTest {
     @Mock private AvrcpControllerService mAvrcpControllerService;
     @Mock private AvrcpControllerNativeInterface mNativeInterface;
     @Mock private AvrcpCoverArtManager mCoverArtManager;
+    @Mock private PlayerApplicationSettings mPlayerApplicationSettings;
     @Mock private AudioManager mAudioManager;
+    @Mock private PackageManager mPackageManager;
 
     private static final int ASYNC_CALL_TIMEOUT_MILLIS = 100;
     private static final int KEY_DOWN = 0;
@@ -106,7 +104,6 @@ public class AvrcpControllerStateMachineTest {
     private final BluetoothDevice mDevice = getTestDevice(43);
     private final byte[] mTestAddress = getBytesFromAddress(mDevice.getAddress());
 
-    private final ArgumentCaptor<Intent> mIntentArgument = ArgumentCaptor.forClass(Intent.class);
     private AvrcpControllerStateMachine mAvrcpStateMachine;
     private BrowseTree mBrowseTree;
 
@@ -119,6 +116,10 @@ public class AvrcpControllerStateMachineTest {
         doReturn(15).when(mAudioManager).getStreamMaxVolume(anyInt());
         doReturn(8).when(mAudioManager).getStreamVolume(anyInt());
         doReturn(true).when(mAudioManager).isVolumeFixed();
+
+        // Absolute volume support (Utils.isAutomotive())
+        doReturn(mPackageManager).when(mAdapterService).getPackageManager();
+        doReturn(false).when(mPackageManager).hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE);
 
         doReturn(true)
                 .when(mMockResources)
@@ -157,7 +158,7 @@ public class AvrcpControllerStateMachineTest {
     private AvrcpControllerStateMachine makeStateMachine(BluetoothDevice device) {
         AvrcpControllerStateMachine sm =
                 new AvrcpControllerStateMachine(
-                        mAdapterService, mAvrcpControllerService, device, mNativeInterface, false);
+                        mAdapterService, mAvrcpControllerService, device, mNativeInterface);
         sm.start();
         return sm;
     }
@@ -193,25 +194,17 @@ public class AvrcpControllerStateMachineTest {
         mAvrcpStateMachine.sendMessage(AvrcpControllerStateMachine.AUDIO_FOCUS_STATE_CHANGE, state);
     }
 
-    /**
-     * Setup Connected State for a given state machine
-     *
-     * @return number of times mAvrcpControllerService.sendBroadcastAsUser() has been invoked
-     */
-    private int setUpConnectedState(boolean control, boolean browsing) {
+    /** Setup Connected State for a given state machine */
+    private void setUpConnectedState(boolean control, boolean browsing) {
         assertThat(mAvrcpStateMachine.getCurrentState())
                 .isInstanceOf(AvrcpControllerStateMachine.Disconnected.class);
 
-        mAvrcpStateMachine.connect(StackEvent.connectionStateChanged(control, browsing));
+        mAvrcpStateMachine.connect(control, browsing);
 
         TestUtils.waitForLooperToFinishScheduledTask(mAvrcpStateMachine.getHandler().getLooper());
-        verify(mAvrcpControllerService, timeout(ASYNC_CALL_TIMEOUT_MILLIS).times(2))
-                .sendBroadcast(mIntentArgument.capture(), eq(BLUETOOTH_CONNECT), any(Bundle.class));
         assertThat(mAvrcpStateMachine.getCurrentState())
                 .isInstanceOf(AvrcpControllerStateMachine.Connected.class);
         assertThat(mAvrcpStateMachine.getState()).isEqualTo(STATE_CONNECTED);
-
-        return STATE_CONNECTED;
     }
 
     private AvrcpItem makeTrack(
@@ -325,14 +318,51 @@ public class AvrcpControllerStateMachineTest {
         assertThat(getNowPlayingList()).containsExactlyElementsIn(nowPlayingList).inOrder();
     }
 
+    // Absolute Volume Test Utilities
+
+    /**
+     * Create a state machine for absolute volume tests after configuring fixed volume and
+     * automotive settings (affects volume strategy)
+     */
+    private void makeStateMachineForAbsVolumeTests(boolean isVolumeFixed, boolean isAutomotive) {
+        destroyStateMachine(mAvrcpStateMachine);
+
+        doReturn(isVolumeFixed).when(mAudioManager).isVolumeFixed();
+        // Absolute volume support (Utils.isAutomotive())
+        doReturn(isAutomotive)
+                .when(mPackageManager)
+                .hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE);
+
+        doReturn(100).when(mAudioManager).getStreamMaxVolume(eq(AudioManager.STREAM_MUSIC));
+        doReturn(25).when(mAudioManager).getStreamVolume(eq(AudioManager.STREAM_MUSIC));
+
+        mAvrcpStateMachine = makeStateMachine(mDevice);
+    }
+
+    /** Verify that an absolute volume notification was registered for with response absVolRsp */
+    private void verifyRegisterAbsVolumeNotification(byte label, int absVolRsp) {
+        mAvrcpStateMachine.sendMessage(
+                AvrcpControllerStateMachine.MESSAGE_PROCESS_REGISTER_ABS_VOL_NOTIFICATION, label);
+        verify(mNativeInterface, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
+                .sendRegisterAbsVolRsp(any(), eq((byte) 0x00), eq(absVolRsp), eq((int) label));
+    }
+
+    /** Verify that a set absolute volume command was responded with absVolRsp */
+    private void verifySetAbsVolume(byte setLabel, int absVol, int absVolRsp) {
+        mAvrcpStateMachine.sendMessage(
+                AvrcpControllerStateMachine.MESSAGE_PROCESS_SET_ABS_VOL_CMD, absVol, setLabel);
+        verify(mNativeInterface, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
+                .sendAbsVolRsp(any(), eq(absVolRsp), eq((int) setLabel));
+    }
+
     /**
      * Test to confirm that the state machine is capable of cycling through the 4 connection states,
      * and that upon completion, it cleans up afterwards.
      */
     @Test
     public void testDisconnect() {
-        int numBroadcastsSent = setUpConnectedState(true, true);
-        testDisconnectInternal(numBroadcastsSent);
+        setUpConnectedState(true, true);
+        testDisconnectInternal();
     }
 
     /**
@@ -343,26 +373,14 @@ public class AvrcpControllerStateMachineTest {
      */
     @Test
     public void testDisconnectWithNullBrowseTree() {
-        int numBroadcastsSent = setUpConnectedState(true, true);
+        setUpConnectedState(true, true);
 
-        testDisconnectInternal(numBroadcastsSent);
+        testDisconnectInternal();
     }
 
-    private void testDisconnectInternal(int numBroadcastsSent) {
+    private void testDisconnectInternal() {
         mAvrcpStateMachine.disconnect();
-        numBroadcastsSent += 2;
-        verify(mAvrcpControllerService, timeout(ASYNC_CALL_TIMEOUT_MILLIS).times(numBroadcastsSent))
-                .sendBroadcast(mIntentArgument.capture(), eq(BLUETOOTH_CONNECT), any(Bundle.class));
-        assertThat(
-                        mIntentArgument
-                                .getValue()
-                                .getParcelableExtra(
-                                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class))
-                .isEqualTo(mDevice);
-        assertThat(mIntentArgument.getValue().getAction())
-                .isEqualTo(BluetoothAvrcpController.ACTION_CONNECTION_STATE_CHANGED);
-        assertThat(mIntentArgument.getValue().getIntExtra(BluetoothProfile.EXTRA_STATE, -1))
-                .isEqualTo(STATE_DISCONNECTED);
+        TestUtils.waitForLooperToBeIdle(mAvrcpStateMachine.getHandler().getLooper());
         assertThat(mAvrcpStateMachine.getCurrentState())
                 .isInstanceOf(AvrcpControllerStateMachine.Disconnected.class);
         assertThat(mAvrcpStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
@@ -372,26 +390,19 @@ public class AvrcpControllerStateMachineTest {
     /** Test to confirm that a control only device can be established (no browsing) */
     @Test
     public void testControlOnly() {
-        int numBroadcastsSent = setUpConnectedState(true, false);
+        setUpConnectedState(true, false);
         MediaControllerCompat.TransportControls transportControls =
                 BluetoothMediaBrowserService.getTransportControls();
         assertThat(transportControls).isNotNull();
-        assertThat(BluetoothMediaBrowserService.getPlaybackState().getState())
+
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
+        assertThat(mediaBrowserService.getPlaybackState().getState())
                 .isEqualTo(PlaybackStateCompat.STATE_NONE);
+
         mAvrcpStateMachine.disconnect();
-        numBroadcastsSent += 2;
-        verify(mAvrcpControllerService, timeout(ASYNC_CALL_TIMEOUT_MILLIS).times(numBroadcastsSent))
-                .sendBroadcast(mIntentArgument.capture(), eq(BLUETOOTH_CONNECT), any(Bundle.class));
-        assertThat(
-                        mIntentArgument
-                                .getValue()
-                                .getParcelableExtra(
-                                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class))
-                .isEqualTo(mDevice);
-        assertThat(mIntentArgument.getValue().getAction())
-                .isEqualTo(BluetoothAvrcpController.ACTION_CONNECTION_STATE_CHANGED);
-        assertThat(mIntentArgument.getValue().getIntExtra(BluetoothProfile.EXTRA_STATE, -1))
-                .isEqualTo(STATE_DISCONNECTED);
+        TestUtils.waitForLooperToBeIdle(mAvrcpStateMachine.getHandler().getLooper());
         assertThat(mAvrcpStateMachine.getCurrentState())
                 .isInstanceOf(AvrcpControllerStateMachine.Disconnected.class);
         assertThat(mAvrcpStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
@@ -403,24 +414,17 @@ public class AvrcpControllerStateMachineTest {
     @FlakyTest
     public void testBrowsingOnly() {
         assertThat(mBrowseTree.mRootNode.getChildrenCount()).isEqualTo(0);
-        int numBroadcastsSent = setUpConnectedState(false, true);
+        setUpConnectedState(false, true);
         assertThat(mBrowseTree.mRootNode.getChildrenCount()).isEqualTo(1);
-        assertThat(BluetoothMediaBrowserService.getPlaybackState().getState())
+
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
+        assertThat(mediaBrowserService.getPlaybackState().getState())
                 .isEqualTo(PlaybackStateCompat.STATE_NONE);
+
         mAvrcpStateMachine.disconnect();
-        numBroadcastsSent += 2;
-        verify(mAvrcpControllerService, timeout(ASYNC_CALL_TIMEOUT_MILLIS).times(numBroadcastsSent))
-                .sendBroadcast(mIntentArgument.capture(), eq(BLUETOOTH_CONNECT), any(Bundle.class));
-        assertThat(
-                        mIntentArgument
-                                .getValue()
-                                .getParcelableExtra(
-                                        BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class))
-                .isEqualTo(mDevice);
-        assertThat(mIntentArgument.getValue().getAction())
-                .isEqualTo(BluetoothAvrcpController.ACTION_CONNECTION_STATE_CHANGED);
-        assertThat(mIntentArgument.getValue().getIntExtra(BluetoothProfile.EXTRA_STATE, -1))
-                .isEqualTo(STATE_DISCONNECTED);
+        TestUtils.waitForLooperToBeIdle(mAvrcpStateMachine.getHandler().getLooper());
         assertThat(mAvrcpStateMachine.getCurrentState())
                 .isInstanceOf(AvrcpControllerStateMachine.Disconnected.class);
         assertThat(mAvrcpStateMachine.getState()).isEqualTo(STATE_DISCONNECTED);
@@ -430,8 +434,6 @@ public class AvrcpControllerStateMachineTest {
     /** Get the root of the device */
     @Test
     public void testGetDeviceRootNode_rootNodeMatchesUuidFormat() {
-        // create new state machine to follow current flags rule
-        mAvrcpStateMachine = makeStateMachine(mDevice);
         setUpConnectedState(true, true);
         final String rootName = "__ROOT__" + mDevice.getAddress().toString();
         // Get the root of the device
@@ -1057,64 +1059,74 @@ public class AvrcpControllerStateMachineTest {
                         eq(KEY_UP));
     }
 
-    /** Test that Absolute Volume Registration is working */
+    /** Test that Absolute Volume Registration is working: fixed volume, not automotive = Loud */
     @Test
-    public void testRegisterAbsVolumeNotification() {
-        byte label = 42;
+    public void testRegisterAbsVolumeNotification_volumeIsFixed_getsAbsVolumeMax() {
         setUpConnectedState(true, true);
-        mAvrcpStateMachine.sendMessage(
-                AvrcpControllerStateMachine.MESSAGE_PROCESS_REGISTER_ABS_VOL_NOTIFICATION, label);
-        verify(mNativeInterface, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
-                .sendRegisterAbsVolRsp(any(), anyByte(), eq(127), eq((int) label));
+
+        byte label = 42;
+        verifyRegisterAbsVolumeNotification(label, 127);
     }
 
-    /** Test that set absolute volume is working */
+    /** Test that Absolute Volume Registration is working: not fixed volume, automotive = Loud */
     @Test
-    public void testSetAbsoluteVolume_volumeIsFixed_setsAbsVolumeBase() {
-        byte label = 42;
+    public void testRegisterAbsVolumeNotification_isAutomotive_getsAbsVolumeMax() {
+        makeStateMachineForAbsVolumeTests(false, true);
         setUpConnectedState(true, true);
-        mAvrcpStateMachine.sendMessage(
-                AvrcpControllerStateMachine.MESSAGE_PROCESS_SET_ABS_VOL_CMD, 20, label);
-        verify(mNativeInterface, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
-                .sendAbsVolRsp(any(), eq(127), eq((int) label));
+
+        byte label = 42;
+        verifyRegisterAbsVolumeNotification(label, 127);
     }
 
-    /** Test that set absolute volume is working */
+    /**
+     * Test that Absolute Volume Registration is working: not fixed volume, not automotive =
+     * Absolute
+     */
     @Test
-    public void testSetAbsoluteVolume_volumeIsNotFixed_setsAbsVolumeBase() {
-        doReturn(false).when(mAudioManager).isVolumeFixed();
-        mAvrcpStateMachine =
-                new AvrcpControllerStateMachine(
-                        mAdapterService, mAvrcpControllerService, mDevice, mNativeInterface, false);
-        mAvrcpStateMachine.start();
-        byte label = 42;
+    public void testRegisterAbsVolumeNotification_isAbsolute_doesNotGetAbsVolumeMax() {
+        makeStateMachineForAbsVolumeTests(false, false);
         setUpConnectedState(true, true);
-        doReturn(100).when(mAudioManager).getStreamMaxVolume(eq(AudioManager.STREAM_MUSIC));
-        doReturn(25).when(mAudioManager).getStreamVolume(eq(AudioManager.STREAM_MUSIC));
-        mAvrcpStateMachine.sendMessage(
-                AvrcpControllerStateMachine.MESSAGE_PROCESS_SET_ABS_VOL_CMD, 20, label);
-        verify(mNativeInterface, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
-                .sendAbsVolRsp(any(), eq(20), eq((int) label));
+
+        byte label = 42;
+        verifyRegisterAbsVolumeNotification(label, 31);
+    }
+
+    /** Test that set absolute volume is working: fixed volume, not automotive = Loud */
+    @Test
+    public void testSetAbsoluteVolume_volumeIsFixed_setsAbsVolumeMax() {
+        setUpConnectedState(true, true);
+
+        byte setLabel = 52;
+        verifySetAbsVolume(setLabel, 20, 127);
+        verify(mAudioManager, never())
+                .setStreamVolume(
+                        eq(AudioManager.STREAM_MUSIC), anyInt(), eq(AudioManager.FLAG_SHOW_UI));
+    }
+
+    /** Test that set absolute volume is working: not fixed volume, automotive = Loud */
+    @Test
+    public void testSetAbsoluteVolume_isAutomotive_setsAbsVolumeMax() {
+        makeStateMachineForAbsVolumeTests(false, true);
+        setUpConnectedState(true, true);
+
+        byte setLabel = 52;
+        verifySetAbsVolume(setLabel, 20, 127);
+        verify(mAudioManager, never())
+                .setStreamVolume(
+                        eq(AudioManager.STREAM_MUSIC), anyInt(), eq(AudioManager.FLAG_SHOW_UI));
+    }
+
+    /** Test that set absolute volume is working: not fixed volume, not automotive = Absolute */
+    @Test
+    public void testSetAbsoluteVolume_isAbsolute_doesNotSetAbsVolumeMax() {
+        makeStateMachineForAbsVolumeTests(false, false);
+        setUpConnectedState(true, true);
+
+        byte setLabel = 52;
+        verifySetAbsVolume(setLabel, 20, 20);
         verify(mAudioManager, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
                 .setStreamVolume(
                         eq(AudioManager.STREAM_MUSIC), eq(15), eq(AudioManager.FLAG_SHOW_UI));
-    }
-
-    /** Test that set absolute volume is working */
-    @Test
-    public void
-            testSetAbsoluteVolume_volumeIsNotFixedSinkAbsoluteVolumeEnabled_setsAbsVolumeBase() {
-        doReturn(false).when(mAudioManager).isVolumeFixed();
-        mAvrcpStateMachine =
-                new AvrcpControllerStateMachine(
-                        mAdapterService, mAvrcpControllerService, mDevice, mNativeInterface, true);
-        mAvrcpStateMachine.start();
-        byte label = 42;
-        setUpConnectedState(true, true);
-        mAvrcpStateMachine.sendMessage(
-                AvrcpControllerStateMachine.MESSAGE_PROCESS_SET_ABS_VOL_CMD, 20, label);
-        verify(mNativeInterface, timeout(ASYNC_CALL_TIMEOUT_MILLIS))
-                .sendAbsVolRsp(any(), eq(127), eq((int) label));
     }
 
     /** Test playback does not request focus when another app is playing music. */
@@ -1237,12 +1249,11 @@ public class AvrcpControllerStateMachineTest {
         assertThat(mAvrcpStateMachine.isActive()).isTrue();
 
         // See that state from BluetoothMediaBrowserService is updated
-        MediaSessionCompat session = BluetoothMediaBrowserService.getSession();
-        assertThat(session).isNotNull();
-        MediaControllerCompat controller = session.getController();
-        assertThat(controller).isNotNull();
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
 
-        MediaMetadataCompat metadata = controller.getMetadata();
+        MediaMetadataCompat metadata = mediaBrowserService.getMetadata();
         assertThat(metadata).isNotNull();
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_TITLE)).isEqualTo("title");
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_ARTIST)).isEqualTo("artist");
@@ -1252,12 +1263,12 @@ public class AvrcpControllerStateMachineTest {
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_GENRE)).isEqualTo("none");
         assertThat(metadata.getLong(MediaMetadataCompat.METADATA_KEY_DURATION)).isEqualTo(10);
 
-        PlaybackStateCompat playbackState = controller.getPlaybackState();
+        PlaybackStateCompat playbackState = mediaBrowserService.getPlaybackState();
         assertThat(playbackState).isNotNull();
         assertThat(playbackState.getState()).isEqualTo(PlaybackStateCompat.STATE_PAUSED);
         assertThat(playbackState.getPosition()).isEqualTo(7);
 
-        List<MediaSessionCompat.QueueItem> queue = controller.getQueue();
+        List<MediaSessionCompat.QueueItem> queue = mediaBrowserService.getNowPlayingQueue();
         assertThat(queue).isNotNull();
         assertThat(queue).hasSize(2);
         assertThat(queue.get(0).getDescription().getTitle().toString()).isEqualTo("title");
@@ -1304,12 +1315,11 @@ public class AvrcpControllerStateMachineTest {
         TestUtils.waitForLooperToFinishScheduledTask(mAvrcpStateMachine.getHandler().getLooper());
 
         // Verify track and playback state
-        MediaSessionCompat session = BluetoothMediaBrowserService.getSession();
-        assertThat(session).isNotNull();
-        MediaControllerCompat controller = session.getController();
-        assertThat(controller).isNotNull();
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
 
-        MediaMetadataCompat metadata = controller.getMetadata();
+        MediaMetadataCompat metadata = mediaBrowserService.getMetadata();
         assertThat(metadata).isNotNull();
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_TITLE)).isEqualTo("Song 1");
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_ARTIST)).isEqualTo("artist");
@@ -1319,7 +1329,7 @@ public class AvrcpControllerStateMachineTest {
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_GENRE)).isEqualTo("none");
         assertThat(metadata.getLong(MediaMetadataCompat.METADATA_KEY_DURATION)).isEqualTo(10);
 
-        PlaybackStateCompat playbackState = controller.getPlaybackState();
+        PlaybackStateCompat playbackState = mediaBrowserService.getPlaybackState();
         assertThat(playbackState).isNotNull();
         assertThat(playbackState.getState()).isEqualTo(PlaybackStateCompat.STATE_PLAYING);
         assertThat(playbackState.getActiveQueueItemId()).isEqualTo(0);
@@ -1330,7 +1340,7 @@ public class AvrcpControllerStateMachineTest {
         TestUtils.waitForLooperToFinishScheduledTask(mAvrcpStateMachine.getHandler().getLooper());
 
         // Assert new track metadata and active queue item
-        metadata = controller.getMetadata();
+        metadata = mediaBrowserService.getMetadata();
         assertThat(metadata).isNotNull();
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_TITLE)).isEqualTo("Song 2");
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_ARTIST)).isEqualTo("artist");
@@ -1340,7 +1350,7 @@ public class AvrcpControllerStateMachineTest {
         assertThat(metadata.getString(MediaMetadataCompat.METADATA_KEY_GENRE)).isEqualTo("none");
         assertThat(metadata.getLong(MediaMetadataCompat.METADATA_KEY_DURATION)).isEqualTo(10);
 
-        playbackState = controller.getPlaybackState();
+        playbackState = mediaBrowserService.getPlaybackState();
         assertThat(playbackState).isNotNull();
         assertThat(playbackState.getState()).isEqualTo(PlaybackStateCompat.STATE_PLAYING);
         assertThat(playbackState.getActiveQueueItemId()).isEqualTo(1);
@@ -1362,12 +1372,12 @@ public class AvrcpControllerStateMachineTest {
         setCurrentTrack(track);
 
         // Since we're not active, verify BluetoothMediaBrowserService does not have these values
-        MediaSessionCompat session = BluetoothMediaBrowserService.getSession();
-        assertThat(session).isNotNull();
-        MediaControllerCompat controller = session.getController();
-        assertThat(controller).isNotNull();
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
 
-        assertThat(controller.getMetadata()).isNull(); // track starts as null and shouldn't change
+        // track starts as null and shouldn't change
+        assertThat(mediaBrowserService.getMetadata()).isNull();
     }
 
     /** Test receiving a playback status of playing when we're not the active device */
@@ -1393,7 +1403,12 @@ public class AvrcpControllerStateMachineTest {
                         eq(AvrcpControllerService.PASS_THRU_CMD_ID_PAUSE),
                         eq(KEY_DOWN));
         verify(mA2dpSinkService, never()).requestAudioFocus(mDevice, true);
-        assertThat(BluetoothMediaBrowserService.getPlaybackState().getState())
+
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
+
+        assertThat(mediaBrowserService.getPlaybackState().getState())
                 .isEqualTo(PlaybackStateCompat.STATE_ERROR);
     }
 
@@ -1413,12 +1428,11 @@ public class AvrcpControllerStateMachineTest {
         setPlaybackPosition(1, 10);
 
         // Since we're not active, verify BluetoothMediaBrowserService does not have these values
-        MediaSessionCompat session = BluetoothMediaBrowserService.getSession();
-        assertThat(session).isNotNull();
-        MediaControllerCompat controller = session.getController();
-        assertThat(controller).isNotNull();
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
 
-        PlaybackStateCompat playbackState = controller.getPlaybackState();
+        PlaybackStateCompat playbackState = mediaBrowserService.getPlaybackState();
         assertThat(playbackState).isNotNull();
         assertThat(playbackState.getPosition()).isEqualTo(0);
     }
@@ -1445,12 +1459,11 @@ public class AvrcpControllerStateMachineTest {
         setNowPlayingList(nowPlayingList);
 
         // Since we're not active, verify BluetoothMediaBrowserService does not have these values
-        MediaSessionCompat session = BluetoothMediaBrowserService.getSession();
-        assertThat(session).isNotNull();
-        MediaControllerCompat controller = session.getController();
-        assertThat(controller).isNotNull();
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
 
-        assertThat(controller.getQueue()).isNull();
+        assertThat(mediaBrowserService.getNowPlayingQueue()).isNull();
     }
 
     /**
@@ -1989,11 +2002,11 @@ public class AvrcpControllerStateMachineTest {
         assertThat(nowPlaying.isCached()).isTrue();
 
         // See that state from BluetoothMediaBrowserService is updated to null (i.e. empty)
-        MediaSessionCompat session = BluetoothMediaBrowserService.getSession();
-        assertThat(session).isNotNull();
-        MediaControllerCompat controller = session.getController();
-        assertThat(controller).isNotNull();
-        assertThat(controller.getQueue()).isNull();
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
+
+        assertThat(mediaBrowserService.getNowPlayingQueue()).isNull();
     }
 
     /**
@@ -2042,7 +2055,7 @@ public class AvrcpControllerStateMachineTest {
         BrowseTree.BrowseNode deviceRoot = mAvrcpStateMachine.mBrowseTree.mRootNode;
         mAvrcpStateMachine.requestContents(deviceRoot);
         // issues a player list fetch
-        mAvrcpStateMachine.connect(StackEvent.connectionStateChanged(true, true));
+        mAvrcpStateMachine.connect(true, true);
         TestUtils.waitForLooperToBeIdle(mAvrcpStateMachine.getHandler().getLooper());
         verify(mNativeInterface).getPlayerList(eq(mTestAddress), eq(0), eq(19));
     }
@@ -2143,5 +2156,45 @@ public class AvrcpControllerStateMachineTest {
         // make sure the second player is cached now
         playerTwoNode = mAvrcpStateMachine.findNode(results.getChildren().get(1).getID());
         assertThat(playerTwoNode.isCached()).isTrue();
+    }
+
+    @Test
+    public void testOnShuffleStateChanged() {
+        setUpConnectedState(true, true);
+        doReturn(PlaybackStateCompat.SHUFFLE_MODE_ALL).when(mPlayerApplicationSettings)
+                .getSetting(PlayerApplicationSettings.SHUFFLE_STATUS);
+
+        mAvrcpStateMachine.sendMessage(
+                AvrcpControllerStateMachine.MESSAGE_PROCESS_CURRENT_APPLICATION_SETTINGS,
+                        mPlayerApplicationSettings);
+
+        TestUtils.waitForLooperToFinishScheduledTask(mAvrcpStateMachine.getHandler().getLooper());
+
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
+
+        assertThat(mediaBrowserService.getShuffleMode())
+                .isEqualTo(PlaybackStateCompat.SHUFFLE_MODE_ALL);
+    }
+
+    @Test
+    public void testOnRepeatStateChanged() {
+        setUpConnectedState(true, true);
+        doReturn(PlaybackStateCompat.REPEAT_MODE_ALL).when(mPlayerApplicationSettings)
+                .getSetting(PlayerApplicationSettings.REPEAT_STATUS);
+
+        mAvrcpStateMachine.sendMessage(
+                AvrcpControllerStateMachine.MESSAGE_PROCESS_CURRENT_APPLICATION_SETTINGS,
+                        mPlayerApplicationSettings);
+
+        TestUtils.waitForLooperToFinishScheduledTask(mAvrcpStateMachine.getHandler().getLooper());
+
+        BluetoothMediaBrowserService mediaBrowserService =
+                BluetoothMediaBrowserService.getInstance();
+        assertThat(mediaBrowserService).isNotNull();
+
+        assertThat(mediaBrowserService.getRepeatMode())
+                .isEqualTo(PlaybackStateCompat.REPEAT_MODE_ALL);
     }
 }

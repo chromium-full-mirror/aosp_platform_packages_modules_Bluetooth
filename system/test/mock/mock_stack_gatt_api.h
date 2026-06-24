@@ -32,8 +32,6 @@
 #include <bluetooth/types/bt_transport.h>
 #include <bluetooth/types/uuid.h>
 
-#include <string>
-
 #include "stack/include/gatt_api.h"
 
 // Original usings
@@ -268,6 +266,39 @@ struct GATTS_StopService {
 };
 extern struct GATTS_StopService GATTS_StopService;
 
+// Name: GATT_UpdateSubrateConfig
+// Params: GATT_SUBRATE_MODE subrate_mode uint16_t subrate_max,
+//         uint16_t subrate_min, uint16_t cont_num
+// Return: void
+struct GATT_UpdateSubrateConfig {
+  std::function<void(tGATT_SUBRATE_MODE subrate_mode, uint16_t subrate_max,
+                     uint16_t subrate_min, uint16_t cont_num)>
+          body{[](tGATT_SUBRATE_MODE /*subrate_mode*/, uint16_t /*subrate_max*/,
+                  uint16_t /*subrate_min*/, uint16_t /*cont_num*/) {}};
+  void operator()(tGATT_SUBRATE_MODE subrate_mode, uint16_t subrate_max,
+                  uint16_t subrate_min, uint16_t cont_num) {
+    body(subrate_mode, subrate_max, subrate_min, cont_num);
+  }
+};
+extern struct GATT_UpdateSubrateConfig GATT_UpdateSubrateConfig;
+
+// Name: GATT_SubrateRequest
+// Params: tGATT_IF gatt_if, const RawAddress& bd_addr, tGATT_SUBRATE_MODE subrate_mode
+// Return: bool
+struct GATT_SubrateRequest {
+  static bool return_value;
+  std::function<bool(tGATT_IF gatt_if, const RawAddress& bd_addr,
+                     tGATT_SUBRATE_MODE subrate_mode)>
+          body{[](tGATT_IF /* gatt_if */, const RawAddress& /* bd_addr */,
+                  tGATT_SUBRATE_MODE /* subrate_mode */) {
+            return return_value;
+          }};
+  bool operator()(tGATT_IF gatt_if, const RawAddress& bd_addr, tGATT_SUBRATE_MODE subrate_mode) {
+    return body(gatt_if, bd_addr, subrate_mode);
+  }
+};
+extern struct GATT_SubrateRequest GATT_SubrateRequest;
+
 // Name: GATT_CancelConnect
 // Params: tGATT_IF gatt_if, const RawAddress& bd_addr, bool is_direct
 // Return: bool
@@ -285,23 +316,23 @@ extern struct GATT_CancelConnect GATT_CancelConnect;
 
 // Name: GATT_Connect
 // Params: tGATT_IF gatt_if, const RawAddress& bd_addr, bool is_direct,
-// tBT_TRANSPORT transport, bool opportunistic, uint8_t initiating_phys, uint16_t preferred_mtu,
-// bool prefer_relax_mode Return: bool
+// tBT_TRANSPORT transport, bool opportunistic, uint16_t preferred_mtu, bool prefer_relax_mode,
+// bool auto_mtu_enabled Return: bool
 struct GATT_Connect {
   static bool return_value;
   std::function<bool(tGATT_IF gatt_if, const RawAddress& bd_addr, tBLE_ADDR_TYPE addr_type,
                      bool is_direct, tBT_TRANSPORT transport, bool opportunistic,
-                     uint8_t initiating_phys, uint16_t preferred_mtu, bool prefer_relax_mode)>
+                     uint16_t preferred_mtu, bool prefer_relax_mode, bool auto_mtu_enabled)>
           body{[](tGATT_IF /* gatt_if */, const RawAddress& /* bd_addr */,
                   tBLE_ADDR_TYPE /* addr_type */, bool /* is_direct */,
                   tBT_TRANSPORT /* transport */, bool /* opportunistic */,
-                  uint8_t /* initiating_phys */, uint16_t /* preferred_mtu */,
-                  bool /* prefer_relax_mode */) { return return_value; }};
+                  uint16_t /* preferred_mtu */, bool /* prefer_relax_mode */,
+                  bool /* auto_mtu_enabled */) { return return_value; }};
   bool operator()(tGATT_IF gatt_if, const RawAddress& bd_addr, tBLE_ADDR_TYPE addr_type,
                   bool is_direct, tBT_TRANSPORT transport, bool opportunistic,
-                  uint8_t initiating_phys, uint16_t preferred_mtu, bool prefer_relax_mode) {
-    return body(gatt_if, bd_addr, addr_type, is_direct, transport, opportunistic, initiating_phys,
-                preferred_mtu, prefer_relax_mode);
+                  uint16_t preferred_mtu, bool prefer_relax_mode, bool auto_mtu_enabled) {
+    return body(gatt_if, bd_addr, addr_type, is_direct, transport, opportunistic, preferred_mtu,
+                prefer_relax_mode, auto_mtu_enabled);
   }
 };
 extern struct GATT_Connect GATT_Connect;
@@ -398,6 +429,77 @@ struct GATT_StartIf {
   void operator()(tGATT_IF gatt_if) { body(gatt_if); }
 };
 extern struct GATT_StartIf GATT_StartIf;
+
+// Name: GATTC_OffloadCharacteristics
+// Params: tCONN_ID conn_id, btgatt_db_element_t* service, size_t elements_count, uint64_t
+// endpoint_id, uint64_t hub_id, std::promise<btgatt_offload_result_t> promise
+struct GATTC_OffloadCharacteristics {
+  std::function<void(tCONN_ID conn_id, btgatt_db_element_t* service, size_t elements_count,
+                     uint64_t endpoint_id, uint64_t hub_id,
+                     std::promise<btgatt_offload_result_t> promise)>
+          body{[](tCONN_ID /* conn_id */, btgatt_db_element_t* /* service */,
+                  size_t /* elements_count */, uint64_t /* endpoint_id */, uint64_t /* hub_id */,
+                  std::promise<btgatt_offload_result_t> /* promise */) {}};
+  void operator()(tCONN_ID conn_id, btgatt_db_element_t* service, size_t elements_count,
+                  uint64_t endpoint_id, uint64_t hub_id,
+                  std::promise<btgatt_offload_result_t> promise) {
+    body(conn_id, service, elements_count, endpoint_id, hub_id, std::move(promise));
+  }
+};
+extern struct GATTC_OffloadCharacteristics GATTC_OffloadCharacteristics;
+
+// Name: GATTC_UnoffloadCharacteristics
+// Params: tCONN_ID conn_id, uint16_t session_id
+struct GATTC_UnoffloadCharacteristics {
+  std::function<void(tCONN_ID conn_id, uint16_t session_id)> body{
+          [](tCONN_ID /* conn_id */, uint16_t /* session_id */) {}};
+  void operator()(tCONN_ID conn_id, uint16_t session_id) { body(conn_id, session_id); }
+};
+extern struct GATTC_UnoffloadCharacteristics GATTC_UnoffloadCharacteristics;
+
+// Name: GATTC_InformNotificationHandle
+// Params: const RawAddress& remote_bda, uint16_t handle
+struct GATTC_InformNotificationHandle {
+  std::function<void(const RawAddress& remote_bda, uint16_t handle)> body{
+          [](const RawAddress& /* remote_bda */, uint16_t /* handle */) {}};
+  void operator()(const RawAddress& remote_bda, uint16_t handle) { body(remote_bda, handle); }
+};
+extern struct GATTC_InformNotificationHandle GATTC_InformNotificationHandle;
+
+// Name: GATTC_InformServiceChangedIndication
+// Params: const RawAddress& remote_bda
+struct GATTC_InformServiceChangedIndication {
+  std::function<void(const RawAddress& remote_bda)> body{[](const RawAddress& /* remote_bda */) {}};
+  void operator()(const RawAddress& remote_bda) { body(remote_bda); }
+};
+extern struct GATTC_InformServiceChangedIndication GATTC_InformServiceChangedIndication;
+
+// Name: GATTS_OffloadCharacteristics
+// Params: tCONN_ID conn_id, btgatt_db_element_t* service, size_t elements_count, uint64_t
+// endpoint_id, uint64_t hub_id, std::promise<btgatt_offload_result_t> promise
+struct GATTS_OffloadCharacteristics {
+  std::function<void(tCONN_ID conn_id, btgatt_db_element_t* service, size_t elements_count,
+                     uint64_t endpoint_id, uint64_t hub_id,
+                     std::promise<btgatt_offload_result_t> promise)>
+          body{[](tCONN_ID /* conn_id */, btgatt_db_element_t* /* service */,
+                  size_t /* elements_count */, uint64_t /* endpoint_id */, uint64_t /* hub_id */,
+                  std::promise<btgatt_offload_result_t> /* promise */) {}};
+  void operator()(tCONN_ID conn_id, btgatt_db_element_t* service, size_t elements_count,
+                  uint64_t endpoint_id, uint64_t hub_id,
+                  std::promise<btgatt_offload_result_t> promise) {
+    body(conn_id, service, elements_count, endpoint_id, hub_id, std::move(promise));
+  }
+};
+extern struct GATTS_OffloadCharacteristics GATTS_OffloadCharacteristics;
+
+// Name: GATTS_UnoffloadCharacteristics
+// Params: tCONN_ID conn_id, uint16_t session_id
+struct GATTS_UnoffloadCharacteristics {
+  std::function<void(tCONN_ID conn_id, uint16_t session_id)> body{
+          [](tCONN_ID /* conn_id */, uint16_t /* session_id */) {}};
+  void operator()(tCONN_ID conn_id, uint16_t session_id) { body(conn_id, session_id); }
+};
+extern struct GATTS_UnoffloadCharacteristics GATTS_UnoffloadCharacteristics;
 
 }  // namespace stack_gatt_api
 }  // namespace mock

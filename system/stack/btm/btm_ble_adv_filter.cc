@@ -71,10 +71,6 @@ static uint8_t btm_ble_cs_update_pf_counter(tBTM_BLE_SCAN_COND_OP action, uint8_
 #define BTM_BLE_ADV_FILT_CB_EVT_MASK 0xF0
 #define BTM_BLE_ADV_FILT_SUBCODE_MASK 0x0F
 
-static bool is_filtering_supported() {
-  return cmn_ble_vsc_cb.filter_support != 0 && cmn_ble_vsc_cb.max_filter != 0;
-}
-
 /*******************************************************************************
  *
  * Function         btm_ble_ocf_to_condtype
@@ -141,7 +137,7 @@ static void btm_flt_update_cb(uint8_t expected_ocf, tBTM_BLE_PF_CFG_CBACK cb, ui
           (status == 0) ? tBTM_STATUS::BTM_SUCCESS : tBTM_STATUS::BTM_ERR_PROCESSING;
 
   if (op_subcode == BTM_BLE_META_PF_FEAT_SEL) {
-    cb.Run(num_avail, static_cast<tBTM_BLE_SCAN_COND_OP>(action), btm_status);
+    std::move(cb).Run(num_avail, static_cast<tBTM_BLE_SCAN_COND_OP>(action), btm_status);
     return;
   }
 
@@ -160,7 +156,7 @@ static void btm_flt_update_cb(uint8_t expected_ocf, tBTM_BLE_PF_CFG_CBACK cb, ui
   /* send ADV PF operation complete */
   btm_ble_adv_filt_cb.op_type = 0;
 
-  cb.Run(num_avail, static_cast<tBTM_BLE_SCAN_COND_OP>(action), btm_status);
+  std::move(cb).Run(num_avail, static_cast<tBTM_BLE_SCAN_COND_OP>(action), btm_status);
 }
 
 /*******************************************************************************
@@ -302,6 +298,19 @@ static uint8_t btm_ble_cs_update_pf_counter(tBTM_BLE_SCAN_COND_OP action, uint8_
 
 /*******************************************************************************
  *
+ * Function         BTM_BleIsFilteringSupported
+ *
+ * Description      Checks if the device supports filtering.
+ *
+ * Returns          Return true if filtering is supported else false
+ *
+ ******************************************************************************/
+bool BTM_BleIsFilteringSupported(void) {
+  return cmn_ble_vsc_cb.filter_support != 0 && cmn_ble_vsc_cb.max_filter != 0;
+}
+
+/*******************************************************************************
+ *
  * Function         BTM_BleAdvFilterParamSetup
  *
  * Description      This function is called to setup the adv data payload filter
@@ -321,8 +330,8 @@ void BTM_BleAdvFilterParamSetup(tBTM_BLE_SCAN_COND_OP action, tBTM_BLE_PF_FILT_I
                 BTM_BLE_ADV_FILT_TRACK_NUM;
   uint8_t param[len], *p;
 
-  if (!is_filtering_supported()) {
-    cb.Run(0, action, tBTM_STATUS::BTM_MODE_UNSUPPORTED);
+  if (!BTM_BleIsFilteringSupported()) {
+    std::move(cb).Run(0, action, tBTM_STATUS::BTM_MODE_UNSUPPORTED);
     return;
   }
 
@@ -334,7 +343,7 @@ void BTM_BleAdvFilterParamSetup(tBTM_BLE_SCAN_COND_OP action, tBTM_BLE_PF_FILT_I
     p_bda_filter = btm_ble_find_addr_filter_counter(nullptr);
     if (NULL == p_bda_filter) {
       log::error("BD Address not found!");
-      cb.Run(0, BTM_BLE_PF_ENABLE, tBTM_STATUS::BTM_UNKNOWN_ADDR);
+      std::move(cb).Run(0, BTM_BLE_PF_ENABLE, tBTM_STATUS::BTM_UNKNOWN_ADDR);
       return;
     }
 
@@ -379,8 +388,9 @@ void BTM_BleAdvFilterParamSetup(tBTM_BLE_SCAN_COND_OP action, tBTM_BLE_PF_FILT_I
             BTM_BLE_ADV_FILT_TRACK_NUM;
     }
 
-    btu_hcif_send_cmd_with_cb(HCI_BLE_ADV_FILTER, param, len,
-                              base::Bind(&btm_flt_update_cb, BTM_BLE_META_PF_FEAT_SEL, cb));
+    btu_hcif_send_cmd_with_cb(
+            HCI_BLE_ADV_FILTER, param, len,
+            base::BindOnce(&btm_flt_update_cb, BTM_BLE_META_PF_FEAT_SEL, std::move(cb)));
   } else if (BTM_BLE_SCAN_COND_DELETE == action) {
     /* select feature based on control block settings */
     UINT8_TO_STREAM(p, BTM_BLE_META_PF_FEAT_SEL);
@@ -388,9 +398,9 @@ void BTM_BleAdvFilterParamSetup(tBTM_BLE_SCAN_COND_OP action, tBTM_BLE_PF_FILT_I
     /* Filter index */
     UINT8_TO_STREAM(p, filt_index);
 
-    btu_hcif_send_cmd_with_cb(HCI_BLE_ADV_FILTER, param,
-                              (uint8_t)(BTM_BLE_ADV_FILT_META_HDR_LENGTH),
-                              base::Bind(&btm_flt_update_cb, BTM_BLE_META_PF_FEAT_SEL, cb));
+    btu_hcif_send_cmd_with_cb(
+            HCI_BLE_ADV_FILTER, param, (uint8_t)(BTM_BLE_ADV_FILT_META_HDR_LENGTH),
+            base::BindOnce(&btm_flt_update_cb, BTM_BLE_META_PF_FEAT_SEL, std::move(cb)));
 
   } else if (BTM_BLE_SCAN_COND_CLEAR == action) {
     /* Deallocate all filters here */
@@ -400,9 +410,9 @@ void BTM_BleAdvFilterParamSetup(tBTM_BLE_SCAN_COND_OP action, tBTM_BLE_PF_FILT_I
     UINT8_TO_STREAM(p, BTM_BLE_META_PF_FEAT_SEL);
     UINT8_TO_STREAM(p, BTM_BLE_SCAN_COND_CLEAR);
 
-    btu_hcif_send_cmd_with_cb(HCI_BLE_ADV_FILTER, param,
-                              (uint8_t)(BTM_BLE_ADV_FILT_META_HDR_LENGTH - 1),
-                              base::Bind(&btm_flt_update_cb, BTM_BLE_META_PF_FEAT_SEL, cb));
+    btu_hcif_send_cmd_with_cb(
+            HCI_BLE_ADV_FILTER, param, (uint8_t)(BTM_BLE_ADV_FILT_META_HDR_LENGTH - 1),
+            base::BindOnce(&btm_flt_update_cb, BTM_BLE_META_PF_FEAT_SEL, std::move(cb)));
   }
 }
 
@@ -422,7 +432,7 @@ void btm_ble_adv_filter_init(void) {
 
   BTM_BleGetVendorCapabilities(&cmn_ble_vsc_cb);
 
-  if (!is_filtering_supported()) {
+  if (!BTM_BleIsFilteringSupported()) {
     return;
   }
 

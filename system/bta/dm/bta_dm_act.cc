@@ -41,8 +41,8 @@
 #include "bta/dm/bta_dm_disc.h"
 #include "bta/dm/bta_dm_gatt_client.h"
 #include "bta/dm/bta_dm_int.h"
-#include "bta/dm/bta_dm_sec_int.h"
 #include "bta/dm/bta_dm_pm_offload.h"
+#include "bta/dm/bta_dm_sec_int.h"
 #include "bta/include/bta_api.h"
 #include "bta/include/bta_dm_acl.h"
 #include "bta/include/bta_dm_api.h"
@@ -63,7 +63,6 @@
 #include "stack/acl/acl.h"
 #include "stack/connection_manager/connection_manager.h"
 #include "stack/include/acl_api.h"
-#include "stack/include/ble_scanner.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/bt_uuid16.h"
@@ -235,7 +234,7 @@ void BTA_dm_on_hw_off() {
   bta_dm_search_stop();
 }
 
-void BTA_dm_on_hw_on() {
+void BTA_dm_on_hw_on(const std::string local_name) {
   uint8_t key_mask = 0;
   tBTA_BLE_LOCAL_ID_KEYS id_key;
 
@@ -289,10 +288,12 @@ void BTA_dm_on_hw_on() {
     bta_dm_acl_cb.p_acl_cback(BTA_DM_LPP_OFFLOAD_FEATURES_READ, NULL);
   }
 
-  btm_ble_scanner_init();
-
   // Synchronize with the controller before continuing
-  bta_dm_le_rand(get_main_thread()->BindOnce([](uint64_t /*value*/) { BTIF_dm_enable(); }));
+  bta_dm_le_rand(get_main_thread()->BindOnce(
+          [](const std::string local_name, uint64_t /*value*/) {
+            BTIF_dm_enable(std::move(local_name));
+          },
+          std::move(local_name)));
 
   bta_sys_rm_register(bta_dm_rm_cback);
 
@@ -687,7 +688,7 @@ static tBTA_DM_PEER_DEVICE* allocate_device_for(const RawAddress& bd_addr,
   return nullptr;
 }
 
-static void bta_dm_acl_up(const tAclLinkSpec& link_spec, uint16_t acl_handle) {
+static void bta_dm_acl_up(const AclLinkSpec& link_spec, uint16_t acl_handle) {
   const RawAddress& bd_addr = link_spec.addrt.bda;
   tBT_TRANSPORT transport = link_spec.transport;
 
@@ -739,11 +740,11 @@ static void bta_dm_acl_up(const tAclLinkSpec& link_spec, uint16_t acl_handle) {
   bta_dm_adjust_roles(true);
 }
 
-void BTA_dm_acl_up(const tAclLinkSpec& link_spec, uint16_t acl_handle) {
+void BTA_dm_acl_up(const AclLinkSpec& link_spec, uint16_t acl_handle) {
   do_in_main_thread(base::BindOnce(bta_dm_acl_up, link_spec, acl_handle));
 }
 
-static void bta_dm_acl_up_failed(const tAclLinkSpec& link_spec, tHCI_STATUS status) {
+static void bta_dm_acl_up_failed(const AclLinkSpec& link_spec, tHCI_STATUS status) {
   if (bta_dm_acl_cb.p_acl_cback) {
     tBTA_DM_ACL conn = {};
     conn.link_up_failed.link_spec = link_spec;
@@ -752,12 +753,11 @@ static void bta_dm_acl_up_failed(const tAclLinkSpec& link_spec, tHCI_STATUS stat
   }
 }
 
-void BTA_dm_acl_up_failed(const tAclLinkSpec& link_spec, tHCI_STATUS status) {
+void BTA_dm_acl_up_failed(const AclLinkSpec& link_spec, tHCI_STATUS status) {
   do_in_main_thread(base::BindOnce(bta_dm_acl_up_failed, link_spec, status));
 }
 
-
-static void bta_dm_acl_down(const tAclLinkSpec& link_spec) {
+static void bta_dm_acl_down(const AclLinkSpec& link_spec) {
   const RawAddress& bd_addr = link_spec.addrt.bda;
   tBT_TRANSPORT transport = link_spec.transport;
 
@@ -801,7 +801,7 @@ static void bta_dm_acl_down(const tAclLinkSpec& link_spec) {
   bta_dm_remove_on_disconnect(bd_addr, transport);
 }
 
-void BTA_dm_acl_down(const tAclLinkSpec& link_spec) {
+void BTA_dm_acl_down(const AclLinkSpec& link_spec) {
   do_in_main_thread(base::BindOnce(bta_dm_acl_down, link_spec));
 }
 
@@ -1790,12 +1790,10 @@ tBTA_DM_PEER_DEVICE* allocate_device_for(const RawAddress& bd_addr, tBT_TRANSPOR
   return ::allocate_device_for(bd_addr, transport);
 }
 
-void bta_dm_acl_up(const tAclLinkSpec& link_spec, uint16_t acl_handle) {
+void bta_dm_acl_up(const AclLinkSpec& link_spec, uint16_t acl_handle) {
   ::bta_dm_acl_up(link_spec, acl_handle);
 }
-void bta_dm_acl_down(const tAclLinkSpec& link_spec) {
-  ::bta_dm_acl_down(link_spec);
-}
+void bta_dm_acl_down(const AclLinkSpec& link_spec) { ::bta_dm_acl_down(link_spec); }
 void bta_dm_init_cb() { ::bta_dm_init_cb(); }
 void bta_dm_deinit_cb() { ::bta_dm_deinit_cb(); }
 

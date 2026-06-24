@@ -944,12 +944,14 @@ BidirectionalPair<bool> LeAudioDeviceGroup::GetConfiguredDirections(void) {
 
 CodecManager::UnicastConfigurationRequirements
 LeAudioDeviceGroup::GetAudioSetConfigurationRequirements(types::LeAudioContextType ctx_type) const {
+  log::debug("context_type: {}", (static_cast<AudioContexts>(ctx_type)).to_string());
   auto new_req = CodecManager::UnicastConfigurationRequirements{
           .audio_context_type = ctx_type,
           .flags = CodecManager::Flags::NONE,
   };
 
   bool remote_has_gmap = false;
+  BidirectionalPair<bool> has_direction = GetDirectionSupport(ctx_type);
 
   // Define a requirement for each location. Knowing codec specific
   // capabilities (i.e. multiplexing capability) the config provider can
@@ -961,18 +963,18 @@ LeAudioDeviceGroup::GetAudioSetConfigurationRequirements(types::LeAudioContextTy
       continue;
     }
     BidirectionalPair<bool> has_location = {false, false};
-    BidirectionalPair<bool> has_direction = GetDirectionSupport(ctx_type);
 
     for (auto remote_direction : {types::kLeAudioDirectionSink, types::kLeAudioDirectionSource}) {
-      if (!device->audio_locations_.get(remote_direction)) {
-        log::debug("Device {} has no audio allocation for direction: {}", device->address_,
-                   (int)remote_direction);
-        continue;
-      }
-
       if (!has_direction.get(remote_direction)) {
         log::info("Skipping {} direction",
                   remote_direction == types::kLeAudioDirectionSource ? "Decoding" : "Encoding");
+        continue;
+      }
+
+      auto const& dev_locations = device->audio_locations_.get(remote_direction);
+      if (dev_locations == std::nullopt) {
+        log::debug("Device {} has no audio allocation for direction: {}", device->address_,
+                   (int)remote_direction);
         continue;
       }
 
@@ -998,13 +1000,6 @@ LeAudioDeviceGroup::GetAudioSetConfigurationRequirements(types::LeAudioContextTy
           }
         }
       }
-
-      auto const& dev_locations = device->audio_locations_.get(remote_direction);
-      if (dev_locations == std::nullopt) {
-        log::warn("Device {} has no specified locations for direction: {}", device->address_,
-                  (int)remote_direction);
-      }
-
       has_location.get(remote_direction) = true;
       auto& direction_req = (remote_direction == types::kLeAudioDirectionSink)
                                     ? new_req.sink_requirements
@@ -1044,7 +1039,7 @@ LeAudioDeviceGroup::GetAudioSetConfigurationRequirements(types::LeAudioContextTy
         }
       }
       config_req.target_latency = utils::GetTargetLatencyForAudioContext(ctx_type);
-      log::warn("Device {} pushes requirement, location: {}, direction: {}", device->address_,
+      log::info("Device {} pushes requirement, location: {}, direction: {}", device->address_,
                 (int)locations, (int)remote_direction);
       direction_req->push_back(std::move(config_req));
     }
@@ -1402,6 +1397,10 @@ types::LeAudioConfigurationStrategy LeAudioDeviceGroup::GetGroupSinkStrategy() c
     /* Choose the group configuration strategy based on PAC records */
     auto strategy_selector = [&, this](uint8_t direction) {
       int expected_group_size = Size();
+
+      if (com_android_bluetooth_flags_leaudio_always_use_group_size_to_check_audio_config()) {
+        expected_group_size = DesiredSize();
+      }
 
       if (!audio_locations_.get(direction)) {
         log::error("No audio locations for direction: {} available in the group", +direction);
@@ -1992,6 +1991,11 @@ bool LeAudioDeviceGroup::IsAudioSetConfigurationSupported(
                direction == types::kLeAudioDirectionSink ? "Sink" : "Source");
     auto const& ase_confs = audio_set_conf->confs.get(direction);
     if (ase_confs.empty()) {
+      if (direction == types::kLeAudioDirectionSource &&
+          requirements.source_requirements->size() > 0) {
+        log::debug("No configurations for Source direction but the requirement was found.");
+        return false;
+      }
       log::debug("No configurations for direction {}, skip it.", (int)direction);
       continue;
     }
@@ -2028,7 +2032,8 @@ bool LeAudioDeviceGroup::IsAudioSetConfigurationSupported(
     // contexts are not supported. Then we might want to configure the device
     // but use UNSPECIFIED which is always supported (but can be unavailable)
     auto device_cnt = NumOfAvailableForDirection(direction);
-    if (device_cnt == 0) {
+    if (device_cnt == 0 ||
+        com_android_bluetooth_flags_leaudio_always_use_group_size_to_check_audio_config()) {
       device_cnt = DesiredSize();
       if (device_cnt == 0) {
         log::error("Device count is 0");
@@ -2108,8 +2113,11 @@ bool LeAudioDeviceGroup::IsAudioSetConfigurationSupported(
       required_device_cnt--;
     }
 
-    if (required_device_cnt > 0) {
-      /* Don't left any active devices if requirements are not met */
+    /* If at least one device got configured we are good to go. */
+    if ((!com_android_bluetooth_flags_leaudio_always_use_group_size_to_check_audio_config() &&
+         required_device_cnt > 0) ||
+        (com_android_bluetooth_flags_leaudio_always_use_group_size_to_check_audio_config() &&
+         (required_device_cnt == device_cnt))) {
       log::debug("Could not configure all the devices for direction: {}",
                  direction == types::kLeAudioDirectionSink ? "Sink" : "Source");
       return false;
@@ -2186,8 +2194,16 @@ bool LeAudioDeviceGroup::ConfigureAses(
       continue;
     }
 
-    auto const max_required_device_cnt = NumOfAvailableForDirection(direction);
-    auto required_device_cnt = max_required_device_cnt;
+    int max_required_device_cnt = 0;
+    int required_device_cnt = 0;
+
+    if (com_android_bluetooth_flags_leaudio_always_use_group_size_to_check_audio_config()) {
+      max_required_device_cnt = DesiredSize();
+      required_device_cnt = NumOfAvailableForDirection(direction);
+    } else {
+      max_required_device_cnt = required_device_cnt = NumOfAvailableForDirection(direction);
+    }
+
     log::debug("Maximum {} device(s) required for {}", max_required_device_cnt, direction_str);
 
     uint8_t active_ase_cnt = 0;
@@ -2348,6 +2364,26 @@ std::shared_ptr<const types::AudioSetConfiguration> LeAudioDeviceGroup::GetPrefe
   }
 
   return GetCachedPreferredConfiguration(context_type);
+}
+
+void LeAudioDeviceGroup::UpdateMetadataForActiveAndNotStreamingAses(
+        const types::BidirectionalPair<std::vector<uint8_t>>& ccid_lists) {
+  /* Set metadata to all the active ASEs if not in STREAMING State. */
+  log::info("group_id: {}", group_id_);
+
+  for (auto& leAudioDevice : leAudioDevices_) {
+    if (leAudioDevice.expired()) {
+      continue;
+    }
+    for (auto& ase : leAudioDevice.lock()->ases_) {
+      if (!ase.active || ase.state == types::AseState::BTA_LE_AUDIO_ASE_STATE_STREAMING) {
+        continue;
+      }
+      auto contexts = metadata_context_type_.get(ase.direction);
+      leAudioDevice.lock()->SetMetadataToAse(&ase, types::LeAudioLtvMap(), contexts,
+                                             ccid_lists.get(ase.direction));
+    }
+  }
 }
 
 LeAudioCodecConfiguration LeAudioDeviceGroup::GetAudioSessionCodecConfigForDirection(
@@ -2604,6 +2640,7 @@ std::unique_ptr<types::AudioSetConfiguration> LeAudioDeviceGroup::FindFirstSuppo
     }
   }
 
+  log::error("no supported configuration was found");
   return nullptr;
 }
 

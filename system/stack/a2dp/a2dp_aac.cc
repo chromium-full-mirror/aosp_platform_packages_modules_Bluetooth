@@ -42,6 +42,7 @@
 #include "a2dp_codec_api.h"
 #include "a2dp_constants.h"
 #include "avdt_api.h"
+#include "gd/common/utils.h"
 #include "hardware/bt_av.h"
 #include "internal_include/bt_trace.h"
 #include "osi/include/properties.h"
@@ -322,8 +323,6 @@ static tA2DP_STATUS A2DP_CodecInfoMatchesCapabilityAac(const tA2DP_AAC_CIE* p_ca
 
   return A2DP_SUCCESS;
 }
-
-const char* A2DP_CodecNameAac(const uint8_t* /* p_codec_info */) { return "AAC"; }
 
 bool A2DP_CodecTypeEqualsAac(const uint8_t* p_codec_info_a, const uint8_t* p_codec_info_b) {
   tA2DP_AAC_CIE aac_cie_a;
@@ -673,18 +672,6 @@ bool A2DP_AdjustCodecAac(uint8_t* p_codec_info) {
   return true;
 }
 
-btav_a2dp_codec_index_t A2DP_SourceCodecIndexAac(const uint8_t* /* p_codec_info */) {
-  return BTAV_A2DP_CODEC_INDEX_SOURCE_AAC;
-}
-
-btav_a2dp_codec_index_t A2DP_SinkCodecIndexAac(const uint8_t* /* p_codec_info */) {
-  return BTAV_A2DP_CODEC_INDEX_SINK_AAC;
-}
-
-const char* A2DP_CodecIndexStrAac(void) { return "AAC"; }
-
-const char* A2DP_CodecIndexStrAacSink(void) { return "AAC SINK"; }
-
 static void aac_source_caps_initialize() {
   if (aac_source_caps_configured) {
     return;
@@ -692,6 +679,13 @@ static void aac_source_caps_initialize() {
   a2dp_aac_source_caps = osi_property_get_bool("persist.bluetooth.a2dp_aac.vbr_supported", false)
                                  ? a2dp_aac_vbr_source_caps
                                  : a2dp_aac_cbr_source_caps;
+
+  if (bluetooth::common::IsPtsTestMode()) {
+    // Test AVDTP/SRC/INT/SIG/SMG/BV-33-C requires AVDT_ReconfigReq.
+    // Add 48kHz capability to enable switching 44.1kHz <-> 48kHz
+    a2dp_aac_source_caps.sampleRate |= A2DP_AAC_SAMPLING_FREQ_48000;
+  }
+
   aac_source_caps_configured = true;
 }
 
@@ -705,8 +699,7 @@ bool A2DP_InitCodecConfigAacSink(AvdtpSepConfig* p_cfg) {
 }
 
 A2dpCodecConfigAacSource::A2dpCodecConfigAacSource(btav_a2dp_codec_priority_t codec_priority)
-    : A2dpCodecConfigAacBase(BTAV_A2DP_CODEC_INDEX_SOURCE_AAC, A2DP_CodecIndexStrAac(),
-                             codec_priority, true) {
+    : A2dpCodecConfigAacBase(BTAV_A2DP_CODEC_INDEX_SOURCE_AAC, "AAC", codec_priority, true) {
   aac_source_caps_initialize();
   // Compute the local capability
   if (a2dp_aac_source_caps.sampleRate & A2DP_AAC_SAMPLING_FREQ_44100) {
@@ -979,6 +972,13 @@ tA2DP_STATUS A2dpCodecConfigAacBase::setCodecConfig(const uint8_t* p_peer_codec_
 
   // NOTE: Always assign the Object Type and Variable Bit Rate Support.
   result_config_cie.objectType = p_a2dp_aac_caps->objectType;
+
+  if (!is_capability &&
+      p_a2dp_aac_caps->variableBitRateSupport == A2DP_AAC_VARIABLE_BIT_RATE_DISABLED &&
+      peer_info_cie.variableBitRateSupport == A2DP_AAC_VARIABLE_BIT_RATE_ENABLED) {
+    log::error("VBR not supported, cannot setup VBR");
+    return A2DP_NOT_SUPPORTED_VBR;
+  }
 
   // The Variable Bit Rate Support is disabled if either side disables it
   result_config_cie.variableBitRateSupport =
@@ -1369,8 +1369,7 @@ fail:
 }
 
 A2dpCodecConfigAacSink::A2dpCodecConfigAacSink(btav_a2dp_codec_priority_t codec_priority)
-    : A2dpCodecConfigAacBase(BTAV_A2DP_CODEC_INDEX_SINK_AAC, A2DP_CodecIndexStrAacSink(),
-                             codec_priority, false) {}
+    : A2dpCodecConfigAacBase(BTAV_A2DP_CODEC_INDEX_SINK_AAC, "AAC SINK", codec_priority, false) {}
 
 A2dpCodecConfigAacSink::~A2dpCodecConfigAacSink() {}
 
