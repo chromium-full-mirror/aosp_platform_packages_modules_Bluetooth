@@ -22,23 +22,22 @@
 #include <base/functional/bind.h>
 #include <bluetooth/log.h>
 #include <bluetooth/types/address.h>
+#include <bluetooth/types/string_helpers.h>
 #include <bluetooth/types/uuid.h>
 
 #include <cstdint>
-#include <deque>
-#include <list>
 #include <map>
 #include <unordered_set>
 #include <vector>
 
 #include "common/circular_buffer.h"
-#include "common/strings.h"
-#include "gatt_api.h"
 #include "hal/gatt_hal.h"
 #include "internal_include/bt_target.h"
 #include "macros.h"
 #include "osi/include/fixed_queue.h"
 #include "stack/include/bt_hdr.h"
+#include "stack/include/gatt_api.h"
+#include "stack/include/stack_app.h"
 
 #define GATT_TRANS_ID_INVALID 0x0
 #define GATT_TRANS_ID_MAX 0x0fffffff /* 4 MSB is reserved */
@@ -192,7 +191,7 @@ typedef struct {
 
 typedef struct {
   bluetooth::Uuid app_uuid128;
-  tGATT_CBACK app_cb{};
+  bluetooth::stack::tGATT_CBACK app_cb{};
   tGATT_IF gatt_if{0}; /* one based */
   bool in_use{false};
   uint8_t listening{0}; /* if adv for all has been enabled */
@@ -412,6 +411,13 @@ typedef struct {
   tGATT_STATUS status{tGATT_STATUS::GATT_SUCCESS};
   bool in_unregistering_service{false};
   bool in_clearing_services{false};
+  // Android application UID from the calling Java service. Used for permission checks and
+  // attribution.
+  int uid;
+  // Optional attribution tag from the calling Android app for fine-grained usage tracking.
+  std::string attribution_tag;
+  uint64_t creation_timestamp_ms{0};
+  bluetooth::hal::GattError stop_reason{bluetooth::hal::GattError::GATT_ERROR_NONE};
 } tGATT_OFFLOAD_SESSION;
 
 typedef struct {
@@ -518,6 +524,8 @@ typedef struct {
   std::unordered_map<uint16_t, tGATT_OFFLOAD_SESSION> offload_sessions;
   std::unordered_map<tGATT_SUBRATE_MODE, tGATT_SUBRATE_MODE_CONFIG> subrate_mode_config;
   std::unordered_map<RawAddress, tGATT_SUBRATE_MGR_CB> subrate_info;
+  void (*debug_conn_state)(const RawAddress& bda, bool connected,
+                           const tGATT_DISCONN_REASON disconnect_reason);
 } tGATT_CB;
 
 #define GATT_SIZE_OF_SRV_CHG_HNDL_RANGE 4
@@ -587,10 +595,10 @@ static constexpr uint16_t kDefaultSubrateLowModeContNum = 6;
 /* from gatt_main.cc */
 void gatt_force_disconnect(tGATT_TCB* p_tcb, std::string comment);
 bool gatt_disconnect(tGATT_TCB* p_tcb);
-bool gatt_act_connect(tGATT_REG* p_reg, const RawAddress& bd_addr, tBT_TRANSPORT transport);
-bool gatt_act_connect(tGATT_REG* p_reg, const RawAddress& bd_addr, tBLE_ADDR_TYPE addr_type,
-                      tBT_TRANSPORT transport);
+bool gatt_disconnect_br(tGATT_TCB* p_tcb);
+void gatt_channel_congestion(tGATT_TCB* p_tcb, bool congested);
 void gatt_data_process(tGATT_TCB& p_tcb, uint16_t cid, BT_HDR* p_buf);
+void gatt_send_conn_cback(tGATT_TCB* p_tcb);
 void gatt_update_app_use_link_flag(tGATT_IF gatt_if, tGATT_TCB* p_tcb, bool is_add,
                                    bool check_acl_link);
 
@@ -598,6 +606,8 @@ void gatt_profile_db_init(void);
 void gatt_set_ch_state(tGATT_TCB* p_tcb, tGATT_CH_STATE ch_state);
 tGATT_CH_STATE gatt_get_ch_state(tGATT_TCB* p_tcb);
 void gatt_init_srv_chg(void);
+void gatt_init_le(void);
+void gatt_init_br();
 void gatt_proc_srv_chg(uint16_t start_handle);
 void gatt_send_srv_chg_ind(const RawAddress& peer_bda, uint16_t start_handle);
 void gatt_chk_srv_chg(tGATTS_SRV_CHG* p_srv_chg_clt);
@@ -683,8 +693,6 @@ tGATT_STATUS gatt_sr_process_app_rsp(tGATT_TCB& tcb, tGATT_IF gatt_if, uint32_t 
                                      tGATT_SR_CMD* sr_res_p);
 void gatt_server_handle_client_req(tGATT_TCB& p_tcb, uint16_t cid, uint8_t op_code, uint16_t len,
                                    uint8_t* p_data);
-void gatt_sr_send_req_callback(tCONN_ID conn_id, uint32_t trans_id, uint8_t op_code,
-                               tGATTS_DATA* p_req_data);
 uint32_t gatt_sr_enqueue_cmd(tGATT_TCB& tcb, uint16_t cid, uint8_t op_code, uint16_t handle);
 bool gatt_cancel_open(tGATT_IF gatt_if, const RawAddress& bda);
 void gatt_notify_phy_updated(tHCI_STATUS status, uint16_t handle, uint8_t tx_phy, uint8_t rx_phy);
@@ -727,7 +735,6 @@ tGATT_TCB* gatt_get_tcb_by_idx(uint8_t tcb_idx);
 tGATT_TCB* gatt_find_tcb_by_addr(const RawAddress& bda, tBT_TRANSPORT transport);
 bool gatt_send_ble_burst_data(const RawAddress& remote_bda, BT_HDR* p_buf);
 uint16_t gatt_get_mtu_pref(const tGATT_REG* p_reg, const RawAddress& bda);
-bool is_app_prefer_auto_mtu(tGATT_REG* p_reg, const RawAddress& bda);
 uint16_t gatt_get_apps_preferred_mtu(const RawAddress& bda);
 void gatt_remove_apps_mtu_prefs(const RawAddress& bda);
 
@@ -742,7 +749,8 @@ void gatt_end_operation(tGATT_CLCB* p_clcb, tGATT_STATUS status, void* p_data);
 void gatt_act_discovery(tGATT_CLCB* p_clcb);
 void gatt_act_read(tGATT_CLCB* p_clcb, uint16_t offset);
 void gatt_act_write(tGATT_CLCB* p_clcb, uint8_t sec_act);
-tGATT_CLCB* gatt_cmd_dequeue(tGATT_TCB& tcb, uint16_t cid, uint8_t* p_opcode);
+tGATT_CLCB* gatt_cmd_peek(tGATT_TCB& tcb, uint16_t cid, uint8_t* p_op_code);
+tGATT_CLCB* gatt_cmd_dequeue(tGATT_TCB& tcb, uint16_t cid, uint8_t* p_op_code);
 bool gatt_cmd_enq(tGATT_TCB& tcb, tGATT_CLCB* p_clcb, bool to_send, uint8_t op_code, BT_HDR* p_buf);
 void gatt_client_handle_server_rsp(tGATT_TCB& tcb, uint16_t cid, uint8_t op_code, uint16_t len,
                                    uint8_t* p_data);
@@ -802,8 +810,10 @@ Octet16 gatts_calculate_database_hash(std::shared_ptr<std::list<tGATT_SRV_LIST_E
 bool gatt_offload_init();
 void gatt_offload_characteristics(tCONN_ID conn_id, bool is_server, btgatt_db_element_t* service,
                                   size_t elements_count, uint64_t endpoint_id, uint64_t hub_id,
+                                  int uid, std::string attribution_tag,
                                   std::promise<btgatt_offload_result_t> promise);
-bool gatt_offload_clear_sessions_by_acl_handle(uint16_t acl_connection_handle);
+bool gatt_offload_clear_sessions_by_acl_handle(uint16_t acl_connection_handle,
+                                               bluetooth::hal::GattError reason);
 void gatt_offload_clear_sessions_by_conn_id(tCONN_ID conn_id);
 void gatt_unoffload_session(tCONN_ID conn_id, uint16_t session_id,
                             tGATT_STATUS status = tGATT_STATUS::GATT_SUCCESS);
@@ -813,6 +823,10 @@ void gattc_offload_handle_service_changed_indication(tGATT_TCB* p_tcb);
 namespace bluetooth {
 namespace legacy {
 namespace testing {
+// Override value for the system property bluetooth.gatt.load_bonded.value
+// TODO(b/414824853) Replace by mocking of system properties.
+extern std::optional<bool> OVERRIDE_GATT_LOAD_BONDED;
+
 BT_HDR* attp_build_value_cmd(uint16_t payload_size, uint8_t op_code, uint16_t handle,
                              uint16_t offset, uint16_t len, uint8_t* p_data);
 }  // namespace testing

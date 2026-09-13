@@ -16,17 +16,27 @@
  */
 
 #include <memory>
+#include <utility>
+#include <vector>
 
+#include "bluetooth/log.h"
 #include "btm/btm_iso_impl.h"
 #include "include/btm_iso_api.h"
+#include "include/btm_iso_api_types.h"
 #include "stack/include/bt_hdr.h"
-
-using bluetooth::hci::iso_manager::BigCallbacks;
-using bluetooth::hci::iso_manager::CigCallbacks;
-using bluetooth::hci::iso_manager::iso_impl;
 
 namespace bluetooth {
 namespace hci {
+
+using ::bluetooth::hci::iso_manager::big_create_params;
+using ::bluetooth::hci::iso_manager::big_create_sync_params;
+using ::bluetooth::hci::iso_manager::cig_create_params;
+using ::bluetooth::hci::iso_manager::cis_establish_params;
+using ::bluetooth::hci::iso_manager::iso_data_path_params;
+using ::bluetooth::hci::iso_manager::iso_impl;
+using ::bluetooth::hci::iso_manager::IsoClientHandle;
+using ::bluetooth::hci::iso_manager::IsoManagerCallbacks;
+using ::bluetooth::hci::iso_manager::kInvalidIsoClientHandle;
 
 struct IsoManager::impl {
   explicit impl(const IsoManager& iso_manager) : iso_manager_(iso_manager) {}
@@ -55,28 +65,27 @@ struct IsoManager::impl {
 
 IsoManager::IsoManager() : pimpl_(std::make_unique<impl>(*this)) {}
 
-iso_manager::IsoClientHandle IsoManager::RegisterCallbacks(
-        iso_manager::IsoManagerCallbacks callbacks) const {
+IsoClientHandle IsoManager::RegisterCallbacks(IsoManagerCallbacks callbacks) const {
   if (pimpl_->IsRunning()) {
     return pimpl_->iso_impl_->register_callbacks(callbacks);
   }
-  return iso_manager::kInvalidIsoClientHandle;
+  return kInvalidIsoClientHandle;
 }
 
-void IsoManager::DeregisterCallbacks(iso_manager::IsoClientHandle client_handle) const {
+void IsoManager::DeregisterCallbacks(IsoClientHandle client_handle) const {
   if (pimpl_->IsRunning()) {
     pimpl_->iso_impl_->deregister_callbacks(client_handle);
   }
 }
 
-void IsoManager::CreateCig(iso_manager::IsoClientHandle client_handle, uint8_t cig_id,
-                           struct iso_manager::cig_create_params cig_params) {
+void IsoManager::CreateCig(IsoClientHandle client_handle, uint8_t cig_id,
+                           struct cig_create_params cig_params) {
   if (pimpl_->IsRunning()) {
     pimpl_->iso_impl_->create_cig(client_handle, cig_id, std::move(cig_params));
   }
 }
 
-void IsoManager::ReconfigureCig(uint8_t cig_id, struct iso_manager::cig_create_params cig_params) {
+void IsoManager::ReconfigureCig(uint8_t cig_id, struct cig_create_params cig_params) {
   if (pimpl_->IsRunning()) {
     pimpl_->iso_impl_->reconfigure_cig(cig_id, std::move(cig_params));
   }
@@ -88,7 +97,7 @@ void IsoManager::RemoveCig(uint8_t cig_id, bool force) {
   }
 }
 
-void IsoManager::EstablishCis(struct iso_manager::cis_establish_params conn_params) {
+void IsoManager::EstablishCis(struct cis_establish_params conn_params) {
   if (pimpl_->IsRunning()) {
     pimpl_->iso_impl_->establish_cis(std::move(conn_params));
   }
@@ -107,8 +116,7 @@ int IsoManager::GetNumberOfActiveIso() {
   return 0;
 }
 
-void IsoManager::SetupIsoDataPath(uint16_t conn_handle,
-                                  struct iso_manager::iso_data_path_params path_params) {
+void IsoManager::SetupIsoDataPath(uint16_t conn_handle, struct iso_data_path_params path_params) {
   if (pimpl_->IsRunning()) {
     pimpl_->iso_impl_->setup_iso_data_path(conn_handle, std::move(path_params));
   }
@@ -132,8 +140,8 @@ void IsoManager::SendIsoData(uint16_t conn_handle, const uint8_t* data, uint16_t
   }
 }
 
-void IsoManager::CreateBig(iso_manager::IsoClientHandle client_handle, uint8_t big_handle,
-                           struct iso_manager::big_create_params big_params) {
+void IsoManager::CreateBig(IsoClientHandle client_handle, uint8_t big_handle,
+                           struct big_create_params big_params) {
   if (pimpl_->IsRunning()) {
     pimpl_->iso_impl_->create_big(client_handle, big_handle, std::move(big_params));
   }
@@ -152,8 +160,8 @@ void IsoManager::SetBigChannelMapClassificationByConnHandles(uint8_t action, uin
   }
 }
 
-void IsoManager::BigCreateSync(iso_manager::IsoClientHandle client_handle,
-                               struct iso_manager::big_create_sync_params sync_params) {
+void IsoManager::BigCreateSync(IsoClientHandle client_handle,
+                               struct big_create_sync_params sync_params) {
   if (pimpl_->IsRunning()) {
     pimpl_->iso_impl_->big_create_sync(client_handle, std::move(sync_params));
   }
@@ -204,6 +212,37 @@ void IsoManager::Stop() {
 void IsoManager::Dump(int fd) {
   if (pimpl_->IsRunning()) {
     pimpl_->Dump(fd);
+  }
+}
+
+bool IsoManager::AddIncomingCisEventsListener(IsoClientHandle client_handle,
+                                              const RawAddress& pseudo_address, uint8_t cig_id,
+                                              uint8_t cis_id) {
+  if (pimpl_->IsRunning()) {
+    return pimpl_->iso_impl_->add_incoming_cis_events_listener(client_handle, pseudo_address,
+                                                               cig_id, cis_id);
+  }
+  return false;
+}
+
+void IsoManager::RemoveIncomingCisEventsListener(IsoClientHandle client_handle,
+                                                 const RawAddress& pseudo_address, uint8_t cig_id,
+                                                 uint8_t cis_id) {
+  if (pimpl_->IsRunning()) {
+    pimpl_->iso_impl_->remove_incoming_cis_events_listener(client_handle, pseudo_address, cig_id,
+                                                           cis_id);
+  }
+}
+
+void IsoManager::AcceptIncomingCisConnection(uint16_t conn_handle) {
+  if (pimpl_->IsRunning()) {
+    pimpl_->iso_impl_->accept_incoming_cis_connection(conn_handle);
+  }
+}
+
+void IsoManager::RejectIncomingCisConnection(uint16_t conn_handle, uint8_t reason) {
+  if (pimpl_->IsRunning()) {
+    pimpl_->iso_impl_->reject_incoming_cis_connection(conn_handle, reason);
   }
 }
 

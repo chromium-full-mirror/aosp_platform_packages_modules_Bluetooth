@@ -843,6 +843,78 @@ public class TbsGattTest {
     }
 
     @Test
+    public void testSetSilentModeFlag() {
+        prepareDefaultService();
+        BluetoothGattCharacteristic characteristic = getCharacteristic(TbsGatt.UUID_STATUS_FLAGS);
+        configureNotifications(mFirstDevice, characteristic, true);
+
+        byte[] valueBytes = new byte[2];
+
+        int statusFlagValue = TbsGatt.STATUS_FLAG_SILENT_MODE_ENABLED;
+        valueBytes[0] = (byte) (statusFlagValue & 0xFF);
+        valueBytes[1] = (byte) ((statusFlagValue >> 8) & 0xFF);
+
+        mTbsGatt.setSilentModeFlag();
+        verify(mGattServer)
+                .notifyCharacteristicChanged(
+                        eq(mFirstDevice), eq(characteristic), eq(false), eq(valueBytes));
+    }
+
+    @Test
+    public void testClearSilentModeFlag() {
+        prepareDefaultService();
+        BluetoothGattCharacteristic characteristic = getCharacteristic(TbsGatt.UUID_STATUS_FLAGS);
+        configureNotifications(mFirstDevice, characteristic, true);
+
+        byte[] valueBytes = new byte[2];
+
+        int statusFlagValue = 0;
+        valueBytes[0] = (byte) (statusFlagValue & 0xFF);
+        valueBytes[1] = (byte) ((statusFlagValue >> 8) & 0xFF);
+
+        mTbsGatt.clearSilentModeFlag();
+        verify(mGattServer)
+                .notifyCharacteristicChanged(
+                        eq(mFirstDevice), eq(characteristic), eq(false), eq(valueBytes));
+    }
+
+    @Test
+    public void testSetInbandRingtoneFlag() {
+        prepareDefaultService();
+        BluetoothGattCharacteristic characteristic = getCharacteristic(TbsGatt.UUID_STATUS_FLAGS);
+        configureNotifications(mFirstDevice, characteristic, true);
+
+        byte[] valueBytes = new byte[2];
+
+        int statusFlagValue = TbsGatt.STATUS_FLAG_INBAND_RINGTONE_ENABLED;
+        valueBytes[0] = (byte) (statusFlagValue & 0xFF);
+        valueBytes[1] = (byte) ((statusFlagValue >> 8) & 0xFF);
+
+        mTbsGatt.setInbandRingtoneFlag(mFirstDevice);
+        verify(mGattServer)
+                .notifyCharacteristicChanged(
+                        eq(mFirstDevice), eq(characteristic), eq(false), eq(valueBytes));
+    }
+
+    @Test
+    public void testClearInbandRingtoneFlag() {
+        prepareDefaultService();
+        BluetoothGattCharacteristic characteristic = getCharacteristic(TbsGatt.UUID_STATUS_FLAGS);
+        configureNotifications(mFirstDevice, characteristic, true);
+
+        byte[] valueBytes = new byte[2];
+
+        int statusFlagValue = 0;
+        valueBytes[0] = (byte) (statusFlagValue & 0xFF);
+        valueBytes[1] = (byte) ((statusFlagValue >> 8) & 0xFF);
+
+        mTbsGatt.clearInbandRingtoneFlag(mFirstDevice);
+        verify(mGattServer)
+                .notifyCharacteristicChanged(
+                        eq(mFirstDevice), eq(characteristic), eq(false), eq(valueBytes));
+    }
+
+    @Test
     public void testHandleIsInbandRingtoneEnabled() {
         prepareDefaultService();
         BluetoothGattCharacteristic characteristic = getCharacteristic(TbsGatt.UUID_STATUS_FLAGS);
@@ -1303,9 +1375,6 @@ public class TbsGattTest {
         reset(mGattServer); // Reset mock counts for the main part of the test
 
         doReturn(null).when(mGattServer).getService(TbsGatt.UUID_GTBS);
-
-        BluetoothDevice[] bondedDevices = new BluetoothDevice[] {mFirstDevice};
-        doReturn(bondedDevices).when(mAdapterService).getBondedDevices();
 
         mTbsGatt.mGattServerCallback.onServiceAdded(BluetoothGatt.GATT_SUCCESS, null);
 

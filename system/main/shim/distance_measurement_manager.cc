@@ -23,6 +23,7 @@
 #include "main/shim/entry.h"
 #include "main/shim/helpers.h"
 #include "stack/include/acl_api.h"
+#include "stack/include/btm_client_interface.h"
 #include "stack/include/main_thread.h"
 
 using bluetooth::hci::DistanceMeasurementDetectedAttackLevel;
@@ -87,7 +88,7 @@ public:
     auto distance_measurement_location_type =
             static_cast<DistanceMeasurementLocationType>(location_type);
     hci::Role local_hci_role;
-    if (!BTM_IsEncrypted(identity_addr, BT_TRANSPORT_LE) &&
+    if (!get_security_client_interface().BTM_IsEncrypted(identity_addr, BT_TRANSPORT_LE) &&
         distance_measurement_method == DistanceMeasurementMethod::METHOD_CS) {
       if (retries < kMaxRetryCount) {
         log::info("Connection is not encrypted, retrying in {} ms", kRetryIntervalMs);
@@ -143,21 +144,18 @@ public:
                                     static_cast<uint8_t>(method)));
   }
 
-  void OnDistanceMeasurementResult(bluetooth::hci::Address address, uint32_t centimeter,
-                                   uint32_t error_centimeter, int azimuth_angle,
-                                   int error_azimuth_angle, int altitude_angle,
-                                   int error_altitude_angle, uint64_t elapsed_realtime_nanos,
-                                   int remote_tx_power, int reflector_rssi, int8_t confidence_level,
-                                   double delay_spread_meters,
-                                   DistanceMeasurementDetectedAttackLevel detected_attack_level,
-                                   double velocity_meters_per_second,
-                                   DistanceMeasurementMethod method) override {
+  void OnDistanceMeasurementResult(
+          bluetooth::hci::Address address, uint32_t centimeter, uint32_t error_centimeter,
+          int azimuth_angle, int error_azimuth_angle, int altitude_angle, int error_altitude_angle,
+          uint64_t elapsed_realtime_nanos, int remote_tx_power, int rssi, int8_t confidence_level,
+          double delay_spread_meters, DistanceMeasurementDetectedAttackLevel detected_attack_level,
+          double velocity_meters_per_second, DistanceMeasurementMethod method) override {
     do_in_jni_thread(base::BindOnce(
             &::DistanceMeasurementCallbacks::OnDistanceMeasurementResult,
             base::Unretained(distance_measurement_callbacks_), bluetooth::ToRawAddress(address),
             centimeter, error_centimeter, azimuth_angle, error_azimuth_angle, altitude_angle,
-            error_altitude_angle, elapsed_realtime_nanos, remote_tx_power, reflector_rssi,
-            confidence_level, delay_spread_meters, static_cast<uint8_t>(detected_attack_level),
+            error_altitude_angle, elapsed_realtime_nanos, remote_tx_power, rssi, confidence_level,
+            delay_spread_meters, static_cast<uint8_t>(detected_attack_level),
             velocity_meters_per_second, static_cast<uint8_t>(method)));
   }
 

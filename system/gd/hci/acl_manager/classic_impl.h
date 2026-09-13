@@ -281,12 +281,16 @@ public:
 
   size_t get_connection_count() { return connections.size(); }
 
-  void create_connection(Address address) {
+  void create_connection(Address address, uint16_t clk_offset) {
     // TODO: Configure default connection parameters?
     uint16_t packet_type = 0x4408 /* DM 1,3,5 */ | 0x8810 /*DH 1,3,5 */;
     PageScanRepetitionMode page_scan_repetition_mode = PageScanRepetitionMode::R1;
     uint16_t clock_offset = 0;
     ClockOffsetValid clock_offset_valid = ClockOffsetValid::INVALID;
+    if (com_android_bluetooth_flags_use_cached_clock_offset() && clk_offset != 0) {
+      clock_offset = clk_offset & 0x7FFF;
+      clock_offset_valid = ClockOffsetValid::VALID;
+    }
     CreateConnectionRoleSwitch allow_role_switch = CreateConnectionRoleSwitch::ALLOW_ROLE_SWITCH;
     log::assert_that(client_callbacks_ != nullptr, "assert failed: client_callbacks_ != nullptr");
     std::unique_ptr<CreateConnectionBuilder> packet =
@@ -358,20 +362,6 @@ public:
                     queue_down_end, handler_,
                     connection->GetEventCallbacks(
                             [this](uint16_t handle) { this->connections.invalidate(handle); }));
-
-    if (!com_android_bluetooth_flags_remove_fake_role_change_event()) {
-      connections.execute(address, [=, this](ConnectionManagementCallbacks* callbacks) {
-        if (delayed_role_change_ == nullptr) {
-          log::info("Sending fake role change for {}", address);
-          callbacks->OnRoleChange(hci::ErrorCode::SUCCESS, current_role);
-        } else if (delayed_role_change_->GetBdAddr() == address) {
-          log::info("Sending delayed role change for {}", delayed_role_change_->GetBdAddr());
-          callbacks->OnRoleChange(delayed_role_change_->GetStatus(),
-                                  delayed_role_change_->GetNewRole());
-          delayed_role_change_.reset();
-        }
-      });
-    }
 
     if (delayed_role_change_ != nullptr && delayed_role_change_->IsValid() &&
         delayed_role_change_->GetBdAddr() == address) {

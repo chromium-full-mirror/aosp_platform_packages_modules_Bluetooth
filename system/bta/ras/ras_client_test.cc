@@ -18,8 +18,8 @@
 #include <gtest/gtest.h>
 
 #include "bta/include/bta_ras_api.h"
+#include "bta/mock/bta_gatt_api_mock.h"
 #include "bta/ras/ras_types.h"
-#include "bta/test/common/bta_gatt_api_mock.h"
 #include "bta_gatt_queue_mock.h"
 #include "btm_api_mock.h"
 #include "fake_osi.h"
@@ -53,9 +53,9 @@ extern struct fake_osi_alarm_set_on_mloop fake_osi_alarm_set_on_mloop_;
 
 static const uint16_t kVendorSpecificCharacteristic16Bit1 = 0x5566;
 static const uint16_t kVendorSpecificCharacteristic16Bit2 = 0x5567;
-static const bluetooth::Uuid kVendorSpecificCharacteristic1 =
+static constexpr bluetooth::Uuid kVendorSpecificCharacteristic1 =
         bluetooth::Uuid::From16Bit(kVendorSpecificCharacteristic16Bit1);
-static const bluetooth::Uuid kVendorSpecificCharacteristic2 =
+static constexpr bluetooth::Uuid kVendorSpecificCharacteristic2 =
         bluetooth::Uuid::From16Bit(kVendorSpecificCharacteristic16Bit2);
 
 static uint16_t GetCharacteristicHandle(const bluetooth::Uuid& uuid) {
@@ -297,12 +297,11 @@ class RasClientTest : public RasClientTestNoInit {
     GetRasClient()->RegisterCallbacks(&mock_ras_client_callbacks_);
 
     // Open should be triggered when connect
-    EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_DIRECT_CONNECTION, _))
-            .Times(1);
+    EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_OPPORTUNISTIC)).Times(1);
     GetRasClient()->Connect(test_address_);
 
     // ServiceSearchRequest should be trigger after BTA_GATTC_OPEN_EVT
-    EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_, _)).Times(1);
+    EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_)).Times(1);
     tBTA_GATTC p_data;
     tBTA_GATTC_OPEN open_event_data;
     open_event_data.remote_bda = test_address_;
@@ -379,11 +378,11 @@ TEST_F(RasClientTestNoInit, ConnectDisconnect) {
   GetRasClient()->RegisterCallbacks(&mock_ras_client_callbacks_);
 
   // Open should be triggered when connect
-  EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_DIRECT_CONNECTION, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_OPPORTUNISTIC)).Times(1);
   GetRasClient()->Connect(test_address_);
 
   // ServiceSearchRequest should be trigger after BTA_GATTC_OPEN_EVT
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_)).Times(1);
   tBTA_GATTC p_data;
   tBTA_GATTC_OPEN open_event_data;
   open_event_data.remote_bda = test_address_;
@@ -446,11 +445,11 @@ TEST_F(RasClientTestNoInit, SetFirstSegmentTimeoutInLowPowerMode) {
   GetRasClient()->RegisterCallbacks(&mock_ras_client_callbacks_);
 
   // Open should be triggered when connect
-  EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_DIRECT_CONNECTION, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_OPPORTUNISTIC)).Times(1);
   GetRasClient()->Connect(test_address_);
 
   // ServiceSearchRequest should be trigger after BTA_GATTC_OPEN_EVT
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_)).Times(1);
   tBTA_GATTC p_data;
   tBTA_GATTC_OPEN open_event_data;
   open_event_data.remote_bda = test_address_;
@@ -492,12 +491,12 @@ TEST_F(RasClientTestNoInit, OnGattNotification_BeforeServiceDiscovery) {
   GetRasClient()->RegisterCallbacks(&mock_ras_client_callbacks_);
 
   // Open should be triggered when connect
-  EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_DIRECT_CONNECTION, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, Open(_, test_address_, BTM_BLE_OPPORTUNISTIC)).Times(1);
   GetRasClient()->Connect(test_address_);
 
   // EXPECT the ServiceSearchRequest to be called *immediately*
   // by the BTA_GATTC_OPEN_EVT handler.
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(test_conn_id_)).Times(1);
 
   // 1. Simulate the BTA_GATTC_OPEN_EVT
   // This creates the RasTracker and triggers the ServiceSearchRequest.

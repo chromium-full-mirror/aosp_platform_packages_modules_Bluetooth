@@ -115,10 +115,23 @@ public:
   bool DoInThread(base::OnceClosure task);
 
   /**
+   * Post a task to run on this thread. If the task cannot be posted, it will be returned to the
+   * caller.
+   *
+   * @param task task created through base::Bind()
+   * @return std::nullopt if the task is successfully posted, otherwise the
+   * task is returned to the caller.
+   */
+  std::optional<base::OnceClosure> DoInThreadElseReturn(base::OnceClosure task);
+
+  /**
    * Suspend the current thread blocking the execution of new tasks on the thread.
    * ShutDown must be called after this to clean up the resources.
+   *
+   * @param caller_handler the handler on which Suspend is called. If nullptr, the instance's
+   * handler_ will be suspended.
    */
-  void Suspend();
+  void Suspend(os::Handler* caller_handler = nullptr);
 
   /**
    * Shutdown the current thread as if it is never started. IsRunning() and
@@ -211,16 +224,33 @@ public:
    * Warning: base::CancelableClosure objects must be created on, posted to,
    * cancelled on, and destroyed on the same thread.
    *
+   * Note: Please call this method very carefully as this is a blocking synchronous call. This will
+   * block the current thread on the target thread and if there is an existing deadlock this may
+   * result in a crash.
+   *
    * @param task task created through base::Bind()
    * @param delay delay for the task to be executed
    * @return true if task is successfully scheduled, false if task cannot be
    * scheduled
    */
   bool DoInThreadDelayed(base::OnceClosure task, std::chrono::microseconds delay);
+
+  /**
+   * Post a task to run on this thread after a specified delay. If the task cannot be posted, it
+   * will be returned to the caller.
+   *
+   * @param task task created through base::Bind()
+   * @param delay delay for the task to be executed
+   * @return std::nullopt if the task is successfully posted, otherwise the task is returned to the
+   * caller.
+   */
+  std::optional<base::OnceClosure> DoInThreadDelayedElseReturn(base::OnceClosure task,
+                                                               std::chrono::microseconds delay);
+
   /**
    * Wrapper around DoInThread without a location.
    */
-  void Post(base::OnceClosure closure) override;
+  std::optional<base::OnceClosure> Post(base::OnceClosure closure) override;
 
   /**
    * Returns a postable object
@@ -244,7 +274,11 @@ public:
 
     auto promise = std::make_shared<promiseType>();
     std::future<resultType> future = promise->get_future();
-    auto task = [](Functor&& func, std::shared_ptr<promiseType> p, std::decay_t<Args>... a) {
+    auto task = [](Functor&& func, std::shared_ptr<promiseType> p, MessageLoopThread* self,
+                   int task_number, std::decay_t<Args>... a) {
+      if (self) {
+        log::info("Task#: {} started on thread: {}", task_number, self->GetName());
+      }
       if constexpr (std::is_void_v<resultType>) {
         std::move(func)(std::move(a)...);
         p->set_value();
@@ -256,26 +290,39 @@ public:
     // If target thread is not same as current thread, and if the target thread is also not blocked.
     auto target_thread_id = GetLinuxThreadId(this);
     auto caller_thread_id = GetLinuxThreadId();
-    if (!blocked_threads_.blocked(target_thread_id)) {
+    sync_task_posted_count_++;
+    if (target_thread_id != -1 && !blocked_threads_.blocked(target_thread_id)) {
       if (!IsRunningOnSameThread()) {
         // block current thread, currently its unblocked
         blocked_threads_.testAndBlock(caller_thread_id);
-        log::info("Blocked current_thread id: {}, on the target thread: {}({})", caller_thread_id,
-                  target_thread_id, thread_name_);
-        DoInThread(base::BindOnce(task, std::forward<Functor>(func_ptr), std::move(promise),
-                                  std::forward<Args>(args)...));
-        auto result = future.wait_for(kHandlerStopTimeout);
-        blocked_threads_.unblock(caller_thread_id);  // unblock current thread
-        log::assert_that(result == std::future_status::ready,
-                         "assert failed: Thread: {}, is not idle after waiting for: {} ms",
-                         thread_name_, kHandlerStopTimeout.count());
+        log::info("Blocked current_thread id: {}, on the target thread: {}({}), for task#: {}",
+                  caller_thread_id, target_thread_id, thread_name_, sync_task_posted_count_);
+        std::optional<base::OnceClosure> posted_task = DoInThreadElseReturn(
+                base::BindOnce(task, std::forward<Functor>(func_ptr), std::move(promise), this,
+                               sync_task_posted_count_, std::forward<Args>(args)...));
+        if (!posted_task.has_value()) {
+          auto result = future.wait_for(kHandlerStopTimeout);
+          blocked_threads_.unblock(caller_thread_id);  // unblock current thread
+          log::assert_that(result == std::future_status::ready,
+                           "assert failed: Thread: {}, is not idle after waiting for: {} ms",
+                           thread_name_, kHandlerStopTimeout.count());
+        } else {
+          blocked_threads_.unblock(caller_thread_id);  // unblock current thread
+          log::warn(
+                  "Failed to post task#: {} on thread: {}, executing task on current thread "
+                  "instead.",
+                  sync_task_posted_count_, thread_name_);
+          std::move(posted_task.value()).Run();  // execute the task on current thread
+        }
         return future.get();
       }
     } else {
-      log::warn("Target thread {} is blocked, executing task on current thread", thread_name_);
+      log::warn("Target thread: {}(tid: {}) is blocked, executing task on current thread",
+                thread_name_, target_thread_id);
     }
 
-    task(std::forward<Functor>(func_ptr), std::move(promise), std::forward<Args>(args)...);
+    task(std::forward<Functor>(func_ptr), std::move(promise), nullptr, sync_task_posted_count_,
+         std::forward<Args>(args)...);
     return future.get();
   }
 
@@ -330,6 +377,7 @@ private:
   // that any WeakPtrs are invalidated before its members
   // variable's destructors are executed, rendering them invalid.
   base::WeakPtrFactory<MessageLoopThread> weak_ptr_factory_{this};
+  static int sync_task_posted_count_;
 };
 
 inline std::ostream& operator<<(std::ostream& os, const bluetooth::common::MessageLoopThread& a) {

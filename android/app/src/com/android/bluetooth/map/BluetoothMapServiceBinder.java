@@ -30,7 +30,6 @@ import android.content.AttributionSource;
 import android.util.Log;
 
 import com.android.bluetooth.Util;
-import com.android.bluetooth.Utils;
 import com.android.bluetooth.profile.ProfileService.IProfileServiceBinder;
 
 import java.util.Collections;
@@ -58,12 +57,12 @@ class BluetoothMapServiceBinder extends IBluetoothMap.Stub implements IProfileSe
     private BluetoothMapService getService(AttributionSource source) {
         BluetoothMapService service = mService;
 
-        if (Utils.isInstrumentationTestMode()) {
+        if (Util.isInstrumentationTestMode()) {
             return service;
         }
 
         if (!Util.checkProfileAvailable(service, TAG)
-                || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
+                || !Util.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
                 || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
             return null;
         }
@@ -138,7 +137,6 @@ class BluetoothMapServiceBinder extends IBluetoothMap.Stub implements IProfileSe
 
     @Override
     public int getConnectionState(BluetoothDevice device, AttributionSource source) {
-        Log.v(TAG, "getConnectionState()");
         BluetoothMapService service = getService(source);
         if (service == null) {
             return STATE_DISCONNECTED;

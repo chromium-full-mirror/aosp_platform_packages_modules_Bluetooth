@@ -31,10 +31,10 @@
 
 #include "bta/hh/bta_hh_int.h"
 #include "bta_hh_api.h"
-#include "hiddefs.h"
 #include "main/shim/dumpsys.h"
 #include "osi/include/allocator.h"
 #include "stack/include/bt_hdr.h"
+#include "stack/include/hiddefs.h"
 #include "stack/include/hidh_api.h"
 
 using namespace bluetooth;
@@ -211,10 +211,6 @@ void bta_hh_sm_execute(tBTA_HH_DEV_CB* p_cb, tBTA_HH_INT_EVT event, const tBTA_H
     case BTA_HH_W4_CONN_ST:
       switch (event) {
         case BTA_HH_API_OPEN_EVT:
-          if (!com_android_bluetooth_flags_hogp_direct_connection_upgrade()) {
-            unexpected_event = true;
-            break;
-          }
           bta_hh_connect_upgrade(p_cb, p_data);
           break;
         case BTA_HH_API_CANCEL_OPEN_EVT:

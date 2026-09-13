@@ -22,15 +22,15 @@
 #include "bta/dm/bta_dm_sec_int.h"
 #include "bta/test/bta_test_fixtures.h"
 #include "stack/include/btm_status.h"
-#include "test/mock/mock_stack_btm_interface.h"
-#include "test/mock/mock_stack_rnr_interface.h"
+#include "stack/mock/mock_stack_btm_interface.h"
+#include "stack/mock/mock_stack_rnr_interface.h"
 
 using ::testing::_;
 using ::testing::ElementsAre;
 using ::testing::Return;
 
 namespace {
-const RawAddress kRawAddress({0x11, 0x22, 0x33, 0x44, 0x55, 0x66});
+const RawAddress kRawAddress("11:22:33:44:55:66");
 const DEV_CLASS kDeviceClass = {0x11, 0x22, 0x33};
 
 constexpr char kRemoteName[] = "TheRemoteName";

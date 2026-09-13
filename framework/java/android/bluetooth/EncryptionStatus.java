@@ -16,7 +16,6 @@
 
 package android.bluetooth;
 
-import android.annotation.FlaggedApi;
 import android.annotation.Hide;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
@@ -26,15 +25,12 @@ import android.bluetooth.BluetoothDevice.EncryptionAlgorithm;
 import android.os.Parcel;
 import android.os.Parcelable;
 
-import com.android.bluetooth.flags.Flags;
-
 /**
  * Represents the encryption status of a Bluetooth device.
  *
  * <p>This class is used to hold the encryption status details like key size and algorithm of a
  * Bluetooth device.
  */
-@FlaggedApi(Flags.FLAG_LINK_STATUS_API)
 public final class EncryptionStatus {
     private final InnerParcel mParcel;
 
@@ -56,7 +52,6 @@ public final class EncryptionStatus {
     /**
      * @return the {@link EncryptionStatus} associated with this parcel
      */
-    @FlaggedApi(Flags.FLAG_LINK_STATUS_API)
     @RequiresNoPermission
     static @Nullable EncryptionStatus fromParcel(InnerParcel parcel) {
         if (parcel == null) {

@@ -37,9 +37,9 @@
 #include "bta_ag_swb_aptx.h"
 #include "bta_sys.h"
 #include "btif/include/btif_storage.h"
-#include "btm_api_types.h"
 #include "hardware/bt_hf.h"
 #include "osi/include/alarm.h"
+#include "stack/include/btm_api_types.h"
 
 #ifdef __ANDROID__
 #include "bta_le_audio_api.h"
@@ -1143,8 +1143,7 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB* p_scb, uint16_t cmd, uint8_t arg_type, cha
       p_scb->peer_features = (uint16_t)int_arg;
 
       if (p_scb->peer_version < HFP_VERSION_1_7) {
-        if (!(com_android_bluetooth_flags_check_peer_hf_indicator() &&
-              p_scb->peer_version == HFP_HSP_VERSION_UNKNOWN &&
+        if (!(p_scb->peer_version == HFP_HSP_VERSION_UNKNOWN &&
               (p_scb->peer_features & BTA_AG_PEER_FEAT_HF_IND))) {
           p_scb->masked_features &= HFP_1_6_FEAT_MASK;
         }
@@ -1527,7 +1526,9 @@ static void bta_ag_hsp_result(tBTA_AG_SCB* p_scb, const tBTA_AG_API_RESULT& resu
       alarm_cancel(p_scb->ring_timer);
 
       /* close sco */
-      if ((bta_ag_sco_is_open(p_scb) || bta_ag_sco_is_opening(p_scb)) &&
+      if ((bta_ag_sco_is_open(p_scb) || bta_ag_sco_is_opening(p_scb) ||
+           (com_android_bluetooth_flags_call_end_codec_negotiation() &&
+            bta_ag_sco_is_codec_negotiating(p_scb))) &&
           !(p_scb->features & BTA_AG_FEAT_NOSCO)) {
         bta_ag_sco_close(p_scb, tBTA_AG_DATA::kEmpty);
       } else {
@@ -1734,10 +1735,14 @@ static void bta_ag_hfp_result(tBTA_AG_SCB* p_scb, const tBTA_AG_API_RESULT& resu
       alarm_cancel(p_scb->ring_timer);
 
       /* if sco open, close sco then send indicator values */
-      if ((bta_ag_sco_is_open(p_scb) || bta_ag_sco_is_opening(p_scb)) &&
+      if ((bta_ag_sco_is_open(p_scb) || bta_ag_sco_is_opening(p_scb) ||
+           (com_android_bluetooth_flags_call_end_codec_negotiation() &&
+            bta_ag_sco_is_codec_negotiating(p_scb))) &&
           !(p_scb->features & BTA_AG_FEAT_NOSCO)) {
         p_scb->post_sco = BTA_AG_POST_SCO_CALL_END;
-        bta_ag_sco_close(p_scb, tBTA_AG_DATA::kEmpty);
+        if (!bta_ag_is_sco_managed_by_audio()) {
+          bta_ag_sco_close(p_scb, tBTA_AG_DATA::kEmpty);
+        }
       } else if (p_scb->post_sco == BTA_AG_POST_SCO_CALL_END_INCALL) {
         /* sco closing for outgoing call because of incoming call */
         /* Send only callsetup end indicator after sco close */

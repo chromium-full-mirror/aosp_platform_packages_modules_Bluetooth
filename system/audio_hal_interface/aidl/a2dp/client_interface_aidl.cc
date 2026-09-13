@@ -38,15 +38,16 @@ namespace audio {
 namespace aidl {
 namespace a2dp {
 
-BluetoothAudioClientInterface::BluetoothAudioClientInterface(A2dpTransport* instance)
+BluetoothAudioClientInterface::BluetoothAudioClientInterface(
+        SessionType sessionType, StreamCallbacks const* stream_callbacks)
     : provider_(nullptr),
       provider_factory_(nullptr),
       session_started_(false),
       data_mq_(nullptr),
-      transport_(instance),
       latency_modes_({LatencyMode::FREE}) {
   death_recipient_ =
           ::ndk::ScopedAIBinder_DeathRecipient(AIBinder_DeathRecipient_new(binderDiedCallbackAidl));
+  transport_ = std::make_shared<A2dpTransport>(sessionType, stream_callbacks);
   FetchAudioProvider();
 }
 
@@ -60,10 +61,6 @@ bool BluetoothAudioClientInterface::IsValid() const { return provider_ != nullpt
 
 bool BluetoothAudioClientInterface::is_aidl_available() {
   return AServiceManager_isDeclared(kDefaultAudioProviderFactoryInterface.c_str());
-}
-
-std::vector<AudioCapabilities> BluetoothAudioClientInterface::GetAudioCapabilities() const {
-  return capabilities_;
 }
 
 std::vector<AudioCapabilities> BluetoothAudioClientInterface::GetAudioCapabilities(
@@ -82,8 +79,8 @@ std::vector<AudioCapabilities> BluetoothAudioClientInterface::GetAudioCapabiliti
 
   auto aidl_retval = provider_factory->getProviderCapabilities(session_type, &capabilities);
   if (!aidl_retval.isOk()) {
-    log::fatal("BluetoothAudioHal::getProviderCapabilities failure: {}",
-               aidl_retval.getDescription());
+    log::error("BluetoothAudioHal::getProviderCapabilities session_type: {}, failure: {}",
+               toString(session_type), aidl_retval.getDescription());
   }
   return capabilities;
 }
@@ -110,7 +107,8 @@ BluetoothAudioClientInterface::GetProviderInfo(
   auto aidl_retval = provider_factory->getProviderInfo(session_type, &provider_info);
 
   if (!aidl_retval.isOk()) {
-    log::error("BluetoothAudioHal::getProviderInfo failure: {}", aidl_retval.getDescription());
+    log::error("BluetoothAudioHal::getProviderInfo session_type: {}, failure: {}",
+               toString(session_type), aidl_retval.getDescription());
     return std::nullopt;
   }
 
@@ -181,23 +179,7 @@ void BluetoothAudioClientInterface::FetchAudioProvider() {
       return;
     }
 
-    capabilities_.clear();
-    auto aidl_retval =
-            provider_factory->getProviderCapabilities(transport_->GetSessionType(), &capabilities_);
-    if (!aidl_retval.isOk()) {
-      log::error("BluetoothAudioHal::getProviderCapabilities failure: {}, retry number {}",
-                 aidl_retval.getDescription(), retry_no + 1);
-      continue;
-    }
-    if (capabilities_.empty()) {
-      log::warn("SessionType={} Not supported by BluetoothAudioHal",
-                toString(transport_->GetSessionType()));
-      return;
-    }
-    log::info("BluetoothAudioHal SessionType={} has {} AudioCapabilities",
-              toString(transport_->GetSessionType()), capabilities_.size());
-
-    aidl_retval = provider_factory->openProvider(transport_->GetSessionType(), &provider_);
+    auto aidl_retval = provider_factory->openProvider(transport_->GetSessionType(), &provider_);
     if (!aidl_retval.isOk() || provider_ == nullptr) {
       log::error("BluetoothAudioHal::openProvider failure: {}, retry number {}",
                  aidl_retval.getDescription(), retry_no + 1);
@@ -553,6 +535,23 @@ size_t BluetoothAudioClientInterface::ReadAudioData(uint8_t* p_buf, size_t len) 
 
   log::warn("read underflow: buffer={} expected={}", fmq_buffer_size_, len);
   return 0;
+}
+
+void BluetoothAudioClientInterface::FlushAudioData() {
+  // Clear the FMQ buffer.
+  fmq_buffer_size_ = 0;
+
+  if (!data_mq_ || !data_mq_->isValid()) {
+    return;
+  }
+
+  // Clear data present in the FMQ itself.
+  size_t available = data_mq_->availableToRead();
+  while (available > 0) {
+    size_t read_size = std::min(available, sizeof(fmq_buffer_));
+    data_mq_->read(reinterpret_cast<MqDataType*>(fmq_buffer_), read_size);
+    available -= read_size;
+  }
 }
 
 void BluetoothAudioClientInterface::RenewAudioProviderAndSession() {

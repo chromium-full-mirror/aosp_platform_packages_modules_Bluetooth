@@ -50,6 +50,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -283,7 +284,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        sm.sendMessage(HeadsetClientStateMachine.CONNECT, device);
+        sm.sendMessage(HeadsetClientStateMachine.CONNECT);
         return true;
     }
 
@@ -301,12 +302,12 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return false;
         }
 
-        sm.sendMessage(HeadsetClientStateMachine.DISCONNECT, device);
+        sm.sendMessage(HeadsetClientStateMachine.DISCONNECT);
         return true;
     }
 
@@ -317,10 +318,10 @@ public class HeadsetClientService extends ConnectableProfile {
         List<BluetoothDevice> connectedDevices = new ArrayList<>();
         synchronized (mStateMachineMap) {
             for (var entry : mStateMachineMap.entrySet()) {
-                BluetoothDevice bd = entry.getKey();
+                BluetoothDevice device = entry.getKey();
                 HeadsetClientStateMachine sm = entry.getValue();
-                if (sm != null && sm.getConnectionState(bd) == STATE_CONNECTED) {
-                    connectedDevices.add(bd);
+                if (sm != null && sm.getConnectionState() == STATE_CONNECTED) {
+                    connectedDevices.add(device);
                 }
             }
             return connectedDevices;
@@ -331,11 +332,11 @@ public class HeadsetClientService extends ConnectableProfile {
         List<BluetoothDevice> devices = new ArrayList<>();
         synchronized (mStateMachineMap) {
             for (var entry : mStateMachineMap.entrySet()) {
-                BluetoothDevice bd = entry.getKey();
+                BluetoothDevice device = entry.getKey();
                 HeadsetClientStateMachine sm = entry.getValue();
                 for (int state : states) {
-                    if (sm != null && sm.getConnectionState(bd) == state) {
-                        devices.add(bd);
+                    if (sm != null && sm.getConnectionState() == state) {
+                        devices.add(device);
                     }
                 }
             }
@@ -356,9 +357,8 @@ public class HeadsetClientService extends ConnectableProfile {
     public int getConnectionState(BluetoothDevice device) {
         HeadsetClientStateMachine sm = getStateMachine(device);
         if (sm != null) {
-            return sm.getConnectionState(device);
+            return sm.getConnectionState();
         }
-
         return STATE_DISCONNECTED;
     }
 
@@ -380,10 +380,8 @@ public class HeadsetClientService extends ConnectableProfile {
     public boolean setConnectionPolicy(BluetoothDevice device, int connectionPolicy) {
         Log.d(TAG, "Saved connectionPolicy " + device + " = " + connectionPolicy);
 
-        if (!getAdapterService()
-                .setProfileConnectionPolicy(device, getProfileId(), connectionPolicy)) {
-            return false;
-        }
+        getAdapterService().setProfileConnectionPolicy(device, getProfileId(), connectionPolicy);
+
         if (connectionPolicy == CONNECTION_POLICY_ALLOWED) {
             connect(device);
         } else if (connectionPolicy == CONNECTION_POLICY_FORBIDDEN) {
@@ -398,7 +396,7 @@ public class HeadsetClientService extends ConnectableProfile {
             Log.e(TAG, "SM does not exist for device " + device);
             return false;
         }
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
             return false;
         }
@@ -412,7 +410,7 @@ public class HeadsetClientService extends ConnectableProfile {
             Log.e(TAG, "SM does not exist for device " + device);
             return false;
         }
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
             return false;
         }
@@ -433,7 +431,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return -1;
         }
 
-        return sm.getAudioState(device);
+        return sm.getAudioState();
     }
 
     void setAudioRouteAllowed(BluetoothDevice device, boolean allowed) {
@@ -538,7 +536,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return false;
         }
@@ -555,7 +553,7 @@ public class HeadsetClientService extends ConnectableProfile {
                 if (entry.getValue() == null || entry.getKey().equals(device)) {
                     continue;
                 }
-                int connectionState = entry.getValue().getConnectionState(entry.getKey());
+                int connectionState = entry.getValue().getConnectionState();
                 Log.d(
                         TAG,
                         "Accepting a call on device "
@@ -575,7 +573,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
             return false;
         }
@@ -592,7 +590,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return false;
         }
@@ -609,7 +607,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return false;
         }
@@ -627,7 +625,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return false;
         }
@@ -645,7 +643,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return null;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return null;
         }
@@ -681,7 +679,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return false;
         }
@@ -695,12 +693,12 @@ public class HeadsetClientService extends ConnectableProfile {
         HeadsetClientStateMachine sm = getStateMachine(device);
         if (sm == null) {
             Log.e(TAG, "SM does not exist for device " + device);
-            return null;
+            return Collections.emptyList();
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
-            return null;
+            return Collections.emptyList();
         }
         return sm.getCurrentCalls();
     }
@@ -712,7 +710,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED && connectionState != STATE_CONNECTING) {
             return false;
         }
@@ -729,7 +727,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return false;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
             return false;
         }
@@ -748,7 +746,7 @@ public class HeadsetClientService extends ConnectableProfile {
             return null;
         }
 
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
             return null;
         }
@@ -761,7 +759,7 @@ public class HeadsetClientService extends ConnectableProfile {
             Log.e(TAG, "SM does not exist for device " + device);
             return null;
         }
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
             return null;
         }
@@ -772,11 +770,11 @@ public class HeadsetClientService extends ConnectableProfile {
         HeadsetClientStateMachine sm = getStateMachine(device);
         if (sm == null) {
             Log.e(TAG, "SM does not exist for device " + device);
-            return null;
+            return Collections.emptySet();
         }
-        int connectionState = sm.getConnectionState(device);
+        int connectionState = sm.getConnectionState();
         if (connectionState != STATE_CONNECTED) {
-            return null;
+            return Collections.emptySet();
         }
         return sm.getCurrentAgFeatures();
     }
@@ -873,6 +871,7 @@ public class HeadsetClientService extends ConnectableProfile {
             Log.d(TAG, "Creating a new state machine");
             sm =
                     new HeadsetClientStateMachine(
+                            device,
                             getAdapterService(),
                             this,
                             getAdapterService().getHeadsetService(),
@@ -889,7 +888,7 @@ public class HeadsetClientService extends ConnectableProfile {
             for (Map.Entry<BluetoothDevice, HeadsetClientStateMachine> entry :
                     mStateMachineMap.entrySet()) {
                 if (entry.getValue() != null) {
-                    int audioState = entry.getValue().getAudioState(entry.getKey());
+                    int audioState = entry.getValue().getAudioState();
                     if (audioState == HeadsetClientHalConstants.AUDIO_STATE_CONNECTED) {
                         Log.d(
                                 TAG,

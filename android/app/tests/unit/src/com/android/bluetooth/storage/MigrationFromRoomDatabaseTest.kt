@@ -31,7 +31,6 @@ import androidx.test.filters.SmallTest
 import com.android.bluetooth.TestUtils.getTestDevice
 import com.android.bluetooth.TestUtils.mockGetRemoteDevice
 import com.android.bluetooth.btservice.AdapterService
-import com.android.bluetooth.btservice.storage.DatabaseManager
 import com.android.bluetooth.btservice.storage.Metadata
 import com.android.bluetooth.btservice.storage.MetadataDatabase
 import com.android.bluetooth.storage.ActiveAudioPolicy.Type as ActiveAudioPolicy
@@ -65,7 +64,7 @@ class MigrationFromRoomDatabaseTest {
     private lateinit var context: Context
     private lateinit var migration: MigrationFromRoomDatabase
     private lateinit var dbFile: File
-    private val mDevice: BluetoothDevice = getTestDevice(85)
+    private val device = getTestDevice(85)
 
     @Before
     fun setUp() {
@@ -73,7 +72,7 @@ class MigrationFromRoomDatabaseTest {
         migration = MigrationFromRoomDatabase(adapterService)
         dbFile = tempFolder.newFile(MetadataDatabase.DATABASE_NAME)
         doReturn(dbFile).whenever(adapterService).getDatabasePath(MetadataDatabase.DATABASE_NAME)
-        mockGetRemoteDevice(adapterService, mDevice)
+        mockGetRemoteDevice(adapterService, device)
     }
 
     @After
@@ -109,7 +108,7 @@ class MigrationFromRoomDatabaseTest {
                 .allowMainThreadQueries()
                 .build()
 
-        val metadata = Metadata(mDevice.address)
+        val metadata = Metadata(device.address)
 
         // Set some sample data in the old Metadata format
         metadata.profileConnectionPolicies.a2dp_connection_policy = CONNECTION_POLICY_ALLOWED
@@ -157,7 +156,7 @@ class MigrationFromRoomDatabaseTest {
 
         // 3. Assert that the UserStorage proto contains the expected data
         assertThat(migratedStorage.devicesMap).hasSize(1)
-        val deviceProto = migratedStorage.devicesMap[mDevice.address]!!
+        val deviceProto = migratedStorage.devicesMap[device.address]!!
 
         // Verify Profile Connection Policies
         assertThat(deviceProto.profileConnectionPolicies.a2Dp).isEqualTo(Policy.ALLOWED)
@@ -197,9 +196,8 @@ class MigrationFromRoomDatabaseTest {
 
         // Verify Connection Counter and Active Devices
         assertThat(deviceProto.connectionCounter).isEqualTo(123L)
-        assertThat(migratedStorage.currentConnectionNumber).isEqualTo(123L)
-        assertThat(migratedStorage.activeA2DpDevicesList).containsExactly(mDevice.address)
-        assertThat(migratedStorage.activeHfpDevicesList).containsExactly(mDevice.address)
+        assertThat(migratedStorage.activeA2DpDevicesList).containsExactly(device.address)
+        assertThat(migratedStorage.activeHfpDevicesList).containsExactly(device.address)
     }
 
     @Test
@@ -211,12 +209,12 @@ class MigrationFromRoomDatabaseTest {
                 .build()
 
         // A regular device metadata
-        val regularMetadata = Metadata(mDevice.address)
+        val regularMetadata = Metadata(device.address)
         regularMetadata.last_active_time = 123L
         roomDb.insert(regularMetadata)
 
         // The local storage metadata that should be skipped
-        val localStorageMetadata = Metadata(DatabaseManager.LOCAL_STORAGE)
+        val localStorageMetadata = Metadata("LocalStorage")
         localStorageMetadata.last_active_time = 456L // some value to ensure it's not used
         roomDb.insert(localStorageMetadata)
 
@@ -227,10 +225,7 @@ class MigrationFromRoomDatabaseTest {
 
         // 3. Assert that the UserStorage proto contains only the regular device
         assertThat(migratedStorage.devicesMap).hasSize(1)
-        assertThat(migratedStorage.devicesMap).containsKey(mDevice.address)
-        assertThat(migratedStorage.devicesMap).doesNotContainKey(DatabaseManager.LOCAL_STORAGE)
-
-        // Also assert that the connection number is from the regular device, not local storage
-        assertThat(migratedStorage.currentConnectionNumber).isEqualTo(123L)
+        assertThat(migratedStorage.devicesMap).containsKey(device.address)
+        assertThat(migratedStorage.devicesMap).doesNotContainKey("LocalStorage")
     }
 }

@@ -23,14 +23,19 @@
 
 #include <bluetooth/log.h>
 
+#include "bluetooth/metrics/os_metrics.h"
+#include "common/time_util.h"
 #include "gd/os/rand.h"
 #include "lpp/lpp_offload_interface.h"
 #include "main/shim/entry.h"
 #include "stack/gatt/gatt_int.h"
-#include "stack/include/btm_client_interface.h"
 #include "stack/include/main_thread.h"
 
 using namespace bluetooth;
+using android::bluetooth::gatt::GattOffloadErrorEnum;
+using android::bluetooth::gatt::GattOffloadSessionStateEnum;
+using android::bluetooth::gatt::GattRoleEnum;
+using hci::Address;
 
 static bool add_gatt_db_elements_to_session(btgatt_db_element_t* service, size_t elements_count,
                                             bluetooth::hal::GattSession& hal_session);
@@ -60,12 +65,17 @@ static void handle_error_report_response_timeout(uint16_t acl_connection_handle,
 static void on_gatt_offload_register_service_complete(uint16_t session_id, hal::GattStatus status);
 static void on_gatt_offload_unregister_service_complete(uint16_t session_id);
 static void on_gatt_offload_clear_services_complete(uint16_t acl_connection_handle);
+static GattOffloadErrorEnum gatt_status_to_offload_error_enum(tGATT_STATUS status);
+static GattOffloadErrorEnum gatt_hal_error_to_offload_error_enum(hal::GattError error);
 static void on_gatt_offload_error_report(uint16_t acl_connection_handle, uint16_t local_cid,
                                          hal::GattError error);
-static void remove_hal_session(uint16_t session_id);
+static void remove_hal_session(uint16_t session_id, GattOffloadSessionStateEnum state,
+                               GattOffloadErrorEnum error_code);
+static Address get_peer_address(uint16_t conn_id);
 static void send_offload_session_register_complete(uint16_t session_id, tGATT_STATUS status,
                                                    std::promise<btgatt_offload_result_t>& promise);
-static bool try_sessions_by_acl_handle_to_unoffload(uint16_t acl_connection_handle);
+static bool try_sessions_by_acl_handle_to_unoffload(uint16_t acl_connection_handle,
+                                                    hal::GattError reason);
 static bool try_session_by_id_conn_id_to_unoffload(uint16_t session_id, tCONN_ID conn_id);
 
 class GattOffloadHalCallback : public hal::GattHalCallback {
@@ -129,6 +139,7 @@ bool gatt_offload_init() {
  ******************************************************************************/
 void gatt_offload_characteristics(tCONN_ID conn_id, bool is_server, btgatt_db_element_t* service,
                                   size_t elements_count, uint64_t endpoint_id, uint64_t hub_id,
+                                  int uid, std::string attribution_tag,
                                   std::promise<btgatt_offload_result_t> promise) {
   bluetooth::hal::GattSession hal_session;
   tGATT_STATUS status = gatt_offload_characteristics_impl(
@@ -137,8 +148,11 @@ void gatt_offload_characteristics(tCONN_ID conn_id, bool is_server, btgatt_db_el
     send_offload_session_register_complete(hal_session.id, status, promise);
     return;
   }
-  add_hal_session(tGATT_OFFLOAD_SESSION{
-          .hal_session = hal_session, .conn_id = conn_id, .promise_opt = std::move(promise)});
+  add_hal_session(tGATT_OFFLOAD_SESSION{.hal_session = hal_session,
+                                        .conn_id = conn_id,
+                                        .promise_opt = std::move(promise),
+                                        .uid = uid,
+                                        .attribution_tag = std::move(attribution_tag)});
 }
 
 /*******************************************************************************
@@ -223,9 +237,10 @@ void gattc_offload_handle_service_changed_indication(tGATT_TCB* p_tcb) {
  * Description      This function is called to clear offload sessions on the acl handle.
  *
  ******************************************************************************/
-bool gatt_offload_clear_sessions_by_acl_handle(uint16_t acl_connection_handle) {
+bool gatt_offload_clear_sessions_by_acl_handle(uint16_t acl_connection_handle,
+                                               hal::GattError reason) {
   log::info("acl_connection_handle: 0x{:x}", acl_connection_handle);
-  if (!try_sessions_by_acl_handle_to_unoffload(acl_connection_handle)) {
+  if (!try_sessions_by_acl_handle_to_unoffload(acl_connection_handle, reason)) {
     return false;
   }
   bluetooth::shim::GetLppOffloadManager()->ClearGattServices(acl_connection_handle);
@@ -262,28 +277,44 @@ void gatt_offload_clear_sessions_by_conn_id(tCONN_ID conn_id) {
  *
  ******************************************************************************/
 void gatt_offload_sessions_dump(int fd) {
-  std::stringstream stream;
+  std::string result;
+  auto out = std::back_inserter(result);
 
-  stream << "Number of active offload sessions: " << gatt_cb.offload_sessions.size() << "\n";
+  std::map<int, std::vector<const tGATT_OFFLOAD_SESSION*>> sessions_by_uid;
+
+  std::format_to(out, "Number of active offload sessions: {}\n", gatt_cb.offload_sessions.size());
   for (const auto& element : gatt_cb.offload_sessions) {
-    const tGATT_OFFLOAD_SESSION& session = element.second;
-    stream << " session_id: " << session.hal_session.id
-           << " acl_connection_handle: " << std::setw(4) << std::setfill('0') << std::hex
-           << session.hal_session.acl_connection_handle
-           << " att_mtu: " << session.hal_session.att_mtu
-           << " gatt_role: " << static_cast<int>(session.hal_session.role)
-           << " service_uuid: " << session.hal_session.service_uuid
-           << " endpoint_id: " << session.hal_session.endpoint_info.endpoint_id
-           << " hub_id: " << session.hal_session.endpoint_info.hub_id
-           << " conn_id: " << session.conn_id;
-    for (const auto& characteristic : session.hal_session.characteristics) {
-      stream << " char uuid: " << characteristic.uuid << " char properties: " << std::setw(1)
-             << std::setfill('0') << std::hex << characteristic.properties
-             << " char handle: " << characteristic.value_handle;
-    }
-    stream << "\n";
+    sessions_by_uid[element.second.uid].push_back(&element.second);
   }
-  dprintf(fd, "GATT offload sessions\n%s\n", stream.str().c_str());
+
+  for (const auto& pair : sessions_by_uid) {
+    std::format_to(out, "  UID: {}\n", pair.first);
+    for (const auto* session_ptr : pair.second) {
+      const tGATT_OFFLOAD_SESSION& session = *session_ptr;
+      std::format_to(out,
+                     "    Session ID: {}, Conn ID: {}, ACL Handle: {:04x}, MTU: {}\n"
+                     "      GATT Role: {}, Service UUID: {}\n"
+                     "      Endpoint ID: {}, Hub ID: {}\n"
+                     "      Attribution Tag: {}\n",
+                     session.hal_session.id, session.conn_id,
+                     session.hal_session.acl_connection_handle, session.hal_session.att_mtu,
+                     static_cast<int>(session.hal_session.role), session.hal_session.service_uuid,
+                     session.hal_session.endpoint_info.endpoint_id,
+                     session.hal_session.endpoint_info.hub_id, session.attribution_tag);
+
+      if (!session.hal_session.characteristics.empty()) {
+        std::format_to(out, "      Characteristics:\n");
+        for (const auto& characteristic : session.hal_session.characteristics) {
+          std::format_to(out,
+                         "        - UUID: {}\n"
+                         "          Handle: {}, Properties: {:02x}\n",
+                         characteristic.uuid, characteristic.value_handle,
+                         characteristic.properties);
+        }
+      }
+    }
+  }
+  dprintf(fd, "GATT offload sessions\n%s\n", result.c_str());
 }
 
 static tGATT_STATUS gatt_offload_characteristics_impl(tCONN_ID conn_id, bool is_server,
@@ -437,7 +468,8 @@ static void on_gatt_offload_register_service_complete(uint16_t session_id, hal::
     log::error("offload register service already completed on session_id: {}", session_id);
   }
   if (status != hal::GattStatus::GATT_SUCCESS) {
-    remove_hal_session(session_id);
+    remove_hal_session(session_id, GattOffloadSessionStateEnum::GATT_OFFLOAD_SESSION_STATE_FAILED,
+                       GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_HAL_FAILURE);
   }
 }
 
@@ -451,13 +483,16 @@ static void send_offload_session_register_complete(uint16_t session_id, tGATT_ST
 
 static void on_gatt_offload_unregister_service_complete(uint16_t session_id) {
   log::info("session_id: {}", session_id);
-  if (!contains_session_by_id(session_id)) {
+  auto it = gatt_cb.offload_sessions.find(session_id);
+  if (it == gatt_cb.offload_sessions.end()) {
     log::error("session_id: {} doesn't exist", session_id);
     return;
   }
+  tGATT_OFFLOAD_SESSION& session = it->second;
   tCONN_ID conn_id = get_conn_id_by_session_id(session_id);
   tGATT_IF gatt_if = gatt_get_gatt_if(conn_id);
-  remove_hal_session(session_id);
+  remove_hal_session(session_id, GattOffloadSessionStateEnum::GATT_OFFLOAD_SESSION_STATE_STOPPED,
+                     gatt_status_to_offload_error_enum(session.status));
   for (auto& [i, p_reg] : gatt_cb.cl_rcb_map) {
     if (p_reg->gatt_if != gatt_if) {
       continue;
@@ -476,10 +511,12 @@ static void on_gatt_offload_clear_services_complete(uint16_t acl_connection_hand
                   iter, gatt_cb.offload_sessions.end(), [acl_connection_handle](auto& el) {
                     return el.second.hal_session.acl_connection_handle == acl_connection_handle;
                   })) != gatt_cb.offload_sessions.end()) {
-    tCONN_ID conn_id = iter->second.conn_id;
+    tGATT_OFFLOAD_SESSION& session = iter->second;
+    tCONN_ID conn_id = session.conn_id;
     tGATT_IF gatt_if = gatt_get_gatt_if(conn_id);
-    uint16_t session_id = iter->second.hal_session.id;
-    remove_hal_session(session_id);
+    uint16_t session_id = session.hal_session.id;
+    remove_hal_session(session_id, GattOffloadSessionStateEnum::GATT_OFFLOAD_SESSION_STATE_STOPPED,
+                       GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_NONE);
     for (auto& [i, p_reg] : gatt_cb.cl_rcb_map) {
       if (p_reg->gatt_if != gatt_if) {
         continue;
@@ -509,7 +546,8 @@ static void on_gatt_offload_error_report(uint16_t acl_connection_handle, uint16_
 static void handle_error_report_database_out_of_sync(uint16_t acl_connection_handle,
                                                      uint16_t /* local_cid */) {
   log::info("acl_connection_handle: 0x{:x}", acl_connection_handle);
-  if (!gatt_offload_clear_sessions_by_acl_handle(acl_connection_handle)) {
+  if (!gatt_offload_clear_sessions_by_acl_handle(acl_connection_handle,
+                                                 hal::GattError::GATT_ERROR_DATABASE_OUT_OF_SYNC)) {
     log::error("Unknown acl_connection_handle: 0x{:x}", acl_connection_handle);
     return;
   }
@@ -536,7 +574,8 @@ static void handle_error_report_database_out_of_sync(uint16_t acl_connection_han
 static void handle_error_report_protocol_violation(uint16_t acl_connection_handle,
                                                    uint16_t /* local_cid */) {
   log::info("acl_connection_handle: 0x{:x}", acl_connection_handle);
-  if (!gatt_offload_clear_sessions_by_acl_handle(acl_connection_handle)) {
+  if (!gatt_offload_clear_sessions_by_acl_handle(acl_connection_handle,
+                                                 hal::GattError::GATT_ERROR_PROTOCOL_VIOLATION)) {
     log::error("Failed to clear offload sessions on the acl handle: 0x{:x}", acl_connection_handle);
     return;
   }
@@ -552,7 +591,8 @@ static void handle_error_report_protocol_violation(uint16_t acl_connection_handl
 static void handle_error_report_response_timeout(uint16_t acl_connection_handle,
                                                  uint16_t /* local_cid */) {
   log::info("acl_connection_handle: 0x{:x}", acl_connection_handle);
-  if (!gatt_offload_clear_sessions_by_acl_handle(acl_connection_handle)) {
+  if (!gatt_offload_clear_sessions_by_acl_handle(acl_connection_handle,
+                                                 hal::GattError::GATT_ERROR_RESPONSE_TIMEOUT)) {
     log::error("Failed to clear offload sessions on the acl handle: 0x{:x}", acl_connection_handle);
     return;
   }
@@ -626,13 +666,17 @@ static std::optional<std::promise<btgatt_offload_result_t>>& get_promise_by_sess
   return gatt_cb.offload_sessions[session_id].promise_opt;
 }
 
-static bool try_sessions_by_acl_handle_to_unoffload(uint16_t acl_connection_handle) {
+static bool try_sessions_by_acl_handle_to_unoffload(uint16_t acl_connection_handle,
+                                                    hal::GattError reason) {
   bool found_handle = false;
   bool need_unoffload = false;
   for (auto& session_pair : gatt_cb.offload_sessions) {
     auto& session_data = session_pair.second;
     if (session_data.hal_session.acl_connection_handle == acl_connection_handle) {
       found_handle = true;
+      if (session_data.stop_reason == hal::GattError::GATT_ERROR_NONE) {
+        session_data.stop_reason = reason;
+      }
       if (!session_data.in_clearing_services) {
         session_data.in_clearing_services = true;
         need_unoffload = true;
@@ -673,11 +717,101 @@ static bool contains_common_characteristic(bluetooth::hal::GattSession& s1,
 
 static void add_hal_session(tGATT_OFFLOAD_SESSION session) {
   uint16_t session_id = session.hal_session.id;
+  session.creation_timestamp_ms = bluetooth::common::time_get_os_boottime_ms();
   log::info("session_id: {}, conn_id: {}", session.hal_session.id, session.conn_id);
+
+  auto role = (session.hal_session.role == hal::GATT_SERVER) ? GattRoleEnum::GATT_ROLE_SERVER
+                                                             : GattRoleEnum::GATT_ROLE_CLIENT;
+
+  Address peer_address = get_peer_address(session.conn_id);
+
+  int32_t characteristic_properties_bitmask = 0;
+  for (const auto& characteristic : session.hal_session.characteristics) {
+    characteristic_properties_bitmask |= characteristic.properties;
+  }
+
+  bluetooth::metrics::LogGattOffloadSessionStateChanged(
+          peer_address, session_id, role,
+          GattOffloadSessionStateEnum::GATT_OFFLOAD_SESSION_STATE_STARTED,
+          characteristic_properties_bitmask, /*session_duration_ms=*/0,
+          GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_NONE, session.uid, session.attribution_tag);
   gatt_cb.offload_sessions[session_id] = std::move(session);
 }
 
-static void remove_hal_session(uint16_t session_id) {
+static void remove_hal_session(uint16_t session_id, GattOffloadSessionStateEnum state,
+                               GattOffloadErrorEnum error) {
   log::info("session_id: {}", session_id);
-  gatt_cb.offload_sessions.erase(session_id);
+  auto it = gatt_cb.offload_sessions.find(session_id);
+  if (it == gatt_cb.offload_sessions.end()) {
+    log::error("Unknown session_id: {}", session_id);
+    return;
+  }
+
+  auto& session = it->second;
+  auto role = (session.hal_session.role == hal::GATT_SERVER) ? GattRoleEnum::GATT_ROLE_SERVER
+                                                             : GattRoleEnum::GATT_ROLE_CLIENT;
+  uint64_t session_duration_ms =
+          bluetooth::common::time_get_os_boottime_ms() - session.creation_timestamp_ms;
+
+  Address peer_address = get_peer_address(session.conn_id);
+
+  int32_t characteristic_properties_bitmask = 0;
+  for (const auto& characteristic : session.hal_session.characteristics) {
+    characteristic_properties_bitmask |= characteristic.properties;
+  }
+
+  bluetooth::metrics::LogGattOffloadSessionStateChanged(
+          peer_address, session_id, role, state, characteristic_properties_bitmask,
+          session_duration_ms,
+          session.stop_reason == hal::GattError::GATT_ERROR_NONE
+                  ? error
+                  : gatt_hal_error_to_offload_error_enum(session.stop_reason),
+          session.uid, session.attribution_tag);
+  gatt_cb.offload_sessions.erase(it);
+}
+
+static Address get_peer_address(uint16_t conn_id) {
+  uint8_t tcb_idx = gatt_get_tcb_idx(conn_id);
+  tGATT_TCB* p_tcb = gatt_get_tcb_by_idx(tcb_idx);
+  if (p_tcb == nullptr) {
+    log::warn("No TCB found for conn_id: {}", conn_id);
+    return Address::kEmpty;  // Return an empty address
+  }
+  return Address(p_tcb->peer_bda);
+}
+
+static GattOffloadErrorEnum gatt_status_to_offload_error_enum(tGATT_STATUS status) {
+  switch (status) {
+    case tGATT_STATUS::GATT_SUCCESS:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_NONE;
+    case tGATT_STATUS::GATT_DUP_REG:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_DUPLICATE_SESSION;
+    case tGATT_STATUS::GATT_BUSY:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_CONCURRENT_NOTIFICATION_INDICATION;
+    case tGATT_STATUS::GATT_INSUF_AUTHENTICATION:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_PERMISSION_DENIED;
+    case tGATT_STATUS::GATT_ILLEGAL_PARAMETER:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_INVALID_PARAMETERS;
+    case tGATT_STATUS::GATT_INTERNAL_ERROR:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_INTERNAL_ERROR;
+    case tGATT_STATUS::GATT_INVALID_HANDLE:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_INVALID_HANDLE;
+    default:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_UNKNOWN;
+  }
+}
+
+static GattOffloadErrorEnum gatt_hal_error_to_offload_error_enum(hal::GattError error) {
+  switch (error) {
+    case hal::GattError::GATT_ERROR_DATABASE_OUT_OF_SYNC:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_DATABASE_OUT_OF_SYNC;
+    case hal::GattError::GATT_ERROR_RESPONSE_TIMEOUT:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_RESPONSE_TIMEOUT;
+    case hal::GattError::GATT_ERROR_PROTOCOL_VIOLATION:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_PROTOCOL_VIOLATION;
+    case hal::GattError::GATT_ERROR_NONE:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_NONE;
+    default:
+      return GattOffloadErrorEnum::GATT_OFFLOAD_ERROR_UNKNOWN;
+  }
 }

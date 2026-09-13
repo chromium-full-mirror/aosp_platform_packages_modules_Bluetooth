@@ -35,6 +35,7 @@
 
 #include "btm_ble_api_types.h"
 #include "stack/btm/neighbor_inquiry.h"
+#include "stack/include/btm_api_types.h"
 
 void btm_ble_init();
 void btm_ble_free();
@@ -85,7 +86,7 @@ void BTM_BleGetDynamicAudioBuffer(tBTM_BT_DYNAMIC_AUDIO_BUFFER_CB* p_dynamic_aud
  *
  ******************************************************************************/
 tBTM_STATUS BTM_BleObserve(bool start, uint8_t duration, tBTM_INQ_RESULTS_CB* p_results_cb,
-                           tBTM_CMPL_CB* p_cmpl_cb);
+                           tBTM_INQUIRY_CMPL_CB* p_cmpl_cb);
 
 /*******************************************************************************
  *
@@ -190,12 +191,11 @@ void BTM_BleReadControllerFeatures(tBTM_BLE_CTRL_FEATURES_CBACK* p_vsc_cback);
  *                  of BD address.
  *
  * Parameter        remote_bda: remote device address
- *                  p_dev_type: output parameter to read the device type.
- *                  p_addr_type: output parameter to read the address type.
+ *
+ * Return           DevInfo struct containing the device type and address type
  *
  ******************************************************************************/
-void BTM_ReadDevInfo(const RawAddress& remote_bda, tBT_DEVICE_TYPE* p_dev_type,
-                     tBLE_ADDR_TYPE* p_addr_type);
+DevInfo BTM_ReadDevInfo(const RawAddress& remote_bda);
 
 /*******************************************************************************
  *
@@ -208,22 +208,6 @@ void BTM_ReadDevInfo(const RawAddress& remote_bda, tBT_DEVICE_TYPE* p_dev_type,
  *
  *******************************************************************************/
 bool BTM_GetRemoteDeviceName(const RawAddress& bda, BD_NAME bd_name);
-
-/*******************************************************************************
- *
- * Function         BTM_ReadConnectedTransportAddress
- *
- * Description      This function is called to read the paired device/address
- *                  type of other device paired corresponding to the BD_address
- *
- * Parameter        remote_bda: remote device address, carry out the transport
- *                              address
- *                  transport: active transport
- *
- * Return           true if an active link is identified; false otherwise
- *
- ******************************************************************************/
-bool BTM_ReadConnectedTransportAddress(RawAddress* remote_bda, tBT_TRANSPORT transport);
 
 /*******************************************************************************
  *
@@ -330,32 +314,6 @@ tBTM_STATUS BTM_BleGetEnergyInfo(tBTM_BLE_ENERGY_INFO_CBACK* p_ener_cback);
  ******************************************************************************/
 tBTM_STATUS BTM_SetBleDataLength(const RawAddress& bd_addr, uint16_t tx_pdu_length,
                                  bool is_privileged_client);
-
-/*******************************************************************************
- *
- * Function         BTM_BleReadPhy
- *
- * Description      To read the current PHYs for specified LE connection
- *
- *
- * Returns          tBTM_STATUS::BTM_SUCCESS if success; otherwise failed.
- *
- ******************************************************************************/
-void BTM_BleReadPhy(const RawAddress& bd_addr,
-                    base::OnceCallback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb);
-
-/*******************************************************************************
- *
- * Function         BTM_BleSetPhy
- *
- * Description      To set PHY preferences for specified LE connection
- *
- *
- * Returns          tBTM_STATUS::BTM_SUCCESS if success; otherwise failed.
- *
- ******************************************************************************/
-void BTM_BleSetPhy(const RawAddress& bd_addr, uint8_t tx_phys, uint8_t rx_phys,
-                   uint16_t phy_options);
 
 /*******************************************************************************
  *

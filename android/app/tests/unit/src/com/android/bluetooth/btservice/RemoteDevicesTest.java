@@ -31,6 +31,7 @@ import static androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra;
 import static com.android.bluetooth.TestUtils.getTestDevice;
 import static com.android.bluetooth.TestUtils.mockGetBluetoothManager;
 import static com.android.bluetooth.TestUtils.mockGetSystemService;
+import static com.android.bluetooth.Utils.joinUninterruptibly;
 import static com.android.bluetooth.btservice.RemoteDevices.ACL_CONNECTION_DELIVERY_GROUP_POLICY;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -39,17 +40,18 @@ import static org.hamcrest.core.AnyOf.anyOf;
 import static org.hamcrest.core.Is.isA;
 import static org.hamcrest.core.IsNull.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.Mockito.when;
 
 import android.app.BroadcastOptions;
 import android.bluetooth.BluetoothAdapter;
@@ -59,13 +61,16 @@ import android.bluetooth.BluetoothHeadset;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothSinkAudioPolicy;
+import android.bluetooth.BluetoothUuid;
 import android.bluetooth.EncryptionStatus;
+import android.bluetooth.State;
 import android.companion.CompanionDeviceManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.HandlerThread;
 import android.os.Message;
+import android.os.ParcelUuid;
 import android.os.SystemProperties;
 import android.os.TestLooperManager;
 import android.platform.test.annotations.DisableFlags;
@@ -75,6 +80,7 @@ import android.platform.test.flag.junit.SetFlagsRule;
 import androidx.test.filters.MediumTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.bas.BatteryService;
 import com.android.bluetooth.btservice.RemoteDevices.DeviceProperties;
@@ -99,8 +105,10 @@ import platform.test.runner.parameterized.ParameterizedAndroidJunit4;
 import platform.test.runner.parameterized.Parameters;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 
 /** Test cases for {@link RemoteDevices}. */
 @MediumTest
@@ -114,6 +122,7 @@ public class RemoteDevicesTest {
 
     @Mock private AdapterService mAdapterService;
     @Mock private PackageManager mPackageManager;
+    @Mock private AdapterNativeInterface mNativeInterface;
 
     private final BluetoothDevice mDevice = getTestDevice(43);
 
@@ -144,6 +153,7 @@ public class RemoteDevicesTest {
         doReturn(mPackageManager).when(mAdapterService).getPackageManager();
         doReturn(UNCATEGORIZED).when(mAdapterService).getRemoteClass(mDevice);
 
+        doReturn(mNativeInterface).when(mAdapterService).getNative();
         mRemoteDevices = new RemoteDevices(mAdapterService, mHandlerThread.getLooper());
         verify(mAdapterService).getSystemService(BluetoothManager.class);
         verify(mAdapterService, times(2)).getPackageManager();
@@ -155,22 +165,7 @@ public class RemoteDevicesTest {
     public void tearDown() {
         mTestLooperManager.release();
         mHandlerThread.quit();
-    }
-
-    @Test
-    public void testSendUuidIntent() {
-        doNothing().when(mAdapterService).sendUuidsInternal(any(), any());
-
-        // Verify that a handler message is sent by the method call
-        mRemoteDevices.updateUuids(mDevice);
-        Message msg = mTestLooperManager.next();
-        assertThat(msg).isNotNull();
-
-        // Verify that executing that message results in a direct call and broadcast intent
-        mTestLooperManager.execute(msg);
-        verify(mAdapterService).sendUuidsInternal(any(), any());
-        verify(mAdapterService).sendBroadcast(any(), anyString(), any());
-        verifyNoMoreInteractions(mAdapterService);
+        joinUninterruptibly(mHandlerThread);
     }
 
     @Test
@@ -302,7 +297,6 @@ public class RemoteDevicesTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_COALESCE_ACL_CONNECTION_BROADCASTS)
     public void testResetBatteryLevel_testAclStateChangeCallback() {
         int batteryLevel = 10;
         int transport = 2; // LE transport
@@ -312,10 +306,10 @@ public class RemoteDevicesTest {
 
         // Verify that when device is completely disconnected, RemoteDevices reset battery level to
         // BluetoothDevice.BATTERY_LEVEL_UNKNOWN
-        when(mAdapterService.getState()).thenReturn(BluetoothAdapter.STATE_ON);
+        doReturn(State.ON).when(mAdapterService).getState();
         mRemoteDevices.aclStateChangeCallback(
                 0,
-                Utils.getByteAddress(mDevice),
+                Util.getByteAddress(mDevice),
                 0, // Public address type
                 transport,
                 AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
@@ -331,34 +325,6 @@ public class RemoteDevicesTest {
                         .toBundle();
         verifyIntentSent(
                 hasAction(BluetoothDevice.ACTION_ACL_DISCONNECTED), hasExtras(expectedBundle));
-
-        int newBatteryLevel = 20;
-        // Verify that updating battery level triggers ACTION_BATTERY_LEVEL_CHANGED intent again
-        mRemoteDevices.updateBatteryLevel(mDevice, newBatteryLevel, /* fromBas= */ false);
-        verifyBatteryLevelUpdate(newBatteryLevel);
-    }
-
-    @Test
-    @DisableFlags(Flags.FLAG_COALESCE_ACL_CONNECTION_BROADCASTS)
-    public void testResetBatteryLevel_testAclStateChangeCallback_withBroadcastCoalescingDisabled() {
-        int batteryLevel = 10;
-        // Verify that updating battery level triggers ACTION_BATTERY_LEVEL_CHANGED intent
-        mRemoteDevices.updateBatteryLevel(mDevice, batteryLevel, /* fromBas= */ false);
-        verifyBatteryLevelUpdate(batteryLevel);
-
-        // Verify that when device is completely disconnected, RemoteDevices reset battery level to
-        // BluetoothDevice.BATTERY_LEVEL_UNKNOWN
-        when(mAdapterService.getState()).thenReturn(BluetoothAdapter.STATE_ON);
-        mRemoteDevices.aclStateChangeCallback(
-                0,
-                Utils.getByteAddress(mDevice),
-                0, // Public address type
-                2, // LE transport
-                AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
-                19,
-                BluetoothDevice.ERROR); // HCI code 19 remote terminated
-        // Verify ACTION_ACL_DISCONNECTED and BATTERY_LEVEL_CHANGED intent are sent
-        verifyIntentSent(hasAction(BluetoothDevice.ACTION_ACL_DISCONNECTED));
 
         int newBatteryLevel = 20;
         // Verify that updating battery level triggers ACTION_BATTERY_LEVEL_CHANGED intent again
@@ -389,6 +355,8 @@ public class RemoteDevicesTest {
 
     @Test
     public void testOnVendorSpecificHeadsetEvent_testCorrectPlantronicsXEvent() {
+        // Prepare the base device property
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         // Verify that correct ACTION_VENDOR_SPECIFIC_HEADSET_EVENT updates battery level
         mRemoteDevices.onVendorSpecificHeadsetEvent(
                 mDevice,
@@ -401,6 +369,8 @@ public class RemoteDevicesTest {
 
     @Test
     public void testOnVendorSpecificHeadsetEvent_testCorrectAppleBatteryVsc() {
+        // Prepare the base device property
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         // Verify that correct ACTION_VENDOR_SPECIFIC_HEADSET_EVENT updates battery level
         mRemoteDevices.onVendorSpecificHeadsetEvent(
                 mDevice,
@@ -589,22 +559,17 @@ public class RemoteDevicesTest {
 
         // Verify that the battery level persists
         mRemoteDevices.resetBatteryLevel(mDevice, /* fromBas= */ true);
-        if (Flags.consistentBatteryLevel()) {
-            verifyNoMoreInteractions(mAdapterService);
+        verifyNoMoreInteractions(mAdapterService);
 
-            // We lost both connection and battery level is reset
-            mRemoteDevices.resetBatteryLevel(mDevice, /* fromBas= */ false);
-            verifyBatteryLevelUpdate(BATTERY_LEVEL_UNKNOWN);
-        } else {
-            verifyBatteryLevelUpdate(batteryLevelHfp);
-        }
+        // We lost both connection and battery level is reset
+        mRemoteDevices.resetBatteryLevel(mDevice, /* fromBas= */ false);
+        verifyBatteryLevelUpdate(BATTERY_LEVEL_UNKNOWN);
 
         doReturn(Optional.empty()).when(mAdapterService).getBatteryService();
         verifyNoMoreInteractions(mAdapterService);
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_CONSISTENT_BATTERY_LEVEL)
     public void testUpdateBatteryLevelWithHfp_overridesUnknownBasBatteryLevel() {
         int batteryLevelHfp = 10;
         int batteryLevelBas = 15;
@@ -638,7 +603,6 @@ public class RemoteDevicesTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_CONSISTENT_BATTERY_LEVEL)
     public void testResetBasBatteryLevel_withNoHfpLevel_resetsInstantly() {
         int batteryLevelBas = 50;
 
@@ -702,9 +666,9 @@ public class RemoteDevicesTest {
         // Verify that device property is null initially
         assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
         DeviceProperties prop1 =
-                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         DeviceProperties prop2 =
-                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         assertThat(prop1).isEqualTo(prop2);
     }
 
@@ -713,7 +677,7 @@ public class RemoteDevicesTest {
         // Verify that device property is null initially
         assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
 
-        mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
 
         DeviceProperties deviceProp = mRemoteDevices.getDeviceProperties(mDevice);
         BluetoothSinkAudioPolicy policies =
@@ -737,7 +701,7 @@ public class RemoteDevicesTest {
 
         // Verify that device property is null initially
         assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
-        mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
 
         DeviceProperties deviceProp = mRemoteDevices.getDeviceProperties(mDevice);
         deviceProp.setIsCoordinatedSetMember(true);
@@ -752,7 +716,7 @@ public class RemoteDevicesTest {
 
         // Verify that device property is null initially
         assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
-        mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
 
         DeviceProperties deviceProp = mRemoteDevices.getDeviceProperties(mDevice);
         deviceProp.setIsCoordinatedSetMember(true);
@@ -874,13 +838,12 @@ public class RemoteDevicesTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_LINK_STATUS_API)
     public void testLinkState_bredr() {
         final int transport = TRANSPORT_BREDR;
 
         // Prepare the base device property
         if (mRemoteDevices.getDeviceProperties(mDevice) == null) {
-            mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+            mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         }
 
         // Validate the connected state
@@ -908,12 +871,12 @@ public class RemoteDevicesTest {
     @EnableFlags(Flags.FLAG_FIX_INTENT_SELECTION_FOR_ACL)
     public void aclStateChangeCallback_bleOnWithFixIntentFlag_sendsAclIntent() {
         final int transport = TRANSPORT_BREDR;
-        when(mAdapterService.getState()).thenReturn(BluetoothAdapter.STATE_BLE_ON);
+        doReturn(State.BLE_ON).when(mAdapterService).getState();
 
         // Test ACL Connected
         mRemoteDevices.aclStateChangeCallback(
                 AbstractionLayer.BT_STATUS_SUCCESS,
-                Utils.getByteAddress(mDevice),
+                Util.getByteAddress(mDevice),
                 mDevice.getAddressType(),
                 transport,
                 AbstractionLayer.BT_ACL_STATE_CONNECTED,
@@ -926,7 +889,7 @@ public class RemoteDevicesTest {
         // Test ACL Disconnected
         mRemoteDevices.aclStateChangeCallback(
                 AbstractionLayer.BT_STATUS_SUCCESS,
-                Utils.getByteAddress(mDevice),
+                Util.getByteAddress(mDevice),
                 mDevice.getAddressType(),
                 transport,
                 AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
@@ -941,12 +904,12 @@ public class RemoteDevicesTest {
     @DisableFlags(Flags.FLAG_FIX_INTENT_SELECTION_FOR_ACL)
     public void aclStateChangeCallback_bleOnWithoutFixIntentFlag_sendsBleAclIntent() {
         final int transport = TRANSPORT_BREDR;
-        when(mAdapterService.getState()).thenReturn(BluetoothAdapter.STATE_BLE_ON);
+        doReturn(State.BLE_ON).when(mAdapterService).getState();
 
         // Test ACL Connected
         mRemoteDevices.aclStateChangeCallback(
                 AbstractionLayer.BT_STATUS_SUCCESS,
-                Utils.getByteAddress(mDevice),
+                Util.getByteAddress(mDevice),
                 mDevice.getAddressType(),
                 transport,
                 AbstractionLayer.BT_ACL_STATE_CONNECTED,
@@ -957,7 +920,7 @@ public class RemoteDevicesTest {
         // Test ACL Disconnected
         mRemoteDevices.aclStateChangeCallback(
                 AbstractionLayer.BT_STATUS_SUCCESS,
-                Utils.getByteAddress(mDevice),
+                Util.getByteAddress(mDevice),
                 mDevice.getAddressType(),
                 transport,
                 AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
@@ -977,11 +940,11 @@ public class RemoteDevicesTest {
 
         // And device properties exist
         DeviceProperties deviceProp =
-                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         assertThat(deviceProp).isNotNull();
 
         // Then discovery result handler should be called
-        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        mRemoteDevices.deviceFoundCallback(Util.getByteAddress(mDevice));
         verify(mAdapterService).discoveryResultHandler(eq(deviceProp));
     }
 
@@ -991,7 +954,7 @@ public class RemoteDevicesTest {
         assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
 
         // Then discovery result handler should not be called
-        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        mRemoteDevices.deviceFoundCallback(Util.getByteAddress(mDevice));
         verify(mAdapterService, never()).discoveryResultHandler(any());
     }
 
@@ -1006,12 +969,12 @@ public class RemoteDevicesTest {
 
         // And device properties exist but device name is null
         DeviceProperties deviceProp =
-                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         assertThat(deviceProp).isNotNull();
         assertThat(deviceProp.getName()).isNull();
 
         // Then discovery result handler should not be called
-        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        mRemoteDevices.deviceFoundCallback(Util.getByteAddress(mDevice));
         verify(mAdapterService, never()).discoveryResultHandler(any());
     }
 
@@ -1026,12 +989,202 @@ public class RemoteDevicesTest {
 
         // And device properties exist with a valid device name
         DeviceProperties deviceProp =
-                mRemoteDevices.addDeviceProperties(Utils.getBytesFromAddress(mDevice.getAddress()));
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
         deviceProp.setName("Test Device");
 
         // Then discovery result handler should be called
-        mRemoteDevices.deviceFoundCallback(Utils.getByteAddress(mDevice));
+        mRemoteDevices.deviceFoundCallback(Util.getByteAddress(mDevice));
         verify(mAdapterService).discoveryResultHandler(eq(deviceProp));
+    }
+
+    @Test
+    public void aclStateChangeCallback_unbondedWithoutBondingAttempt_keepsProperties() {
+        // Add a device. By default, its bond state is BOND_NONE and no bonding has been
+        // initiated.
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNotNull();
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice).getBondingInitiator())
+                .isEqualTo(0); // BONDING_INITIATOR_NONE
+
+        doReturn(State.ON).when(mAdapterService).getState();
+
+        // Simulate ACL disconnection for this device.
+        mRemoteDevices.aclStateChangeCallback(
+                AbstractionLayer.BT_STATUS_SUCCESS,
+                Util.getByteAddress(mDevice),
+                mDevice.getAddressType(),
+                TRANSPORT_BREDR,
+                AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
+                0, // hciReason
+                1); // handle
+
+        // Verify that the device properties are NOT removed, because no bonding attempt was ever
+        // made for this device.
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNotNull();
+    }
+
+    @Test
+    public void aclStateChangeCallback_unbondedWithBondingAttempt_removesProperties() {
+        // Add a device and set its state to reflect a prior bonding attempt that failed,
+        // resulting in BOND_NONE state.
+        DeviceProperties deviceProp =
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
+        deviceProp.setBondState(BluetoothDevice.BOND_NONE);
+        deviceProp.setBondingInitiatedLocally(true); // Signifies a bonding attempt was made
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNotNull();
+
+        doReturn(State.ON).when(mAdapterService).getState();
+
+        // Simulate ACL disconnection for this device.
+        mRemoteDevices.aclStateChangeCallback(
+                AbstractionLayer.BT_STATUS_SUCCESS,
+                Util.getByteAddress(mDevice),
+                mDevice.getAddressType(),
+                TRANSPORT_BREDR,
+                AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
+                0, // hciReason
+                1); // handle
+
+        // Verify that the device properties ARE removed, because a bonding attempt was made.
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
+    }
+
+    @Test
+    public void aclStateChangeCallback_bondingDevice_keepsPropertiesAndSendsCancel() {
+        // Add a device and set its state to BOND_BONDING.
+        DeviceProperties deviceProp =
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
+        deviceProp.setBondState(BluetoothDevice.BOND_BONDING);
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNotNull();
+
+        doReturn(State.ON).when(mAdapterService).getState();
+        // Mock for sendPairingCancelIntent to get the pairing UI package
+        ExtendedMockito.doReturn("some.package.name")
+                .when(() -> SystemProperties.get(anyString(), anyString()));
+
+        // Simulate ACL disconnection during bonding.
+        mRemoteDevices.aclStateChangeCallback(
+                AbstractionLayer.BT_STATUS_SUCCESS,
+                Util.getByteAddress(mDevice),
+                mDevice.getAddressType(),
+                TRANSPORT_BREDR,
+                AbstractionLayer.BT_ACL_STATE_DISCONNECTED,
+                0, // hciReason
+                1); // handle
+
+        // Verify that the device properties are NOT removed.
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNotNull();
+        // Verify that a PAIRING_CANCEL intent is sent to dismiss any UI dialogs.
+        verifyIntentSent(hasAction(BluetoothDevice.ACTION_PAIRING_CANCEL));
+    }
+
+    @Test
+    public void setBondState_bondedWithUnknownIdentityAddress_setsIdentityAddress() {
+        // Add a device, its properties will be created with an unknown identity address.
+        DeviceProperties deviceProp =
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
+        assertThat(deviceProp.getIdentityAddress()).isEqualTo(DeviceProperties.UNKNOWN_ADDRESS);
+
+        // Set the bond state to BONDED.
+        deviceProp.setBondState(BluetoothDevice.BOND_BONDED);
+
+        // Verify that the identity address is now set to the device's own address.
+        assertThat(deviceProp.getIdentityAddress().getAddress()).isEqualTo(mDevice.getAddress());
+        assertThat(deviceProp.getIdentityAddress().getAddressType())
+                .isEqualTo(mDevice.getAddressType());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_BROADCAST_UUIDS_FROM_MAIN_LOOPER)
+    public void testTriggerUuidNotification() {
+        // Make sure that the device is in the remote devices list
+        mRemoteDevices.addDeviceProperties(Util.getByteAddress(mDevice), mDevice.getAddressType());
+
+        // Trigger the UUID notification
+        mRemoteDevices.triggerUuidNotification(mDevice);
+
+        // Verify that a handler message is sent by the method call
+        Message msg = mTestLooperManager.next();
+        assertThat(msg).isNotNull();
+
+        // Verify that executing that message results in a direct call to deviceUuidsUpdated
+        mTestLooperManager.execute(msg);
+        verify(mAdapterService)
+                .deviceUuidsUpdated(
+                        argThat(device -> device.equals(mDevice)),
+                        argThat(uuids -> uuids == null),
+                        eq(true));
+        verifyNoMoreInteractions(mAdapterService);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_BROADCAST_UUIDS_FROM_MAIN_LOOPER)
+    public void devicePropertyChangedCallback_withUuids_doesNotCallUuidsUpdatedTwice() {
+        final int serviceDiscoveryTimeoutMs = RemoteDevices.SERVICE_DISCOVERY_TIMEOUT_MS;
+
+        // Call fetchUuids to queue a timeout message.
+        mRemoteDevices.fetchUuids(mDevice, BluetoothDevice.TRANSPORT_AUTO);
+        verify(mNativeInterface).getRemoteServices(any(), anyInt());
+
+        // Simulate devicePropertyChangedCallback from native stack.
+        byte[] address = Util.getByteAddress(mDevice);
+        int[] types = new int[] {AbstractionLayer.BT_PROPERTY_UUIDS};
+        ParcelUuid[] sampleUuids = new ParcelUuid[] {BluetoothUuid.A2DP_SINK};
+        byte[][] values = new byte[][] {Utils.uuidsToByteArray(sampleUuids)};
+        mRemoteDevices.devicePropertyChangedCallback(
+                address, mDevice.getAddressType(), types, values);
+
+        // Process the UUID update message.
+        Message msg = mTestLooperManager.next();
+        assertThat(msg).isNotNull();
+        mTestLooperManager.execute(msg);
+
+        // Verify deviceUuidsUpdated is called only once.
+        verify(mAdapterService, timeout(serviceDiscoveryTimeoutMs).times(1))
+                .deviceUuidsUpdated(
+                        argThat(device -> device.equals(mDevice)),
+                        argThat(uuids -> Arrays.equals(uuids, sampleUuids)),
+                        eq(true));
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_BROADCAST_UUIDS_FROM_MAIN_LOOPER)
+    public void devicePropertyChangedCallback_withoutUuids_callsUuidsUpdatedOnTimeout() {
+        final int serviceDiscoveryTimeoutMs = RemoteDevices.SERVICE_DISCOVERY_TIMEOUT_MS;
+
+        // Call fetchUuids to queue a timeout message.
+        mRemoteDevices.fetchUuids(mDevice, BluetoothDevice.TRANSPORT_AUTO);
+        verify(mNativeInterface).getRemoteServices(any(), anyInt());
+
+        // Process the UUID update message.
+        Message msg = mTestLooperManager.next();
+        assertThat(msg).isNotNull();
+        mTestLooperManager.execute(msg);
+
+        // Verify deviceUuidsUpdated is called only once.
+        verify(mAdapterService, timeout(serviceDiscoveryTimeoutMs).times(1))
+                .deviceUuidsUpdated(
+                        argThat(device -> device.equals(mDevice)),
+                        argThat(uuids -> uuids == null),
+                        eq(false));
+    }
+
+    @Test
+    public void testFetchUuids_skipsDiscoveryIfTimeoutMessageExists() {
+        // First call to fetchUuids should start discovery and queue a timeout message
+        mRemoteDevices.fetchUuids(mDevice, BluetoothDevice.TRANSPORT_AUTO);
+
+        // Verify that getRemoteServices is called
+        verify(mNativeInterface)
+                .getRemoteServices(
+                        argThat(address -> Arrays.equals(address, Util.getByteAddress(mDevice))),
+                        eq(BluetoothDevice.TRANSPORT_AUTO));
+
+        // Second call should not start another discovery because a timeout message is pending
+        mRemoteDevices.fetchUuids(mDevice, BluetoothDevice.TRANSPORT_AUTO);
+
+        // Verify that getRemoteServices is not called a second time
+        verify(mNativeInterface, times(1)).getRemoteServices(any(byte[].class), anyInt());
     }
 
     private static Object[] getXEventArray(int batteryLevel, int numLevels) {
@@ -1046,7 +1199,7 @@ public class RemoteDevicesTest {
 
     private void makeBatteryServiceAvailable(BluetoothDevice device) {
         BatteryService batteryService = mock(BatteryService.class);
-        when(batteryService.getConnectionState(device)).thenReturn(STATE_CONNECTED);
+        doReturn(STATE_CONNECTED).when(batteryService).getConnectionState(device);
         doReturn(Optional.of(batteryService)).when(mAdapterService).getBatteryService();
     }
 
@@ -1095,5 +1248,202 @@ public class RemoteDevicesTest {
         }
 
         return AllOf.allOf(matchers.toArray(new Matcher[0]));
+    }
+
+    @Test
+    public void testAddDeviceProperties_addNewDevice() {
+        // GIVEN a new device address
+        String addressString = "00:11:22:33:44:55";
+        byte[] address = Util.getBytesFromAddress(addressString);
+        int addressType = BluetoothDevice.ADDRESS_TYPE_PUBLIC;
+
+        // WHEN adding device properties
+        DeviceProperties prop = mRemoteDevices.addDeviceProperties(address, addressType);
+
+        // THEN properties are created and stored
+        assertThat(prop).isNotNull();
+        assertThat(prop.getDevice().getAddress()).isEqualTo(addressString);
+        assertThat(mRemoteDevices.getDeviceProperties(prop.getDevice())).isEqualTo(prop);
+    }
+
+    @Test
+    public void testAddDeviceProperties_lruEviction() {
+        int maxDevices = RemoteDevices.MAX_DEVICE_QUEUE_SIZE;
+
+        // Add maxDevices devices
+        List<BluetoothDevice> devices = new ArrayList<>();
+        for (int i = 0; i < maxDevices; i++) {
+            String address = String.format("%02X:00:00:00:00:00", i);
+            DeviceProperties prop =
+                    mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(address));
+            devices.add(prop.getDevice());
+        }
+
+        // Verify all are present
+        for (BluetoothDevice device : devices) {
+            assertThat(mRemoteDevices.getDeviceProperties(device)).isNotNull();
+        }
+
+        // WHEN adding another device
+        String newAddress = "FF:FF:FF:FF:FF:FF";
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(newAddress));
+
+        // THEN the first device (LRU) should be evicted
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(0))).isNull();
+        // And the new one should be present
+        assertThat(mRemoteDevices.getDevice(newAddress)).isNotNull();
+        // And the second device should still be present
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(1))).isNotNull();
+    }
+
+    @Test
+    public void testAddDeviceProperties_lruEviction_bondedAndConnectedAreSkipped() {
+        int maxDevices = RemoteDevices.MAX_DEVICE_QUEUE_SIZE;
+
+        // Add maxDevices devices
+        List<BluetoothDevice> devices = new ArrayList<>();
+        for (int i = 0; i < maxDevices; i++) {
+            String address = String.format("%02X:00:00:00:00:00", i);
+            DeviceProperties prop =
+                    mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(address));
+            devices.add(prop.getDevice());
+            if (i == 0) {
+                prop.setBondState(BluetoothDevice.BOND_BONDED);
+            } else if (i == 1) {
+                prop.setConnected(TRANSPORT_BREDR, 123);
+            }
+        }
+
+        // WHEN adding another device
+        String newAddress = "FF:FF:FF:FF:FF:FF";
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(newAddress));
+
+        // THEN the first (bonded) and second (connected) devices should NOT be evicted
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(0))).isNotNull();
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(1))).isNotNull();
+
+        // The third device should be evicted instead
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(2))).isNull();
+    }
+
+    @Test
+    public void testAddDeviceProperties_lruEviction_preferDevicesWithoutPackages() {
+        int maxDevices = RemoteDevices.MAX_DEVICE_QUEUE_SIZE;
+
+        // Add maxDevices devices
+        List<BluetoothDevice> devices =
+                fillLruCacheWithDevices(
+                        maxDevices,
+                        (i, prop) -> {
+                            if (i == 0) {
+                                // First device has a package associated
+                                prop.addPackage("com.test.package");
+                            }
+                        });
+
+        // WHEN adding the another device
+        String newAddress = "FF:FF:FF:FF:FF:FF";
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(newAddress));
+
+        // THEN the first device (with package) should NOT be evicted
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(0))).isNotNull();
+
+        // The second device (without package) should be evicted instead
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(1))).isNull();
+    }
+
+    @Test
+    public void testAddDeviceProperties_lruEviction_noEligibleDeviceToEvict() {
+        int maxDevices = RemoteDevices.MAX_DEVICE_QUEUE_SIZE;
+
+        // GIVEN a full cache where all devices are ineligible for eviction (bonded or connected)
+        List<BluetoothDevice> devices =
+                fillLruCacheWithDevices(
+                        maxDevices,
+                        (i, prop) -> {
+                            if (i % 2 == 0) {
+                                prop.setBondState(BluetoothDevice.BOND_BONDED);
+                            } else {
+                                prop.setConnected(TRANSPORT_BREDR, 123);
+                            }
+                        });
+
+        // WHEN adding another device
+        String newAddress = "FF:FF:FF:FF:FF:FF";
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(newAddress));
+
+        // THEN no device should be evicted
+        for (BluetoothDevice device : devices) {
+            assertThat(mRemoteDevices.getDeviceProperties(device)).isNotNull();
+        }
+        // And the new device should be present, exceeding the cache size temporarily
+        assertThat(mRemoteDevices.getDevice(newAddress)).isNotNull();
+    }
+
+    @Test
+    public void testAddDeviceProperties_lruEviction_evictsCandidateWithPackageWhenNoBetterOption() {
+        int maxDevices = RemoteDevices.MAX_DEVICE_QUEUE_SIZE;
+
+        // GIVEN a full cache where one device is bonded and the rest are "last resort" candidates
+        List<BluetoothDevice> devices =
+                fillLruCacheWithDevices(
+                        maxDevices,
+                        (i, prop) -> {
+                            if (i == 0) {
+                                prop.setBondState(BluetoothDevice.BOND_BONDED);
+                            } else {
+                                prop.addPackage("com.test.package." + i);
+                            }
+                        });
+
+        // WHEN adding another device
+        String newAddress = "FF:FF:FF:FF:FF:FF";
+        mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(newAddress));
+
+        // THEN the first device (bonded) should NOT be evicted
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(0))).isNotNull();
+        // The second device (the first "last resort" candidate) should be evicted
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(1))).isNull();
+        // The third device should still be present
+        assertThat(mRemoteDevices.getDeviceProperties(devices.get(2))).isNotNull();
+        // And the new device should be present
+        assertThat(mRemoteDevices.getDevice(newAddress)).isNotNull();
+    }
+
+    @Test
+    public void testGetAlias() {
+        // Verify that getAlias returns null when device property is null initially
+        assertThat(mRemoteDevices.getDeviceProperties(mDevice)).isNull();
+        assertThat(mRemoteDevices.getAlias(mDevice)).isNull();
+
+        // Prepare the base device property
+        DeviceProperties deviceProp =
+                mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(mDevice.getAddress()));
+        assertThat(deviceProp).isNotNull();
+
+        // Verify that getAlias returns null when no alias is set
+        assertThat(mRemoteDevices.getAlias(mDevice)).isNull();
+
+        // Set an alias
+        String testAlias = "TestAlias";
+        deviceProp.setAlias(mDevice, testAlias);
+
+        // Verify that getAlias returns the correctly set alias
+        assertThat(mRemoteDevices.getAlias(mDevice)).isEqualTo(testAlias);
+    }
+
+    private List<BluetoothDevice> fillLruCacheWithDevices(
+            int count, BiConsumer<Integer, DeviceProperties> propertySetter) {
+        List<BluetoothDevice> devices = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String address = String.format("%02X:00:00:00:00:00", i);
+            DeviceProperties prop =
+                    mRemoteDevices.addDeviceProperties(Util.getBytesFromAddress(address));
+            devices.add(prop.getDevice());
+            if (propertySetter != null) {
+                propertySetter.accept(i, prop);
+            }
+        }
+        return devices;
     }
 }

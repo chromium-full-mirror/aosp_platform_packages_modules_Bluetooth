@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "stack/include/bt_device_type.h"
 #include "stack/include/btm_status.h"
 #include "stack/include/hci_error_code.h"
 
@@ -338,6 +339,7 @@ typedef struct {
   uint32_t dynamic_audio_buffer_support;
   uint16_t adv_filter_extended_features_mask;
   uint8_t a2dp_offload_v2_support;
+  uint16_t big_set_channel_map_classification_support;
 } tBTM_BLE_VSC_CB;
 
 /* Stored the default/maximum/minimum buffer time for dynamic audio buffer.
@@ -361,9 +363,6 @@ typedef uint16_t tCONN_ID;
 typedef uint8_t tGATT_IF;
 typedef uint8_t tTCB_IDX;
 
-inline constexpr tGATT_IF GATT_IF_INVALID = static_cast<tGATT_IF>(0);
-// 0xF1 ~ 0xFF are reserved for special use cases.
-inline constexpr tGATT_IF GATT_IF_MAX = static_cast<tGATT_IF>(0xf8);
 /* connection manager doesn't generate its own IDs. Instead, all GATT clients
  * use their gatt_if to identify against connection manager. When stack tries to
  * create l2cap connection, it will use this fixed ID. */
@@ -373,6 +372,7 @@ typedef enum : uint8_t {
   BTM_BLE_DIRECT_CONNECTION = 0x00,
   BTM_BLE_BKG_CONNECT_ALLOW_LIST = 0x01,
   BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS = 0x02,
+  BTM_BLE_OPPORTUNISTIC = 0x03,
 } tBTM_BLE_CONN_TYPE;
 
 typedef void(tBTM_BLE_SCAN_THRESHOLD_CBACK)(tBTM_BLE_REF_VALUE ref_value);
@@ -513,9 +513,22 @@ typedef struct {
 
 typedef void(tBTM_BLE_CTRL_FEATURES_CBACK)(tHCI_STATUS status);
 
+typedef struct {
+  RawAddress addr;
+  tBLE_ADDR_TYPE addr_type;
+  tBT_DEVICE_TYPE device_type;
+} DevInfo;
+
+static inline std::string DeviceInfoText(const DevInfo& dev_info) {
+  return std::format("{}({}) Device type: {})", dev_info.addr.ToRedactedStringForLogging(),
+                     AddressTypeText(dev_info.addr_type), DeviceTypeText(dev_info.device_type));
+}
+
 namespace std {
 template <>
 struct formatter<tBTM_BLE_CONN_TYPE> : enum_formatter<tBTM_BLE_CONN_TYPE> {};
+template <>
+struct formatter<DevInfo> : string_formatter<DevInfo, &DeviceInfoText> {};
 }  // namespace std
 
 #endif  // BTM_BLE_API_TYPES_H

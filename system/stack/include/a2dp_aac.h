@@ -23,10 +23,10 @@
 
 #include <stdint.h>
 
-#include "a2dp_aac_constants.h"
-#include "a2dp_codec_api.h"
-#include "avdt_api.h"
 #include "internal_include/bt_target.h"
+#include "stack/include/a2dp_aac_constants.h"
+#include "stack/include/a2dp_codec_api.h"
+#include "stack/include/avdt_api.h"
 #include "stack/include/bt_hdr.h"
 
 class A2dpCodecConfigAacBase : public A2dpCodecConfig {
@@ -38,6 +38,7 @@ protected:
   tA2DP_STATUS setCodecConfig(const uint8_t* p_peer_codec_info, bool is_capability,
                               uint8_t* p_result_codec_config) override;
   bool setPeerCodecCapabilities(const uint8_t* p_peer_codec_capabilities) override;
+  int getTrackBitRate() const override;
 
 private:
   bool is_source_;  // True if local is Source

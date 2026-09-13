@@ -27,7 +27,6 @@ import android.content.AttributionSource;
 import android.util.Log;
 
 import com.android.bluetooth.Util;
-import com.android.bluetooth.Utils;
 import com.android.bluetooth.profile.ProfileService.IProfileServiceBinder;
 
 import java.util.Collections;
@@ -51,12 +50,12 @@ class BluetoothPbapServiceBinder extends IBluetoothPbap.Stub implements IProfile
     private BluetoothPbapService getService(AttributionSource source) {
         BluetoothPbapService service = mService;
 
-        if (Utils.isInstrumentationTestMode()) {
+        if (Util.isInstrumentationTestMode()) {
             return service;
         }
 
         if (!Util.checkProfileAvailable(service, TAG)
-                || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
+                || !Util.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
                 || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
             return null;
         }
@@ -87,7 +86,6 @@ class BluetoothPbapServiceBinder extends IBluetoothPbap.Stub implements IProfile
 
     @Override
     public int getConnectionState(BluetoothDevice device, AttributionSource source) {
-        Log.d(TAG, "getConnectionState: " + device);
         BluetoothPbapService service = getService(source);
         if (service == null) {
             return BluetoothAdapter.STATE_DISCONNECTED;

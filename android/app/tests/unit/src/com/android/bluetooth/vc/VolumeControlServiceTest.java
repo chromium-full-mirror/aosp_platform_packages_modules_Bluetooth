@@ -44,7 +44,6 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
@@ -247,8 +246,9 @@ public class VolumeControlServiceTest {
 
     @Test
     public void connectToDevice_whenPolicyForbid_returnFalse() {
-        when(mAdapterService.getProfileConnectionPolicy(mDevice1, BluetoothProfile.VOLUME_CONTROL))
-                .thenReturn(CONNECTION_POLICY_FORBIDDEN);
+        doReturn(CONNECTION_POLICY_FORBIDDEN)
+                .when(mAdapterService)
+                .getProfileConnectionPolicy(mDevice1, BluetoothProfile.VOLUME_CONTROL);
 
         assertThat(mService.connect(mDevice1)).isFalse();
     }
@@ -528,7 +528,7 @@ public class VolumeControlServiceTest {
     @Test
     public void incomingAutonomousVolumeStateChange_isApplied() {
         // Make device Active now. This will trigger setting volume to AF
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
 
         doReturn(AudioManager.MODE_IN_CALL).when(mAudioManager).getMode();
         testVolumeCalculations(AudioManager.STREAM_VOICE_CALL, CALL_MIN_VOL, CALL_MAX_VOL);
@@ -546,7 +546,7 @@ public class VolumeControlServiceTest {
 
         // Verify that muting LeAudio device, sets the mute state on the audio device
         // Make device Active now. This will trigger setting volume to AF
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
 
         generateVolumeStateChanged(null, GROUP_ID, streamVol, 0, true, true);
         verify(mAudioManager)
@@ -607,7 +607,6 @@ public class VolumeControlServiceTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_VCP_STORE_VOLUME_PER_STREAM_TYPE)
     public void volumeCache_multipleDevicesAndStreamTypes() {
         int group1_mediaVolume = 5;
         int group1_callVolume = 10;
@@ -630,7 +629,7 @@ public class VolumeControlServiceTest {
         doReturn(BT_LE_AUDIO_MAX_VOL).when(mAudioManager).getStreamMaxVolume(anyInt());
 
         // Group 1 active
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID, true);
         InOrder inOrderAudio = inOrder(mAudioManager);
         inOrderAudio.verify(mAudioManager, never()).setStreamVolume(anyInt(), anyInt(), anyInt());
@@ -663,7 +662,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getDeviceVolume(device2_g2)).isEqualTo(VOLUME_CONTROL_UNKNOWN_VOLUME);
 
         // Group 2 active, cached volume not changed
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID_2);
+        doReturn(GROUP_ID_2).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID_2, true);
         inOrderAudio.verify(mAudioManager, never()).setStreamVolume(anyInt(), anyInt(), anyInt());
         assertThat(mService.getGroupVolume(GROUP_ID)).isEqualTo(group1_mediaVolume);
@@ -719,7 +718,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getDeviceVolume(device2_g2)).isEqualTo(dev2_g2_callVolume);
 
         // Group 1 active, updated AF but cached volume not changed
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID, true);
         inOrderAudio
                 .verify(mAudioManager)
@@ -762,7 +761,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getDeviceVolume(device2_g2)).isEqualTo(group2_mediaVolume);
 
         // Group 2 active, updated AF but cached volume not changed
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID_2);
+        doReturn(GROUP_ID_2).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID_2, true);
         inOrderAudio
                 .verify(mAudioManager)
@@ -795,7 +794,7 @@ public class VolumeControlServiceTest {
         mService.setGroupVolume(GROUP_ID_2, volumeGroup_2);
 
         // Make device Active now. This will trigger setting volume to AF
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID, true);
 
         // Expected index for STREAM_MUSIC
@@ -804,7 +803,7 @@ public class VolumeControlServiceTest {
         verify(mAudioManager).setStreamVolume(anyInt(), eq(expectedVol), anyInt());
 
         // Make device Active now. This will trigger setting volume to AF
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID_2);
+        doReturn(GROUP_ID_2).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID_2, true);
 
         expectedVol =
@@ -864,7 +863,6 @@ public class VolumeControlServiceTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_VCP_STORE_VOLUME_PER_STREAM_TYPE)
     public void muteCache_multipleDevicesAndStreamTypes() {
         BluetoothDevice device1_g2 = getRealDevice(101);
         BluetoothDevice device2_g2 = getRealDevice(102);
@@ -878,7 +876,7 @@ public class VolumeControlServiceTest {
         doReturn(false).when(mAudioManager).isStreamMute(anyInt());
 
         // Group 1 active
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID, true);
         InOrder inOrderAudio = inOrder(mAudioManager);
         inOrderAudio
@@ -913,7 +911,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getMute(device2_g2)).isFalse();
 
         // Group 2 active, cached mute not changed
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID_2);
+        doReturn(GROUP_ID_2).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID_2, true);
         inOrderAudio
                 .verify(mAudioManager, never())
@@ -971,7 +969,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getMute(device2_g2)).isFalse();
 
         // Group 1 active, updated AF but cached mute not changed
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID, true);
         inOrderAudio
                 .verify(mAudioManager)
@@ -1023,7 +1021,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getMute(device2_g2)).isTrue();
 
         // Group 2 active, updated AF but cached mute not changed
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID_2);
+        doReturn(GROUP_ID_2).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID_2, true);
         inOrderAudio
                 .verify(mAudioManager)
@@ -1105,7 +1103,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getConnectionState(mDevice1)).isEqualTo(STATE_CONNECTED);
         assertThat(mService.getDevices()).contains(mDevice1);
 
-        when(mBassClientService.getSyncedBroadcastSinks()).thenReturn(new ArrayList<>());
+        doReturn(new ArrayList<>()).when(mBassClientService).getSyncedBroadcastSinks();
         // Group is not active unicast and not active primary broadcast, AF will not be notified
         generateVolumeStateChanged(
                 mDevice1,
@@ -1124,7 +1122,7 @@ public class VolumeControlServiceTest {
         inOrderNative.verify(mNativeInterface, never()).setGroupVolume(anyInt(), anyInt());
 
         // Make device Active now. This will trigger setting volume to AF
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID, true);
         int expectedAfVol =
                 (int) Math.round((double) (volumeDevice * MEDIA_MAX_VOL) / BT_LE_AUDIO_MAX_VOL);
@@ -1161,7 +1159,7 @@ public class VolumeControlServiceTest {
         // Connect device, first group
         generateDeviceAvailableMessageFromNative(mDevice1, GROUP_ID, 1, 1);
         generateConnectionMessageFromNative(mDevice1, STATE_CONNECTED, STATE_DISCONNECTED);
-        when(mBassClientService.getSyncedBroadcastSinks()).thenReturn(new ArrayList<>());
+        doReturn(new ArrayList<>()).when(mBassClientService).getSyncedBroadcastSinks();
 
         // Device volume updated with persisted flag, mIgnoreSetVolumeFromAF is set
         generateVolumeStateChanged(
@@ -1196,7 +1194,6 @@ public class VolumeControlServiceTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_VCP_SKIP_IGNORING_VOLUME_DURING_BROADCAST)
     public void connectedDeviceWithUserPersistFlagSet_whileBroadcastActive() {
         int volumeDevice = 56;
         int volumeFromAf = 123;
@@ -1210,7 +1207,7 @@ public class VolumeControlServiceTest {
         assertThat(mService.getDevices()).contains(mDevice1);
 
         // Simulate active broadcast
-        when(mLeAudioService.isBroadcastActive()).thenReturn(true);
+        doReturn(true).when(mLeAudioService).isBroadcastActive();
 
         // Device with persisted volume connects.
         // `mIgnoreSetVolumeFromAF=true` should be skipped due to active broadcast.
@@ -1236,8 +1233,8 @@ public class VolumeControlServiceTest {
         boolean initialMuteState = false;
         boolean initialAutonomousFlag = true;
 
-        when(mAudioManager.getStreamVolume(anyInt())).thenReturn(streamVolume);
-        when(mAudioManager.getStreamMaxVolume(anyInt())).thenReturn(streamMaxVolume);
+        doReturn(streamVolume).when(mAudioManager).getStreamVolume(anyInt());
+        doReturn(streamMaxVolume).when(mAudioManager).getStreamMaxVolume(anyInt());
 
         generateDeviceAvailableMessageFromNative(mDevice1, GROUP_ID, 1, 1);
         generateConnectionMessageFromNative(mDevice1, STATE_CONNECTED, STATE_DISCONNECTED);
@@ -1264,7 +1261,7 @@ public class VolumeControlServiceTest {
         inOrderNative.verify(mNativeInterface).setGroupVolume(eq(GROUP_ID), eq(expectedAfVol));
 
         // Make device Active now. This will trigger setting volume to AF
-        when(mLeAudioService.getActiveGroupId()).thenReturn(GROUP_ID);
+        doReturn(GROUP_ID).when(mLeAudioService).getActiveGroupId();
         mService.setGroupActive(GROUP_ID, true);
         inOrderAudio.verify(mAudioManager).setStreamVolume(anyInt(), eq(streamVolume), anyInt());
 
@@ -1493,7 +1490,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
 
         synchronized (mService.mCallbacks) {
             int size = mService.mCallbacks.getRegisteredCallbackCount();
@@ -1550,7 +1547,6 @@ public class VolumeControlServiceTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_LEAUDIO_BROADCAST_VOLUME_CONTROL_FOR_CONNECTED_DEVICES)
     public void testServiceSetDeviceVolumeNoGroupId() throws Exception {
         int deviceVolume = 42;
 
@@ -1573,7 +1569,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
 
         synchronized (mService.mCallbacks) {
             int size = mService.mCallbacks.getRegisteredCallbackCount();
@@ -1629,7 +1625,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
 
         synchronized (mService.mCallbacks) {
             int size = mService.mCallbacks.getRegisteredCallbackCount();
@@ -1664,7 +1660,6 @@ public class VolumeControlServiceTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_LEAUDIO_BROADCAST_VOLUME_CONTROL_FOR_CONNECTED_DEVICES)
     public void registerVolumeChangedCallbackWhenDeviceAlreadyConnected() throws Exception {
         int deviceOneVolume = 46;
         int deviceTwoVolume = 36;
@@ -1688,7 +1683,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
 
         synchronized (mService.mCallbacks) {
             int size = mService.mCallbacks.getRegisteredCallbackCount();
@@ -1724,7 +1719,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
 
         int size;
         synchronized (mService.mCallbacks) {
@@ -1736,7 +1731,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback_new_client =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder_new_client = Mockito.mock(Binder.class);
-        when(callback_new_client.asBinder()).thenReturn(binder_new_client);
+        doReturn(binder_new_client).when(callback_new_client).asBinder();
 
         mService.notifyNewRegisteredCallback(callback_new_client);
 
@@ -1775,7 +1770,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
 
         synchronized (mService.mCallbacks) {
             int size = mService.mCallbacks.getRegisteredCallbackCount();
@@ -1809,7 +1804,7 @@ public class VolumeControlServiceTest {
         IBluetoothVolumeControlCallback callback =
                 Mockito.mock(IBluetoothVolumeControlCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
         mService.registerCallback(callback);
 
         // Simulate device connecting and providing initial volume
@@ -1830,7 +1825,7 @@ public class VolumeControlServiceTest {
     public void volumeControlChangedForBroadcastPrimaryGroup() {
         int groupVolume = 30;
 
-        when(mAudioManager.getStreamVolume(anyInt())).thenReturn(groupVolume);
+        doReturn(groupVolume).when(mAudioManager).getStreamVolume(anyInt());
 
         generateDeviceAvailableMessageFromNative(mDevice1, GROUP_ID, 1, 1);
         generateConnectionMessageFromNative(mDevice1, STATE_CONNECTED, STATE_DISCONNECTED);
@@ -1838,8 +1833,8 @@ public class VolumeControlServiceTest {
         assertThat(mService.getDevices()).contains(mDevice1);
 
         // Make active group as null and broadcast not active
-        when(mLeAudioService.getActiveGroupId()).thenReturn(LE_AUDIO_GROUP_ID_INVALID);
-        when(mBassClientService.getSyncedBroadcastSinks()).thenReturn(new ArrayList<>());
+        doReturn(LE_AUDIO_GROUP_ID_INVALID).when(mLeAudioService).getActiveGroupId();
+        doReturn(new ArrayList<>()).when(mBassClientService).getSyncedBroadcastSinks();
 
         // Group is not broadcast primary group, AF will not be notified
         generateVolumeStateChanged(null, GROUP_ID, groupVolume, 0, false, true);
@@ -1847,10 +1842,11 @@ public class VolumeControlServiceTest {
         inOrderAudio.verify(mAudioManager, never()).setStreamVolume(anyInt(), anyInt(), anyInt());
 
         // Make active group as null and broadcast active
-        when(mLeAudioService.getActiveGroupId()).thenReturn(LE_AUDIO_GROUP_ID_INVALID);
-        when(mBassClientService.getSyncedBroadcastSinks())
-                .thenReturn(Arrays.asList(mDevice1, mDevice2));
-        when(mLeAudioService.isPrimaryGroup(GROUP_ID)).thenReturn(true);
+        doReturn(LE_AUDIO_GROUP_ID_INVALID).when(mLeAudioService).getActiveGroupId();
+        doReturn(Arrays.asList(mDevice1, mDevice2))
+                .when(mBassClientService)
+                .getSyncedBroadcastSinks();
+        doReturn(true).when(mLeAudioService).isPrimaryGroup(GROUP_ID);
         // Group is broadcast primary group, AF will be notified
         generateVolumeStateChanged(null, GROUP_ID, groupVolume, 0, false, true);
         inOrderAudio.verify(mAudioManager).setStreamVolume(anyInt(), anyInt(), anyInt());

@@ -35,12 +35,9 @@
 #include "utils.h"
 
 using bluetooth::hci::Address;
-using bluetooth::hci::AddressType;
 using bluetooth::hci::AdvertiserAddressType;
-using bluetooth::hci::ErrorCode;
 using bluetooth::hci::GapData;
 using bluetooth::shim::parse_gap_data;
-using std::vector;
 using namespace bluetooth;
 
 namespace {
@@ -99,7 +96,7 @@ public:
   void GetOwnAddress(uint8_t advertiser_id,
                      ::BleAdvertiserInterface::GetAddressCallback cb) override {
     log::info("in shim layer");
-    address_callbacks_[advertiser_id] = jni_thread_wrapper(cb);
+    address_callbacks_[advertiser_id] = jni_thread_wrapper(std::move(cb));
     bluetooth::shim::GetAdvertising()->GetOwnAddress(advertiser_id);
   }
 
@@ -113,7 +110,7 @@ public:
   }
 
   // ::BleAdvertiserInterface
-  void SetData(int advertiser_id, bool set_scan_rsp, vector<uint8_t> data,
+  void SetData(int advertiser_id, bool set_scan_rsp, std::vector<uint8_t> data,
                ::BleAdvertiserInterface::StatusCallback /* cb */) override {
     log::info("in shim layer");
     std::vector<GapData> advertising_data = {};
@@ -349,9 +346,10 @@ public:
   // bluetooth::hci::AdvertisingCallback
   void OnOwnAddressRead(uint8_t advertiser_id, uint8_t address_type, Address address) override {
     RawAddress raw_address = bluetooth::ToRawAddress(address);
-    if (address_callbacks_.find(advertiser_id) != address_callbacks_.end()) {
-      address_callbacks_[advertiser_id].Run(address_type, raw_address);
-      address_callbacks_.erase(advertiser_id);
+    auto cb_iter = address_callbacks_.find(advertiser_id);
+    if (cb_iter != address_callbacks_.end()) {
+      std::move(cb_iter->second).Run(address_type, raw_address);
+      address_callbacks_.erase(cb_iter);
       return;
     }
     do_in_jni_thread(base::BindOnce(&::AdvertisingCallbacks::OnOwnAddressRead,

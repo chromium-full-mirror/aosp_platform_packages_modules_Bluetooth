@@ -53,6 +53,7 @@ import android.telephony.TelephonyManager;
 import android.util.Log;
 
 import com.android.bluetooth.R;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.InteropUtil;
@@ -207,9 +208,6 @@ public class BluetoothPbapService extends ConnectableProfile implements IObexCon
                         mContactChangeObserver);
 
         mSessionStatusHandler.sendEmptyMessage(GET_LOCAL_TELEPHONY_DETAILS);
-        if (!Flags.pbapLazyLoadContacts()) {
-            mSessionStatusHandler.sendEmptyMessage(LOAD_CONTACTS);
-        }
         mSessionStatusHandler.sendEmptyMessage(START_LISTENER);
 
         mIsPseDynamicVersionUpgradeEnabled =
@@ -459,11 +457,8 @@ public class BluetoothPbapService extends ConnectableProfile implements IObexCon
         int pce_version = getAdapterService().getRemotePbapPceVersion(remoteDevice.getAddress());
         Log.d(TAG, "pce_version: " + pce_version);
 
-        boolean matched =
-                InteropUtil.interopMatchAddrOrName(
-                        getAdapterService(),
-                        InteropUtil.InteropFeature.INTEROP_ADV_PBAP_VER_1_2,
-                        remoteDevice.getAddress());
+        var feature = InteropUtil.InteropFeature.INTEROP_ADV_PBAP_VER_1_2;
+        var matched = getAdapterService().interopMatchDevice(feature, remoteDevice);
         Log.d(TAG, "INTEROP_ADV_PBAP_VER_1_2: matched=" + matched);
 
         if (pce_version == PBAP_ADV_VERSION && !matched) {
@@ -509,7 +504,7 @@ public class BluetoothPbapService extends ConnectableProfile implements IObexCon
                             BluetoothDevice.EXTRA_ACCESS_REQUEST_TYPE,
                             BluetoothDevice.REQUEST_TYPE_PHONEBOOK_ACCESS);
                     BluetoothPbapService.this.sendBroadcast(
-                            intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastBundle());
+                            intent, BLUETOOTH_CONNECT, Util.getTempBroadcastBundle());
                     stateMachine.sendMessage(PbapStateMachine.REJECTED);
                 }
                 case MSG_ACQUIRE_WAKE_LOCK -> {
@@ -618,10 +613,7 @@ public class BluetoothPbapService extends ConnectableProfile implements IObexCon
     public boolean setConnectionPolicy(BluetoothDevice device, int connectionPolicy) {
         Log.d(TAG, "Saved connectionPolicy " + device + " = " + connectionPolicy);
 
-        if (!getAdapterService()
-                .setProfileConnectionPolicy(device, getProfileId(), connectionPolicy)) {
-            return false;
-        }
+        getAdapterService().setProfileConnectionPolicy(device, getProfileId(), connectionPolicy);
         if (connectionPolicy == CONNECTION_POLICY_FORBIDDEN) {
             disconnect(device);
         }
@@ -749,7 +741,7 @@ public class BluetoothPbapService extends ConnectableProfile implements IObexCon
             sendOrderedBroadcast(
                     intent,
                     BLUETOOTH_CONNECT,
-                    Utils.getTempBroadcastBundle(),
+                    Util.getTempBroadcastBundle(),
                     null /* resultReceiver */,
                     null /* scheduler */,
                     Activity.RESULT_OK /* initialCode */,

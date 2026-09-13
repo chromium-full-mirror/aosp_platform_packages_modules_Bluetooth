@@ -2,16 +2,6 @@ package: "com.android.bluetooth.flags"
 container: "com.android.bt"
 
 flag {
-    name: "abs_volume_sdp_conflict"
-    namespace: "bluetooth"
-    description: "Check connection state after SDP discovery to prevent connection collision resulting in no absolute volume support"
-    bug: "336915955"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
     name: "get_all_element_attributes_empty"
     namespace: "bluetooth"
     description: "Return all attributes even if empty when requesting all attributes with GetElementAttributes"
@@ -26,26 +16,6 @@ flag {
     namespace: "bluetooth"
     description: "Set AVRCP 1.6 as default AVRCP version"
     bug: "374271695"
-}
-
-flag {
-    name: "set_a2dp_active_device_through_adapter_service"
-    namespace: "bluetooth"
-    description: "Instead of calling A2dpService#setActiveDevice, call AdapterService#setActiveDevice"
-    bug: "419448067"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "implement_get_image_from_descriptor_for_cover_art"
-    namespace: "bluetooth"
-    description: "Implement getImage from descriptor for cover art in AVRCP for IOP, some devices request image not 200*200"
-    bug: "427472266"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
 }
 
 flag {
@@ -93,4 +63,28 @@ flag {
     metadata {
         purpose: PURPOSE_BUGFIX
     }
+}
+
+flag {
+    name: "impl_avrcp_bip_obex_abort"
+    namespace: "bluetooth"
+    description: "Implemented mandatory abort command for AvrcpBipObexServer"
+    bug: "475741322"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "no_avrcp_connection_delay"
+    namespace: "bluetooth"
+    description: "Remove the fixed delay for AVRCP connection"
+    bug: "475410182"
+}
+
+flag {
+    name: "postpone_avrcp_play_until_a2dp_ready"
+    namespace: "bluetooth"
+    description: "Postpone the AVRCP play until A2DP is ready"
+    bug: "491970318"
 }

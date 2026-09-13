@@ -36,7 +36,6 @@
 #include <bluetooth/types/ble_address_with_type.h>
 #include <bluetooth/types/uuid.h>
 #include <com_android_bluetooth_flags.h>
-#include <signal.h>
 #include <sys/types.h>
 
 #include <cstdint>
@@ -59,11 +58,9 @@
 #include "main/shim/entry.h"
 #include "main/shim/helpers.h"
 #include "osi/include/allocator.h"
-#include "osi/include/future.h"
 #include "osi/include/properties.h"
 #include "stack/include/a2dp_api.h"
 #include "stack/include/btm_ble_api.h"
-#include "stack/include/btm_client_interface.h"
 #include "storage/config_keys.h"
 
 using bluetooth::Uuid;
@@ -95,18 +92,6 @@ using namespace bluetooth;
 
 static tBTA_SERVICE_MASK btif_enabled_services = 0;
 static uid_set_t* uid_set;
-
-/*******************************************************************************
- *
- * Function         btif_is_enabled
- *
- * Description      checks if main adapter is fully enabled
- *
- * Returns          1 if fully enabled, otherwise 0
- *
- ******************************************************************************/
-
-int btif_is_enabled(void) { return stack_manager_get_interface()->get_stack_is_running(); }
 
 void btif_init_ok() {
   btif_dm_load_ble_local_keys();
@@ -187,18 +172,17 @@ void btif_enable_bluetooth_evt() {
                           DI_VENDOR_ID_SOURCE_BTSIG)),
           .product = uint16_t(
                   android::sysprop::bluetooth::DeviceIDProperties::product_id().value_or(0)),
+          .version = uint16_t(
+                  android::sysprop::bluetooth::DeviceIDProperties::version().value_or(0)),
           .primary_record = true,
   };
 
-  uint32_t record_handle;
-  tBTA_STATUS status = BTA_DmSetLocalDiRecord(&record, &record_handle);
-  if (status != BTA_SUCCESS) {
-    log::error("unable to set device ID record error {}.", bta_status_text(status));
+  if (!BTA_DmSetLocalDiRecord(&record)) {
+    log::error("unable to set device ID record");
   }
 
   btif_dm_load_local_oob();
 
-  future_ready(stack_manager_get_hack_future(), FUTURE_SUCCESS);
   log::info("Bluetooth enable event completed");
 }
 
@@ -227,55 +211,6 @@ bt_status_t btif_cleanup_bluetooth() {
  *   btif api adapter property functions
  *
  ****************************************************************************/
-
-static bt_status_t btif_in_get_adapter_properties(void) {
-  static const uint32_t NUM_ADAPTER_PROPERTIES = 5;
-  bt_property_t properties[NUM_ADAPTER_PROPERTIES];
-  uint32_t num_props = 0;
-
-  RawAddress addr;
-  bt_bdname_t name;
-  uint32_t disc_timeout;
-  tBLE_BD_ADDR_SERIALIZED serialized_bonded_devices[BTM_SEC_MAX_DEVICE_RECORDS];
-  Uuid local_uuids[BT_MAX_NUM_UUIDS];
-  bt_status_t status;
-
-  /* RawAddress */
-  BTIF_STORAGE_FILL_PROPERTY(&properties[num_props], BT_PROPERTY_BDADDR, sizeof(addr), &addr);
-  status = btif_storage_get_adapter_property(&properties[num_props]);
-  // Add BT_PROPERTY_BDADDR property into list only when successful.
-  // Otherwise, skip this property entry.
-  if (status == BT_STATUS_SUCCESS) {
-    num_props++;
-  }
-
-  /* BD_NAME */
-  BTIF_STORAGE_FILL_PROPERTY(&properties[num_props], BT_PROPERTY_BDNAME, sizeof(name), &name);
-  btif_storage_get_adapter_property(&properties[num_props]);
-  num_props++;
-
-  /* DISC_TIMEOUT */
-  BTIF_STORAGE_FILL_PROPERTY(&properties[num_props], BT_PROPERTY_ADAPTER_DISCOVERABLE_TIMEOUT,
-                             sizeof(disc_timeout), &disc_timeout);
-  btif_storage_get_adapter_property(&properties[num_props]);
-  num_props++;
-
-  /* BONDED_DEVICES */
-  BTIF_STORAGE_FILL_PROPERTY(&properties[num_props], BT_PROPERTY_ADAPTER_BONDED_DEVICES,
-                             sizeof(serialized_bonded_devices), serialized_bonded_devices);
-  btif_storage_get_adapter_property(&properties[num_props]);
-  num_props++;
-
-  /* LOCAL UUIDs */
-  BTIF_STORAGE_FILL_PROPERTY(&properties[num_props], BT_PROPERTY_UUIDS, sizeof(local_uuids),
-                             local_uuids);
-  btif_storage_get_adapter_property(&properties[num_props]);
-  num_props++;
-
-  GetInterfaceToProfiles()->events->invoke_adapter_properties_cb(BT_STATUS_SUCCESS, num_props,
-                                                                 properties);
-  return BT_STATUS_SUCCESS;
-}
 
 static bt_status_t btif_in_get_remote_device_properties(RawAddress bd_addr) {
   bt_property_t remote_properties[10];
@@ -344,20 +279,6 @@ void btif_remote_properties_evt(bt_status_t status, RawAddress remote_addr,
                                 bt_property_t* p_props) {
   GetInterfaceToProfiles()->events->invoke_remote_device_properties_cb(
           status, remote_addr, addr_type, num_props, p_props);
-}
-
-/*******************************************************************************
- *
- * Function         btif_get_adapter_properties
- *
- * Description      Fetch all available properties (local & remote)
- *
- ******************************************************************************/
-
-void btif_get_adapter_properties(void) {
-  log::verbose("");
-
-  btif_in_get_adapter_properties();
 }
 
 /*******************************************************************************
@@ -432,6 +353,10 @@ void btif_get_adapter_property(bt_property_type_t type) {
     local_le_features.le_channel_sounding_supported = controller->SupportsBleChannelSounding();
     local_le_features.le_high_data_rate_throughput_supported =
             controller->SupportsBleHighDataThroughputPhy();
+    local_le_features.le_connected_isochronous_stream_peripheral_supported =
+            controller->SupportsBleConnectedIsochronousStreamPeripheral();
+    local_le_features.le_big_set_channel_map_classification_support =
+            cmn_vsc_cb.big_set_channel_map_classification_support > 0;
 
     memcpy(prop.val, &local_le_features, prop.len);
   } else if (prop.type == BT_PROPERTY_DYNAMIC_AUDIO_BUFFER) {
@@ -474,7 +399,7 @@ void btif_get_adapter_property(bt_property_type_t type) {
             socket_offload_capabilities.le_coc_capabilities.number_of_supported_sockets;
     lpp_offload_features.number_of_supported_offloaded_rfcomm_sockets =
             socket_offload_capabilities.rfcomm_capabilities.number_of_supported_sockets;
-    if (com::android::bluetooth::flags::gatt_offload_api()) {
+    if (com_android_bluetooth_flags_gatt_offload_api()) {
       hal::GattCapabilities gatt_offload_capabilities =
               bluetooth::shim::GetLppOffloadManager()->GetGattCapabilities();
       lpp_offload_features.supported_offloaded_gatt_client_properties =
@@ -625,7 +550,7 @@ void btif_enable_service(tBTA_SERVICE_ID service_id) {
 
   log::verbose("current services:0x{:x}", btif_enabled_services);
 
-  if (btif_is_enabled()) {
+  if (stack_is_running()) {
     btif_dm_enable_service(service_id, true);
   }
 }
@@ -643,7 +568,7 @@ void btif_disable_service(tBTA_SERVICE_ID service_id) {
 
   log::verbose("Current Services:0x{:x}", btif_enabled_services);
 
-  if (btif_is_enabled()) {
+  if (stack_is_running()) {
     btif_dm_enable_service(service_id, false);
   }
 }

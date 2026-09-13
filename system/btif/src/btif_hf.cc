@@ -31,7 +31,6 @@
 
 #include <android_bluetooth_sysprop.h>
 #include <base/functional/bind.h>
-#include <base/functional/callback.h>
 #include <bluetooth/log.h>
 #include <bluetooth/metrics/bluetooth_event.h>
 #include <bluetooth/metrics/os_metrics.h>
@@ -42,7 +41,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -57,15 +55,11 @@
 #include "btif/include/btif_profile_queue.h"
 #include "btif/include/btif_util.h"
 #include "btif_status.h"
-#include "btm_api_types.h"
-#include "device/include/device_iot_conf_defs.h"
 #include "device/include/device_iot_config.h"
-#include "hardware/bluetooth.h"
 #include "include/hardware/bluetooth_headset_callbacks.h"
 #include "include/hardware/bluetooth_headset_interface.h"
 #include "include/hardware/bt_hf.h"
 #include "internal_include/bt_target.h"
-#include "main/shim/helpers.h"
 #include "stack/include/bt_uuid16.h"
 #include "stack/include/btm_client_interface.h"
 #include "stack/include/btm_log_history.h"
@@ -380,8 +374,7 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       break;
     // RFCOMM connected or failed to connect
     case BTA_AG_OPEN_EVT:
-      if (com_android_bluetooth_flags_fix_hfp_rfcomm_collision_state_machine_error() &&
-          p_data->open.status != BTA_AG_SUCCESS) {
+      if (p_data->open.status != BTA_AG_SUCCESS) {
         RawAddress current_bda = p_data->open.bd_addr;  // Get address from event data
 
         // Check if another connection to the same device is already established, both sides may
@@ -513,7 +506,7 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
 
         bluetooth::metrics::Counter(bluetooth::metrics::CounterKey::HFP_SELF_INITIATED_AG_FAILED);
         btif_queue_advance();
-        if (BTM_IsBonded(connected_bda)) {
+        if (get_security_client_interface().BTM_IsBonded(connected_bda, BT_TRANSPORT_AUTO)) {
           DEVICE_IOT_CONFIG_ADDR_INT_ADD_ONE(connected_bda, IOT_CONF_KEY_HFP_SLC_CONN_FAIL_COUNT);
         }
       }
@@ -596,17 +589,11 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
     /* Java needs to send OK/ERROR for these commands */
     case BTA_AG_AT_BLDN_EVT:
     case BTA_AG_AT_D_EVT:
-      if (com_android_bluetooth_flags_check_call_state_atd()) {
-        if (btif_hf_cb[idx].call_setup_state == BTHF_CALL_STATE_IDLE) {
-          bt_hf_callbacks->DialCallCallback(
-                  (event == BTA_AG_AT_D_EVT) ? p_data->val.str : (char*)"",
-                  btif_hf_cb[idx].connected_bda);
-        } else {
-          send_at_result(BTA_AG_OK_ERROR, BTA_AG_ERR_OP_NOT_ALLOWED, idx);
-        }
-      } else {
+      if (btif_hf_cb[idx].call_setup_state == BTHF_CALL_STATE_IDLE) {
         bt_hf_callbacks->DialCallCallback((event == BTA_AG_AT_D_EVT) ? p_data->val.str : (char*)"",
                                           btif_hf_cb[idx].connected_bda);
+      } else {
+        send_at_result(BTA_AG_OK_ERROR, BTA_AG_ERR_OP_NOT_ALLOWED, idx);
       }
       break;
 

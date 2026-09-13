@@ -29,9 +29,11 @@ import android.os.ParcelFileDescriptor;
 import android.os.ParcelUuid;
 import android.util.Log;
 
+import com.android.bluetooth.BluetoothStatsLog;
 import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.flags.Flags;
+import com.android.bluetooth.metrics.MetricsLogger;
 
 class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
     private static final String TAG = BluetoothSocketManagerBinder.class.getSimpleName();
@@ -56,7 +58,6 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
             int port,
             int flag,
             AttributionSource source) {
-
         enforceActiveUser();
 
         if (!Util.enforceConnectPermissionForPreflight(mService, source)) {
@@ -64,6 +65,19 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
         }
 
         String brEdrAddress = mService.getBrEdrAddress(device);
+        String leDeviceAddr = device.getAddress();
+        if (Flags.addAddressMappingForLecoc()) {
+            if (type == BluetoothSocket.TYPE_LE) {
+                leDeviceAddr = mService.getIdentityAddress(device.getAddress());
+                if (leDeviceAddr == null) {
+                    leDeviceAddr = device.getAddress();
+                }
+            }
+        }
+
+        if (type == BluetoothSocket.TYPE_RFCOMM) {
+            logRfcommConnectStartEvent(device);
+        }
 
         Log.i(
                 TAG,
@@ -81,9 +95,9 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
         return marshalFd(
                 mService.getNative()
                         .connectSocket(
-                                Utils.getBytesFromAddress(
+                                Util.getBytesFromAddress(
                                         type == BluetoothSocket.TYPE_LE
-                                                ? device.getAddress()
+                                                ? leDeviceAddr
                                                 : brEdrAddress),
                                 type,
                                 Utils.uuidToByteArray(uuid),
@@ -110,7 +124,6 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
             long endpointId,
             int maximumPacketSize,
             AttributionSource source) {
-
         enforceActiveUser();
 
         if (!Util.enforceConnectPermissionForPreflight(mService, source)) {
@@ -123,6 +136,10 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
         }
 
         String brEdrAddress = mService.getBrEdrAddress(device);
+
+        if (type == BluetoothSocket.TYPE_RFCOMM) {
+            logRfcommConnectStartEvent(device);
+        }
 
         Log.i(
                 TAG,
@@ -141,7 +158,7 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
         return marshalFd(
                 mService.getNative()
                         .connectSocket(
-                                Utils.getBytesFromAddress(
+                                Util.getBytesFromAddress(
                                         type == BluetoothSocket.TYPE_LE
                                                 ? device.getAddress()
                                                 : brEdrAddress),
@@ -165,7 +182,6 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
             int port,
             int flag,
             AttributionSource source) {
-
         enforceActiveUser();
 
         if (!Util.enforceConnectPermissionForPreflight(mService, source)) {
@@ -221,7 +237,6 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
             long endpointId,
             int maximumPacketSize,
             AttributionSource source) {
-
         enforceActiveUser();
 
         if (!Util.enforceConnectPermissionForPreflight(mService, source)) {
@@ -231,6 +246,13 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
         if (dataPath != BluetoothSocketSettings.DATA_PATH_NO_OFFLOAD) {
             mService.enforceCallingOrSelfPermission(BLUETOOTH_PRIVILEGED, null);
             enforceSocketOffloadSupport(type);
+        }
+
+        if ((Flags.fixedPsmForOffloadSocket()
+                && type == BluetoothSocket.TYPE_LE
+                && !Util.checkCallerHasPrivilegedPermission(mService))) {
+            // for non privileged app, ignore the input LE CoC Psm
+            port = BluetoothAdapter.SOCKET_CHANNEL_AUTO_STATIC_NO_SDP;
         }
 
         Log.i(
@@ -281,11 +303,11 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
         }
 
         mService.getNative()
-                .requestMaximumTxDataLength(Utils.getBytesFromAddress(device.getAddress()));
+                .requestMaximumTxDataLength(Util.getBytesFromAddress(device.getAddress()));
     }
 
     private void enforceActiveUser() {
-        if (!Utils.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)) {
+        if (!Util.checkCallerIsSystemOrActiveOrManagedUser(mService, TAG)) {
             throw new SecurityException("Not allowed for non-active user");
         }
     }
@@ -303,5 +325,15 @@ class BluetoothSocketManagerBinder extends IBluetoothSocketManager.Stub {
             return null;
         }
         return ParcelFileDescriptor.adoptFd(fd);
+    }
+
+    private static void logRfcommConnectStartEvent(BluetoothDevice device) {
+        MetricsLogger.getInstance()
+                .logBluetoothEvent(
+                        device,
+                        BluetoothStatsLog
+                                .BLUETOOTH_CROSS_LAYER_EVENT_REPORTED__EVENT_TYPE__RFCOMM_SOCKET_JAVA_CONNECTION,
+                        BluetoothStatsLog.BLUETOOTH_CROSS_LAYER_EVENT_REPORTED__STATE__START,
+                        Binder.getCallingUid());
     }
 }

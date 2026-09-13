@@ -24,7 +24,7 @@
 
 #include "ascs/ascs_packets.h"
 #include "ascs_types.h"
-#include "bta_gatt_api_mock.h"
+#include "bta/mock/bta_gatt_api_mock.h"
 #include "btm_api_mock.h"
 #include "stack/include/btm_client_interface.h"
 
@@ -33,14 +33,15 @@ using ::testing::DoAll;
 using ::testing::InSequence;
 using ::testing::Mock;
 using ::testing::NiceMock;
+using ::testing::Return;
 using ::testing::SaveArg;
 
 namespace bluetooth::le_audio::test {
 
 static RawAddress GetTestAddress(int index) {
   EXPECT_LT(index, UINT8_MAX);
-  RawAddress result = {{0xC0, 0xDE, 0xC0, 0xDE, 0x00, static_cast<uint8_t>(index)}};
-  return result;
+  std::array<uint8_t, 6> bytes{0xC0, 0xDE, 0xC0, 0xDE, 0x00, static_cast<uint8_t>(index)};
+  return RawAddress(bytes);
 }
 
 class MockAscsCallbacks : public Ascs::Callbacks {
@@ -65,7 +66,7 @@ public:
 
   virtual void SetUp(void) override {
     __android_log_set_minimum_priority(ANDROID_LOG_VERBOSE);
-    com::android::bluetooth::flags::provider_->reset_flags();
+    com_android_bluetooth_flags_reset_flags();
 
     // Use peripheral role by default
     get_btm_client_interface().link_policy.BTM_GetRole = [](const RawAddress& /* remote_bd_addr */,
@@ -76,6 +77,8 @@ public:
     };
 
     gatt::SetMockBtaGattServerInterface(&gatt_server_interface_);
+    ON_CALL(gatt_server_interface_, HandleValueIndication(_, _, _, _))
+            .WillByDefault(Return(GATT_SUCCESS));
     ascs_ = InstantiateAscs();
   }
 
@@ -94,28 +97,21 @@ TEST_F(AscsTestsBase, InstantiateRelease) {
   // Reinstantiate
   ascs_ = InstantiateAscs();
   ASSERT_NE(ascs_.get(), nullptr);
-
-  // Should be a brand new instance now
-  ASSERT_NE(ascs_.get(), old_ptr);
 }
 
 TEST_F(AscsTestsBase, RegisterCallbacks) {
-  tBTA_GATTS_CBACK* p_gatt_event_source_cb = nullptr;
-  tBTA_GATTS p_data;
+  const stack::tGATT_CBACK* p_gatt_event_source_cb = nullptr;
+  bluetooth::Uuid uuid;
 
   // Check GATT server app registration
   Ascs::ServiceDescriptor service_descriptor;
   EXPECT_CALL(gatt_server_interface_, AppRegister(uuid::kAudioStreamControlServiceUuid, _, _))
-          .WillOnce(DoAll(SaveArg<0>(&p_data.reg_oper.uuid), SaveArg<1>(&p_gatt_event_source_cb)));
+          .WillOnce(DoAll(SaveArg<0>(&uuid), SaveArg<1>(&p_gatt_event_source_cb), Return(0xDE)));
+  EXPECT_CALL(gatt_server_interface_, AddService(_, _)).WillOnce(Return(GATT_SERVICE_STARTED));
   ascs_->RegisterGattService(service_descriptor, &asc_callbacks_);
   ASSERT_NE(nullptr, p_gatt_event_source_cb);
-  ASSERT_EQ(uuid::kAudioStreamControlServiceUuid, p_data.reg_oper.uuid);
+  ASSERT_EQ(uuid::kAudioStreamControlServiceUuid, uuid);
   Mock::VerifyAndClearExpectations(&gatt_server_interface_);
-
-  // Inject the registration success event
-  p_data.reg_oper.status = tGATT_STATUS::GATT_SUCCESS;
-  p_data.reg_oper.server_if = 0xDE;
-  p_gatt_event_source_cb(BTA_GATTS_REG_EVT, &p_data);
 
   // Ignore second call to register
   EXPECT_CALL(gatt_server_interface_, AppRegister(uuid::kAudioStreamControlServiceUuid, _, _))
@@ -123,7 +119,7 @@ TEST_F(AscsTestsBase, RegisterCallbacks) {
   ascs_->RegisterGattService(service_descriptor, &asc_callbacks_);
 
   // Make sure destructing unregisters the server interface
-  EXPECT_CALL(gatt_server_interface_, AppDeregister(p_data.reg_oper.server_if));
+  EXPECT_CALL(gatt_server_interface_, AppDeregister(0xDE));
 }
 
 class AscsTests : public AscsTestsBase {
@@ -166,7 +162,7 @@ public:
            }},
   });
 
-  tBTA_GATTS_CBACK* p_gatt_event_source_cb_ = nullptr;
+  const stack::tGATT_CBACK* p_gatt_event_source_cb_ = nullptr;
   std::vector<btgatt_db_element_t> service_db_;
   tGATT_IF server_if_;
 
@@ -190,31 +186,21 @@ public:
 
     // Mock GATT application registration success
     EXPECT_CALL(gatt_server_interface_, AppRegister(uuid::kAudioStreamControlServiceUuid, _, _))
-            .WillRepeatedly(DoAll(SaveArg<1>(&p_gatt_event_source_cb_),
-                                  [](const bluetooth::Uuid& /* app_uuid */,
-                                     tBTA_GATTS_CBACK* p_cback, bool /* eatt_support */) {
-                                    tBTA_GATTS p_data;
-                                    p_data.reg_oper.status = (p_cback == nullptr)
-                                                                     ? tGATT_STATUS::GATT_ERROR
-                                                                     : tGATT_STATUS::GATT_SUCCESS;
-                                    p_data.reg_oper.server_if = 0xDE;
-                                    p_cback(BTA_GATTS_REG_EVT, &p_data);
-                                  }));
+            .WillRepeatedly(DoAll(SaveArg<1>(&p_gatt_event_source_cb_), Return(0xDE)));
 
     // Mock GATT service registration success
-    EXPECT_CALL(gatt_server_interface_, AddService(0xDE, _, _))
+    EXPECT_CALL(gatt_server_interface_, AddService(0xDE, _))
             .WillOnce(DoAll(SaveArg<0>(&server_if_),
-                            [this](tGATT_IF server_if, std::vector<btgatt_db_element_t> service,
-                                   BTA_GATTS_AddServiceCb cb) {
+                            [this](tGATT_IF /*server_if*/,
+                                   std::vector<btgatt_db_element_t>* service) -> tGATT_STATUS {
                               // Assign some ATT handles
                               uint16_t handle_idx = 0x2000;
-                              service_db_ = service;  // Store for using it by mock GATT layer
-                              for (auto& el : service_db_) {
+                              for (auto& el : *service) {
                                 el.attribute_handle = handle_idx++;
                               }
-                              auto status = service.empty() ? tGATT_STATUS::GATT_ERROR
-                                                            : tGATT_STATUS::GATT_SUCCESS;
-                              std::move(cb).Run(status, server_if, service_db_);
+                              service_db_ = *service;  // Store for using it by mock GATT layer
+                              return service->empty() ? tGATT_STATUS::GATT_ERROR
+                                                      : tGATT_STATUS::GATT_SERVICE_STARTED;
                             }));
 
     // Register GATT service instance providing the service descriptor
@@ -245,17 +231,13 @@ public:
     if (conn_id_by_address_.count(pseudo_addr) == 0) {
       conn_id_by_address_[pseudo_addr] = conn_id;
 
-      tBTA_GATTS p_data;
-      p_data.conn.remote_bda = pseudo_addr;
-      p_data.conn.conn_id = conn_id++;
-      p_data.conn.server_if = server_if_;
-      p_data.conn.transport = BT_TRANSPORT_LE;
-      p_gatt_event_source_cb_(BTA_GATTS_CONNECT_EVT, &p_data);
+      p_gatt_event_source_cb_->p_conn_cb(server_if_, pseudo_addr, conn_id++, true, GATT_CONN_OK,
+                                         BT_TRANSPORT_LE);
     }
   }
 
   void InjectGattDisconnectedEvent(RawAddress address) {
-    static tCONN_ID conn_id = GATT_INVALID_CONN_ID;
+    tCONN_ID conn_id = GATT_INVALID_CONN_ID;
 
     if (conn_id_by_address_.count(address)) {
       conn_id = conn_id_by_address_.at(address);
@@ -263,12 +245,8 @@ public:
     }
 
     if (conn_id != GATT_INVALID_CONN_ID) {
-      tBTA_GATTS p_data;
-      p_data.conn.remote_bda = address;
-      p_data.conn.conn_id = conn_id++;
-      p_data.conn.server_if = server_if_;
-      p_data.conn.transport = BT_TRANSPORT_LE;
-      p_gatt_event_source_cb_(BTA_GATTS_DISCONNECT_EVT, &p_data);
+      p_gatt_event_source_cb_->p_conn_cb(server_if_, address, conn_id, false, GATT_CONN_OK,
+                                         BT_TRANSPORT_LE);
     }
   }
 
@@ -292,19 +270,8 @@ public:
 
     auto conn_id = conn_id_by_address_.at(address);
     if (conn_id != GATT_INVALID_CONN_ID) {
-      tGATTS_DATA attribute_data;
-      attribute_data.read_req.handle = handle;
-      attribute_data.read_req.offset = 0x0000;
-      attribute_data.read_req.is_long = false;
-      attribute_data.read_req.gatt_type = BTGATT_DB_CHARACTERISTIC;
-
-      tBTA_GATTS gatts_data;
-      gatts_data.req_data.remote_bda = address;
-      gatts_data.req_data.trans_id = gatt_trans_id_++;
-      gatts_data.req_data.conn_id = conn_id;
-      gatts_data.req_data.p_data = &attribute_data;
-
-      p_gatt_event_source_cb_(BTA_GATTS_READ_CHARACTERISTIC_EVT, &gatts_data);
+      p_gatt_event_source_cb_->p_req_cb->read_characteristic_cb(conn_id, gatt_trans_id_++, address,
+                                                                handle, 0, false);
     }
   }
 
@@ -326,7 +293,7 @@ public:
       if (index == 0) {
         // Next- look further for the first CCCD uuid to get the cccd handle
         while (el != service_db_.end()) {
-          if (el->uuid == Uuid::FromString("00002902-0000-1000-8000-00805F9B34FB")) {
+          if (el->uuid == Uuid("00002902-0000-1000-8000-00805F9B34FB")) {
             break;
           }
           ++el;
@@ -341,24 +308,12 @@ public:
 
     auto conn_id = conn_id_by_address_.at(address);
     if (conn_id != GATT_INVALID_CONN_ID) {
-      tGATTS_DATA attribute_data;
-      attribute_data.write_req.handle = handle;
-      attribute_data.write_req.offset = 0x0000;
-      attribute_data.write_req.need_rsp = true;
-      attribute_data.write_req.is_prep = false;
-      attribute_data.write_req.gatt_type = BTGATT_DB_DESCRIPTOR;
-
-      auto* pp = attribute_data.write_req.value;
+      uint8_t value[2];
+      uint8_t* pp = value;
       UINT16_TO_STREAM(pp, cccd_value);
-      attribute_data.write_req.len = sizeof(cccd_value);
 
-      tBTA_GATTS gatts_data;
-      gatts_data.req_data.remote_bda = address;
-      gatts_data.req_data.trans_id = gatt_trans_id_++;
-      gatts_data.req_data.conn_id = conn_id;
-      gatts_data.req_data.p_data = &attribute_data;
-
-      p_gatt_event_source_cb_(BTA_GATTS_WRITE_DESCRIPTOR_EVT, &gatts_data);
+      p_gatt_event_source_cb_->p_req_cb->write_descriptor_cb(
+              conn_id, gatt_trans_id_++, address, handle, 0, true, false, value, sizeof(value));
     }
   }
 
@@ -379,29 +334,9 @@ public:
 
     auto conn_id = conn_id_by_address_.at(address);
     if (conn_id != GATT_INVALID_CONN_ID) {
-      tGATTS_DATA attribute_data;
-      attribute_data.write_req.handle = handle;
-      attribute_data.write_req.offset = 0x0000;
-      attribute_data.write_req.need_rsp = with_rsp;
-      attribute_data.write_req.is_prep = false;
-      attribute_data.write_req.gatt_type = BTGATT_DB_CHARACTERISTIC;
-
-      if (value.size() > GATT_MAX_ATTR_LEN) {
-        GTEST_FAIL() << "Write value too long";
-      }
-
-      if (value.size() > 0) {
-        memcpy(attribute_data.write_req.value, value.data(), value.size());
-      }
-      attribute_data.write_req.len = value.size();
-
-      tBTA_GATTS gatts_data;
-      gatts_data.req_data.remote_bda = address;
-      gatts_data.req_data.trans_id = gatt_trans_id_++;
-      gatts_data.req_data.conn_id = conn_id;
-      gatts_data.req_data.p_data = &attribute_data;
-
-      p_gatt_event_source_cb_(BTA_GATTS_WRITE_CHARACTERISTIC_EVT, &gatts_data);
+      p_gatt_event_source_cb_->p_req_cb->write_characteristic_cb(
+              conn_id, gatt_trans_id_++, address, handle, 0, with_rsp, false,
+              (uint8_t*)value.data(), value.size());
     }
   }
 
@@ -410,8 +345,14 @@ public:
     ON_CALL(asc_callbacks_, OnGetAseState(_, _)).WillByDefault([&]() { return state; });
     ON_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _))
             .WillByDefault([&](uint16_t /*conn_id*/, uint32_t /*trans_id*/, tGATT_STATUS status,
-                               tGATTS_RSP* p_msg) {
+                               std::unique_ptr<tGATTS_RSP> p_msg) {
               ASSERT_EQ(GATT_SUCCESS, status);
+
+              // Detects response to CCC descriptor write request
+              if (p_msg == nullptr || (p_msg->attr_value.len == 0)) {
+                log::debug("Most likely just a descriptor write response");
+                return;
+              }
 
               log::info("Verify the response against the service descriptor values");
               auto value = std::make_shared<std::vector<uint8_t>>(
@@ -427,6 +368,12 @@ public:
       auto test_dev = GetTestAddress(dev);
       EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
       InjectGattConnectedEvent(test_dev);
+
+      // Client subscribes to notifications on the ASE Control Point
+      EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _));
+      InjectCccDescriptorWriteRequest(test_dev,
+                                      uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                      GATT_CLT_CONFIG_NOTIFICATION);
 
       // Verify the Sink ASE states are fetched
       for (uint8_t idx = 0; idx < svc_desc_.num_sink_ases; ++idx) {
@@ -467,12 +414,24 @@ TEST_F(AscsTests, RegisterGattService) {
 TEST_F(AscsTests, ConnectDisconnectSingleDevice) {
   auto test_dev1 = GetTestAddress(0x10);
 
-  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev1));
   InjectGattConnectedEvent(test_dev1);
+
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev1));
+  InjectCccDescriptorWriteRequest(test_dev1,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
   Mock::VerifyAndClearExpectations(&asc_callbacks_);
   ASSERT_NE(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev1));
 
+  // Client unsubscribes
   EXPECT_CALL(asc_callbacks_, OnDeviceDisconnected(test_dev1));
+  InjectCccDescriptorWriteRequest(test_dev1,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NONE);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+
+  // GATT transport disconnects
   InjectGattDisconnectedEvent(test_dev1);
   ASSERT_EQ(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev1));
 }
@@ -481,8 +440,14 @@ TEST_F(AscsTests, ConnectDisconnect) {
   const size_t num_devices = 11;
   for (auto dev = num_devices; dev; --dev) {
     auto test_dev = GetTestAddress(dev);
-    EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
     InjectGattConnectedEvent(test_dev);
+
+    // Client subscribes to notifications on the ASE Control Point
+    EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
+    InjectCccDescriptorWriteRequest(test_dev,
+                                    uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                    GATT_CLT_CONFIG_NOTIFICATION);
+
     ASSERT_NE(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev));
     Mock::VerifyAndClearExpectations(&asc_callbacks_);
   }
@@ -491,11 +456,102 @@ TEST_F(AscsTests, ConnectDisconnect) {
 
   for (auto dev = num_devices; dev; --dev) {
     auto test_dev = GetTestAddress(dev);
+
+    // Client unsubscribes
     EXPECT_CALL(asc_callbacks_, OnDeviceDisconnected(test_dev));
+    InjectCccDescriptorWriteRequest(test_dev,
+                                    uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                    GATT_CLT_CONFIG_NONE);
+    Mock::VerifyAndClearExpectations(&asc_callbacks_);
+
+    // GATT transport disconnects
     InjectGattDisconnectedEvent(test_dev);
     ASSERT_EQ(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev));
     Mock::VerifyAndClearExpectations(&asc_callbacks_);
   }
+}
+
+TEST_F(AscsTests, ConnectNoOp) {
+  auto test_dev = GetTestAddress(0x10);
+
+  InjectGattConnectedEvent(test_dev);
+
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+  ASSERT_NE(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev));
+
+  // Client subscribes again with the same value - no new connection cb
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev)).Times(0);
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+
+  // Client unsubscribes
+  EXPECT_CALL(asc_callbacks_, OnDeviceDisconnected(test_dev));
+  InjectCccDescriptorWriteRequest(
+          test_dev, uuid::kAudioStreamEndpointControlPointCharacteristicUuid, GATT_CLT_CONFIG_NONE);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+
+  // Client unsubscribes again with the same value - no new disconnection cb
+  EXPECT_CALL(asc_callbacks_, OnDeviceDisconnected(test_dev)).Times(0);
+  InjectCccDescriptorWriteRequest(
+          test_dev, uuid::kAudioStreamEndpointControlPointCharacteristicUuid, GATT_CLT_CONFIG_NONE);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+}
+
+TEST_F(AscsTests, CccpReSubscribeDoesNotTriggerCallbacks) {
+  auto test_dev = GetTestAddress(0x10);
+
+  InjectGattConnectedEvent(test_dev);
+
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+  ASSERT_NE(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev));
+
+  // Client re-subscribes with indications - no new connection cb
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev)).Times(0);
+  EXPECT_CALL(asc_callbacks_, OnDeviceDisconnected(test_dev)).Times(0);
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_INDICATION);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+
+  // Client re-subscribes with notifications - no new connection cb
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev)).Times(0);
+  EXPECT_CALL(asc_callbacks_, OnDeviceDisconnected(test_dev)).Times(0);
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+}
+
+TEST_F(AscsTests, DisconnectTransportWhileSubscribed) {
+  auto test_dev = GetTestAddress(0x10);
+
+  InjectGattConnectedEvent(test_dev);
+
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
+  ASSERT_NE(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev));
+
+  // Disconnect transport without unsubscribing
+  EXPECT_CALL(asc_callbacks_, OnDeviceDisconnected(test_dev));
+  InjectGattDisconnectedEvent(test_dev);
+  ASSERT_EQ(GATT_INVALID_CONN_ID, ascs_->GetConnectionId(test_dev));
+  Mock::VerifyAndClearExpectations(&asc_callbacks_);
 }
 
 TEST_F(AscsTests, RemoteReadAseStateIdle) {
@@ -712,7 +768,7 @@ TEST_F(AscsTests, RemoteWriteAseCtpConfigCodec) {
   // Expect a notification on the control point
   std::vector<uint8_t> notified_value;
   EXPECT_CALL(gatt_server_interface_, HandleValueIndication(_, _, _, _))
-          .WillOnce(SaveArg<2>(&notified_value));
+          .WillOnce(DoAll(SaveArg<2>(&notified_value), Return(GATT_SUCCESS)));
   ascs_->AseCtpRequestResponse(test_dev, response);
 
   // Verify the notification
@@ -735,6 +791,12 @@ TEST_F(AscsTests, UpdateAseStateNotifies) {
   EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
   InjectGattConnectedEvent(test_dev);
 
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _));
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
+
   // Client subscribes to notifications on the Sink ASE
   EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _));
   InjectCccDescriptorWriteRequest(test_dev, uuid::kSinkAudioStreamEndpointUuid,
@@ -746,7 +808,7 @@ TEST_F(AscsTests, UpdateAseStateNotifies) {
   // Expect a notification on the ASE characteristic
   std::vector<uint8_t> notified_value;
   EXPECT_CALL(gatt_server_interface_, HandleValueIndication(_, _, _, _))
-          .WillOnce(SaveArg<2>(&notified_value));
+          .WillOnce(DoAll(SaveArg<2>(&notified_value), Return(GATT_SUCCESS)));
   ascs_->UpdateAseState(test_dev, sink_ase_id, new_state);
 
   // Verify the notification
@@ -764,6 +826,12 @@ TEST_F(AscsTests, RemoteWriteAseCtpEmptyPayload) {
   EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
   InjectGattConnectedEvent(test_dev);
 
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _));
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
+
   // Client sends an empty write request
   EXPECT_CALL(asc_callbacks_, OnAseControlPointRequest(_, _)).Times(0);
   EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_INVALID_ATTR_LEN, _));
@@ -775,6 +843,12 @@ TEST_F(AscsTests, RemoteWriteAseCtpInvalidPacket) {
 
   EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
   InjectGattConnectedEvent(test_dev);
+
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _));
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
 
   // Client sends a malformed packet (invalid opcode)
   std::vector<uint8_t> invalid_packet = {0xFF /* invalid opcode */, 0x01 /* num ases */,
@@ -789,7 +863,7 @@ TEST_F(AscsTests, UpdateAseStateNoSubscription) {
   auto test_dev = GetTestAddress(0x10);
   const uint8_t sink_ase_id = 0x01;
 
-  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
+  EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev)).Times(0);
   InjectGattConnectedEvent(test_dev);
 
   // Do NOT subscribe to notifications
@@ -808,6 +882,12 @@ TEST_F(AscsTests, UpdateAseStateTwice) {
 
   EXPECT_CALL(asc_callbacks_, OnDeviceConnected(test_dev));
   InjectGattConnectedEvent(test_dev);
+
+  // Client subscribes to notifications on the ASE Control Point
+  EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _));
+  InjectCccDescriptorWriteRequest(test_dev,
+                                  uuid::kAudioStreamEndpointControlPointCharacteristicUuid,
+                                  GATT_CLT_CONFIG_NOTIFICATION);
 
   // Client subscribes to notifications on the Sink ASE
   EXPECT_CALL(gatt_server_interface_, SendRsp(_, _, GATT_SUCCESS, _));

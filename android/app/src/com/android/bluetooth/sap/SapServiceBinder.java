@@ -30,7 +30,6 @@ import android.content.AttributionSource;
 import android.util.Log;
 
 import com.android.bluetooth.Util;
-import com.android.bluetooth.Utils;
 import com.android.bluetooth.profile.ProfileService.IProfileServiceBinder;
 
 import java.util.Collections;
@@ -59,7 +58,7 @@ class SapServiceBinder extends IBluetoothSap.Stub implements IProfileServiceBind
         SapService service = mService;
 
         if (!Util.checkProfileAvailable(service, TAG)
-                || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
+                || !Util.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
                 || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
             return null;
         }
@@ -138,8 +137,6 @@ class SapServiceBinder extends IBluetoothSap.Stub implements IProfileServiceBind
 
     @Override
     public int getConnectionState(BluetoothDevice device, AttributionSource source) {
-        Log.v(TAG, "getConnectionState()");
-
         SapService service = getService(source);
         if (service == null) {
             return STATE_DISCONNECTED;

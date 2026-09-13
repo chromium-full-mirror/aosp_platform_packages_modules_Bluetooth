@@ -125,12 +125,11 @@ BtStatus btsock_sco_listen(int* sock_fd, int /* flags */) {
   return BtifStatus();
 }
 
-BtStatus btsock_sco_connect(const RawAddress* bd_addr, int* sock_fd, int /* flags */) {
-  log::assert_that(bd_addr != NULL, "assert failed: bd_addr != NULL");
+BtStatus btsock_sco_connect(RawAddress bd_addr, int* sock_fd, int /* flags */) {
   log::assert_that(sock_fd != NULL, "assert failed: sock_fd != NULL");
 
   std::unique_lock<std::mutex> lock(sco_lock);
-  sco_socket_t* sco_socket = sco_socket_establish_locked(false, bd_addr, sock_fd);
+  sco_socket_t* sco_socket = sco_socket_establish_locked(false, &bd_addr, sock_fd);
 
   return (sco_socket != NULL) ? BtifStatus() : BtifStatus(SOCKET_ERROR);
 }
@@ -265,7 +264,7 @@ static void connection_request_cb(tBTM_ESCO_EVT event, tBTM_ESCO_EVT_DATA* data)
 
   sock_connect_signal_t connect_signal;
   connect_signal.size = sizeof(connect_signal);
-  if (com_android_bluetooth_flags_pseudo_addr_in_socket_connect_signal()) {
+  {
     RawAddress pseudo_addr = get_btm_client_interface()
                                      .peer.BTM_GetConnectedTransportAddress(conn_data->bd_addr)
                                      .first;
@@ -275,8 +274,6 @@ static void connection_request_cb(tBTM_ESCO_EVT event, tBTM_ESCO_EVT_DATA* data)
       log::warn("BTM_GetConnectedTransportAddress returned empty pseudo addr, using public addr");
       connect_signal.bd_addr = conn_data->bd_addr;
     }
-  } else {
-    connect_signal.bd_addr = conn_data->bd_addr;
   }
   connect_signal.channel = 0;
   connect_signal.status = 0;

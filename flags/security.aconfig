@@ -22,50 +22,10 @@ flag {
 }
 
 flag {
-    name: "upgrade_temp_bonding_on_auth_req"
-    namespace: "bluetooth"
-    description: "Upgrade security If it is on temp bonding & authentication is requirement"
-    bug: "385747513"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "btsec_check_controller_sc_support"
-    namespace: "bluetooth"
-    description: "Check for controller as well as host Secure Connections support when dropping connections"
-    bug: "400802709"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "reboke_permission_on_unbond"
-    namespace: "bluetooth"
-    description: "Remove permissions for message phonebookand sim access when unbonded"
-    bug: "405333875"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
     name: "btsec_disable_legacy_auto_pair"
     namespace: "bluetooth"
     description: "Remove support for auto-pairing with code 0000 against some legacy devices"
     bug: "432805312"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
-    name: "passkey_entry_pairing_approval"
-    namespace: "bluetooth"
-    description: "Don't auto approve passkey entry pairing"
-    bug: "446268763"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
@@ -116,6 +76,16 @@ flag {
     namespace: "bluetooth"
     description: "Android Bluetooth must not set local pin key type to fixed for BR/EDR legacy pairing"
     bug: "460620223"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "btsec_check_implicit_encryption_downgrade"
+    namespace: "bluetooth"
+    description: "Prevent implicit downgrade avoiding BLUFFS mitigation after forcing legacy pairing"
+    bug: "494009564"
     metadata {
         purpose: PURPOSE_BUGFIX
     }

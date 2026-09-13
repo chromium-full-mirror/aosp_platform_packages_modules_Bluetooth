@@ -65,7 +65,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
-import org.mockito.MockitoAnnotations
+import org.mockito.junit.MockitoJUnit
 import pandora.BumbleConfigProto.OverrideRequest
 import pandora.BumbleConfigProto.PairingConfig
 import pandora.GattProto
@@ -91,14 +91,11 @@ private const val TAG = "PairingTest"
 
 @RunWith(TestParameterInjector::class)
 class PairingTest {
+    @get:Rule val mockitoRule = MockitoJUnit.rule()
     @get:Rule(order = 0) val checkFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()
-
     @get:Rule(order = 1) val permissionRule = AdoptShellPermissionsRule()
-
     @get:Rule(order = 2) val bumble = PandoraDevice()
-
     @get:Rule(order = 3) val secondBumble = PandoraDevice.createSecondPandoraDevice()
-
     @get:Rule(order = 4) val enableBluetoothRule = EnableBluetoothRule(false, true)
 
     @Mock private lateinit var profileServiceListener: BluetoothProfile.ServiceListener
@@ -116,7 +113,6 @@ class PairingTest {
     @Before
     @Throws(Exception::class)
     fun setUp() {
-        MockitoAnnotations.openMocks(this)
         util =
             TestUtil.Builder(context)
                 .setProfileServiceListener(profileServiceListener)
@@ -168,7 +164,6 @@ class PairingTest {
     @After
     @Throws(Exception::class)
     fun tearDown() {
-
         for (device in adapter.bondedDevices) {
             util.removeBond(null, device)
         }
@@ -243,7 +238,6 @@ class PairingTest {
      * 6. Android verifies bonded intent
      */
     @Test
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.ignore_unrelated_cancel_bond")
     fun testBrEdrPairing_cancelBond_forUnrelatedDevice() {
         val intentReceiver =
             IntentReceiver.Builder(
@@ -274,6 +268,49 @@ class PairingTest {
             hasAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
             hasExtra(BluetoothDevice.EXTRA_DEVICE, bumbleDevice),
             hasExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_BONDED),
+        )
+
+        intentReceiver.close()
+    }
+
+    /**
+     * Test to verify the remove bond while pairing
+     * 1. Initiate BR/EDR pairing.
+     * 2. Do not approve/reject pairing from DUT/REF, and keep it idle.
+     *
+     * Expectation:
+     *
+     * Pairing should be cancelled. BOND_NONE should be received on DUT, indicating pairing failure.
+     */
+    @Test
+    @RequiresFlagsEnabled("com.android.bluetooth.flags.cancel_pairing_while_remove_bond")
+    fun testBrEdrPairing_removeBondWhilePairing() {
+        val intentReceiver =
+            IntentReceiver.Builder(
+                    context,
+                    BluetoothDevice.ACTION_BOND_STATE_CHANGED,
+                    BluetoothDevice.ACTION_PAIRING_REQUEST,
+                )
+                .build()
+
+        assertThat(bumbleDevice.createBond()).isTrue()
+        intentReceiver.verifyReceivedOrdered(
+            hasAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
+            hasExtra(BluetoothDevice.EXTRA_DEVICE, bumbleDevice),
+            hasExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_BONDING),
+        )
+
+        intentReceiver.verifyReceivedOrdered(
+            hasAction(BluetoothDevice.ACTION_PAIRING_REQUEST),
+            hasExtra(BluetoothDevice.EXTRA_DEVICE, bumbleDevice),
+            hasExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, BluetoothDevice.PAIRING_VARIANT_CONSENT),
+        )
+
+        assertThat(bumbleDevice.removeBond()).isTrue()
+        intentReceiver.verifyReceivedOrdered(
+            hasAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
+            hasExtra(BluetoothDevice.EXTRA_DEVICE, bumbleDevice),
+            hasExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE),
         )
 
         intentReceiver.close()
@@ -837,14 +874,13 @@ class PairingTest {
         val bluetoothSocket = bumbleDevice.createL2capChannel(TEST_PSM)
 
         val executor = Executors.newSingleThreadExecutor()
-        val futureSocketConnection: Future<*> =
-            executor.submit {
-                try {
-                    bluetoothSocket.connect()
-                } catch (e: IOException) {
-                    Log.e(TAG, "Exception during socket connection: $e")
-                }
+        val futureSocketConnection: Future<*> = executor.submit {
+            try {
+                bluetoothSocket.connect()
+            } catch (e: IOException) {
+                Log.e(TAG, "Exception during socket connection: $e")
             }
+        }
         try {
             futureSocketConnection[2, TimeUnit.SECONDS]
         } catch (e: TimeoutException) {
@@ -1197,7 +1233,7 @@ class PairingTest {
         // connect and disconnect the LE link
         testStep_ConnectDisconnectLE(intentReceiver)
         // Ensure that pairing succeeds
-        intentReceiver.verifyReceivedOrdered(
+        intentReceiver.verifyReceived(
             hasAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
             hasExtra(BluetoothDevice.EXTRA_DEVICE, bumbleDevice),
             hasExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_BONDED),
@@ -1345,16 +1381,7 @@ class PairingTest {
         intentReceiver.close()
     }
 
-    private fun testStep_ConnectDisconnectLE(parentIntentReceiver: IntentReceiver?) {
-        val intentReceiver =
-            IntentReceiver.update(
-                parentIntentReceiver,
-                IntentReceiver.Builder(
-                    context,
-                    BluetoothDevice.ACTION_ACL_CONNECTED,
-                    BluetoothDevice.ACTION_ACL_DISCONNECTED,
-                ),
-            )
+    private fun testStep_ConnectDisconnectLE(intentReceiver: IntentReceiver) {
         val leConn =
             currentDevice
                 .hostBlocking()
@@ -1380,8 +1407,6 @@ class PairingTest {
             hasExtra(BluetoothDevice.EXTRA_TRANSPORT, BluetoothDevice.TRANSPORT_LE),
             hasExtra(BluetoothDevice.EXTRA_DEVICE, bumbleDevice),
         )
-        /* Unregisters all intent actions registered in this function */
-        intentReceiver.close()
     }
 
     private fun testStep_BondBredr(parentIntentReceiver: IntentReceiver?) {

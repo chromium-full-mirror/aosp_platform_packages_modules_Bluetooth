@@ -17,6 +17,7 @@
 package com.android.server.bluetooth.test
 
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.os.Looper
 import android.os.UserHandle
@@ -69,14 +70,14 @@ class BluetoothRestrictionTest {
     }
 
     @Test
-    fun allowUser_whenDisallowed_doNotTriggerCallback() {
+    fun allowUser_whenDisallowed_triggerCallback() {
         disallowBluetooth()
         start()
 
         allowBluetooth()
 
         assertThat(isBluetoothAllowed).isTrue()
-        assertThat(callback_count).isEqualTo(0)
+        assertThat(callback_count).isEqualTo(1)
     }
 
     companion object {
@@ -106,6 +107,7 @@ class BluetoothRestrictionTest {
             setUserRestriction(context, UserManager.DISALLOW_BLUETOOTH, true)
             context.sendBroadcast(Intent(UserManager.ACTION_USER_RESTRICTIONS_CHANGED))
             shadowOf(Looper.getMainLooper()).idle()
+            shadowOf(context as ContextWrapper).clearBroadcastIntents()
         }
 
         internal fun allowBluetooth() {
@@ -113,6 +115,7 @@ class BluetoothRestrictionTest {
             setUserRestriction(context, UserManager.DISALLOW_BLUETOOTH, false)
             context.sendBroadcast(Intent(UserManager.ACTION_USER_RESTRICTIONS_CHANGED))
             shadowOf(Looper.getMainLooper()).idle()
+            shadowOf(context as ContextWrapper).clearBroadcastIntents()
         }
     }
 }

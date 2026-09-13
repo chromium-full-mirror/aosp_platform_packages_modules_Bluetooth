@@ -20,6 +20,7 @@
 #include <bind_helpers.h>
 #include <bluetooth/log.h>
 #include <bluetooth/types/address.h>
+#include <bluetooth/types/string_helpers.h>
 #include <com_android_bluetooth_flags.h>
 
 #include <algorithm>
@@ -39,15 +40,14 @@
 #include "bta/le_audio/broadcaster/broadcaster_types.h"
 #include "bta/le_audio/codec_manager.h"
 #include "bta/le_audio/le_audio_types.h"
-#include "btm_api_types.h"
-#include "btm_iso_api_types.h"
-#include "common/strings.h"
 #include "hardware/ble_advertiser.h"
 #include "hardware/bt_le_audio.h"
 #include "hci/le_advertising_manager.h"
-#include "hcidefs.h"
 #include "main/shim/le_advertising_manager.h"
+#include "stack/include/btm_api_types.h"
 #include "stack/include/btm_iso_api.h"
+#include "stack/include/btm_iso_api_types.h"
+#include "stack/include/hcidefs.h"
 
 using bluetooth::common::ToString;
 using bluetooth::hci::IsoManager;
@@ -110,15 +110,15 @@ public:
   BroadcastStateMachineConfig const& GetStateMachineConfig() const override { return sm_config_; }
 
   void RequestOwnAddress(
-          base::Callback<void(uint8_t /* address_type*/, RawAddress /*address*/)> cb) override {
+          base::OnceCallback<void(uint8_t /* address_type*/, RawAddress /*address*/)> cb) override {
     uint8_t advertising_sid = GetAdvertisingSid();
-    advertiser_if_->GetOwnAddress(advertising_sid, cb);
+    advertiser_if_->GetOwnAddress(advertising_sid, std::move(cb));
   }
 
   void RequestOwnAddress(void) override {
     auto broadcast_id = GetBroadcastId();
-    RequestOwnAddress(base::Bind(&IBroadcastStateMachineCallbacks::OnOwnAddressResponse,
-                                 base::Unretained(this->callbacks_), broadcast_id));
+    RequestOwnAddress(base::BindOnce(&IBroadcastStateMachineCallbacks::OnOwnAddressResponse,
+                                     base::Unretained(this->callbacks_), broadcast_id));
   }
 
   RawAddress GetOwnAddress() override { return addr_; }
@@ -420,7 +420,7 @@ private:
             .max_transport_latency = sm_config_.config.qos.getMaxTransportLatency(),
             .rtn = sm_config_.config.qos.getRetransmissionNumber(),
             .phy = sm_config_.streaming_phy,
-            .packing = 0x00, /* Sequencial */
+            .packing = 0x00, /* Sequential */
             .framing = 0x00, /* Unframed */
             .enc = static_cast<uint8_t>(sm_config_.broadcast_code ? 1 : 0),
             .enc_code = sm_config_.broadcast_code ? *sm_config_.broadcast_code
@@ -512,10 +512,6 @@ private:
 
   static void PrepareDataPath(hci_data_direction_t data_path_dir, uint8_t data_path_id,
                               const std::vector<uint8_t>& data_path_config) {
-    if (!com_android_bluetooth_flags_leaudio_broadcast_config_data_path_before_set_iso_data_path()) {
-      log::debug("leaudio_broadcast_config_data_path_before_set_iso_data_path is not enabled");
-      return;
-    }
     bluetooth::le_audio::CodecManager::GetInstance()->ConfigureDataPath(data_path_dir, data_path_id,
                                                                         data_path_config);
   }

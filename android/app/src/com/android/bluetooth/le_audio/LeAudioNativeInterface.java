@@ -29,6 +29,7 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothLeAudioCodecConfig;
 import android.util.Log;
 
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.internal.annotations.VisibleForTesting;
@@ -49,9 +50,9 @@ public class LeAudioNativeInterface {
 
     private static byte[] getByteAddress(BluetoothDevice device) {
         if (device == null) {
-            return Utils.getBytesFromAddress("00:00:00:00:00:00");
+            return Util.getBytesFromAddress("00:00:00:00:00:00");
         }
-        return Utils.getBytesFromAddress(device.getAddress());
+        return Util.getBytesFromAddress(device.getAddress());
     }
 
     private BluetoothDevice getDevice(byte[] address) {
@@ -337,6 +338,16 @@ public class LeAudioNativeInterface {
     }
 
     /**
+     * Set allowlist flag
+     *
+     * @param device the remote device to check
+     */
+    void setAllowlistFlag(BluetoothDevice device, boolean allowed) {
+        Log.d(TAG, "setAllowlistFlag: " + allowed + " for " + device);
+        setAllowlistFlagNative(getByteAddress(device), allowed);
+    }
+
+    /**
      * Set unicast monitor mode flag.
      *
      * @param direction direction for which monitor mode should be used
@@ -437,6 +448,8 @@ public class LeAudioNativeInterface {
     private native void setCcidInformationNative(int ccid, int contextType);
 
     private native void setInCallNative(boolean inCall);
+
+    private native void setAllowlistFlagNative(byte[] address, boolean allowed);
 
     private native void setUnicastMonitorModeNative(int direction, boolean enable);
 

@@ -71,6 +71,8 @@ public:
 
   void SetLatencyMode(LatencyMode latency_mode);
 
+  void UpdateSinkLatency(int64_t latency_ms);
+
   bool GetPresentationPosition(uint64_t* remote_delay_report_ns, uint64_t* total_bytes_read,
                                timespec* data_position);
 
@@ -91,6 +93,7 @@ private:
   const SessionType session_type_;
   AudioConfiguration audio_config_{};
   tA2DP_CTRL_CMD a2dp_pending_cmd_{A2DP_CTRL_CMD_NONE};
+  mutable std::mutex mutex_;
   uint16_t remote_delay_report_{0};
   uint64_t total_bytes_read_{0};
   timespec data_position_{};

@@ -25,24 +25,24 @@
 #include <mutex>
 #include <sstream>
 
-#include "bta/include/bta_api.h"
 #include "bta/include/bta_gatt_api.h"
+#include "bta/include/bta_mcp_client_api.h"
 #include "bta_gatt_queue.h"
-#include "common/strings.h"
-#include "hardware/bt_le_audio.h"
 #include "mcp/mcp_types.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/include/bt_types.h"
+#include "stack/include/btm_client_interface.h"
+#include "stack/include/btm_sec_api.h"
 #include "stack/include/btm_status.h"
 #include "stack/include/gatt_api.h"
 
-using bluetooth::le_audio::ConnectionState;
 using namespace bluetooth;
 using namespace bluetooth::mcp;
 
 namespace {
 class McpClientImpl;
-std::unique_ptr<McpClientImpl> instance = nullptr;
+extern std::unique_ptr<McpClientImpl> instance;
+constexpr int kGmcsServiceId = 0;
 std::mutex instance_mutex;
 
 /**
@@ -58,7 +58,7 @@ std::mutex instance_mutex;
 
 class McpClientImpl : public McpClient {
 public:
-  McpClientImpl(McpClientCallbacks* callbacks, base::Closure initCb) : callbacks_(callbacks) {
+  McpClientImpl(McpClientCallbacks* callbacks, base::OnceClosure initCb) : callbacks_(callbacks) {
     BTA_GATTC_AppRegister(
             "mcp_client",
             [](tBTA_GATTC_EVT event, tBTA_GATTC* p_data) {
@@ -66,8 +66,8 @@ public:
                 instance->GattcCallback(event, p_data);
               }
             },
-            base::Bind(
-                    [](base::Closure initCb, uint8_t client_id, uint8_t status) {
+            base::BindOnce(
+                    [](base::OnceClosure initCb, uint8_t client_id, uint8_t status) {
                       if (status != GATT_SUCCESS) {
                         log::error("Failed to register MCP client app");
                         return;
@@ -75,9 +75,9 @@ public:
                       if (instance) {
                         instance->gatt_if_ = client_id;
                       }
-                      initCb.Run();
+                      std::move(initCb).Run();
                     },
-                    initCb),
+                    std::move(initCb)),
             true);
   }
 
@@ -103,12 +103,16 @@ public:
       log::warn("Connect requested for already tracked device {}", address);
       return;
     }
-    if (!BTM_IsBonded(address, BT_TRANSPORT_LE)) {
+    if (!get_security_client_interface().BTM_IsBonded(address, BT_TRANSPORT_LE)) {
       log::error("Connecting {} when not bonded", address);
       callbacks_->OnConnectionState(address, ConnectionState::DISCONNECTED);
       return;
     }
-    BTA_GATTC_Open(gatt_if_, address, BTM_BLE_DIRECT_CONNECTION, true);
+    if (com_android_bluetooth_flags_leaudio_peripheral_mcp_link_abstraction_layer()) {
+      StartOpportunisticConnect(address);
+    } else {
+      BTA_GATTC_Open(gatt_if_, address, BTM_BLE_OPPORTUNISTIC);
+    }
   }
 
   void Disconnect(const RawAddress& address) override {
@@ -128,47 +132,96 @@ public:
     }
   }
 
-  void Play(const RawAddress& address) override { WriteMediaControlPoint(address, kMcpOpcodePlay); }
-
-  void Pause(const RawAddress& address) override {
-    WriteMediaControlPoint(address, kMcpOpcodePause);
+  void AddFromStorage(const RawAddress& address) {
+    log::info("{}", address);
+    StartOpportunisticConnect(address);
   }
 
-  void Stop(const RawAddress& address) override { WriteMediaControlPoint(address, kMcpOpcodeStop); }
-
-  void NextTrack(const RawAddress& address) override {
-    WriteMediaControlPoint(address, kMcpOpcodeNextTrack);
+  void Play(const RawAddress& address, int service_id) override {
+    WriteMediaControlPoint(address, service_id, kMcpOpcodePlay);
   }
 
-  void PreviousTrack(const RawAddress& address) override {
-    WriteMediaControlPoint(address, kMcpOpcodePreviousTrack);
+  void Pause(const RawAddress& address, int service_id) override {
+    WriteMediaControlPoint(address, service_id, kMcpOpcodePause);
   }
 
-  void FastRewind(const RawAddress& address) override {
-    WriteMediaControlPoint(address, kMcpOpcodeFastRewind);
+  void Stop(const RawAddress& address, int service_id) override {
+    WriteMediaControlPoint(address, service_id, kMcpOpcodeStop);
   }
 
-  void FastForward(const RawAddress& address) override {
-    WriteMediaControlPoint(address, kMcpOpcodeFastForward);
+  void NextTrack(const RawAddress& address, int service_id) override {
+    WriteMediaControlPoint(address, service_id, kMcpOpcodeNextTrack);
   }
 
-  void MoveRelative(const RawAddress& address, int32_t offset) override {
+  void PreviousTrack(const RawAddress& address, int service_id) override {
+    WriteMediaControlPoint(address, service_id, kMcpOpcodePreviousTrack);
+  }
+
+  void FastRewind(const RawAddress& address, int service_id) override {
+    WriteMediaControlPoint(address, service_id, kMcpOpcodeFastRewind);
+  }
+
+  void FastForward(const RawAddress& address, int service_id) override {
+    WriteMediaControlPoint(address, service_id, kMcpOpcodeFastForward);
+  }
+
+  void MoveRelative(const RawAddress& address, int service_id, int32_t offset) override {
     std::vector<uint8_t> value(4);
     uint8_t* ptr = value.data();
     UINT32_TO_STREAM(ptr, offset);
-    WriteMediaControlPoint(address, kMcpOpcodeMoveRelative, value);
+    WriteMediaControlPoint(address, service_id, kMcpOpcodeMoveRelative, value);
   }
 
-  void SetTrackPosition(const RawAddress& address, int32_t position) override {
+  void SetTrackPosition(const RawAddress& address, int service_id, int32_t position) override {
     auto device = FindDevice(address);
-    if (!device || !device->IsConnected() || device->track_position_handle == 0) {
+    if (!device || !device->IsConnected()) {
       log::error("Device not ready for SetTrackPosition: {}", address);
       return;
     }
-    std::vector<uint8_t> value(4);
+    auto service = device->GetService(service_id);
+    if (!service || service->track_position_handle == kInvalidGattHandle) {
+      log::error("Service not ready for SetTrackPosition: {}", address);
+      return;
+    }
+    std::vector<uint8_t> value(kTrackPositionLen);
     uint8_t* ptr = value.data();
     UINT32_TO_STREAM(ptr, position);
-    BtaGattQueue::WriteCharacteristic(device->conn_id, device->track_position_handle, value,
+    BtaGattQueue::WriteCharacteristic(device->conn_id, service->track_position_handle, value,
+                                      GATT_WRITE_NO_RSP, nullptr, nullptr);
+  }
+
+  void SetPlaybackSpeed(const RawAddress& address, int service_id, int8_t speed) override {
+    auto device = FindDevice(address);
+    if (!device || !device->IsConnected()) {
+      log::error("Device not ready for SetPlaybackSpeed: {}", address);
+      return;
+    }
+    auto service = device->GetService(service_id);
+    if (!service || service->playback_speed_handle == kInvalidGattHandle) {
+      log::error("Service not ready for SetPlaybackSpeed: {}", address);
+      return;
+    }
+    std::vector<uint8_t> value(kPlaybackSpeedLen);
+    value[kPlaybackSpeedIndex] = static_cast<uint8_t>(speed);
+    BtaGattQueue::WriteCharacteristic(device->conn_id, service->playback_speed_handle, value,
+                                      GATT_WRITE_NO_RSP, nullptr, nullptr);
+  }
+
+  void SetPlayingOrder(const RawAddress& address, int service_id,
+                       PlayingOrder playing_order) override {
+    auto device = FindDevice(address);
+    if (!device || !device->IsConnected()) {
+      log::error("Device not ready for SetPlayingOrder: {}", address);
+      return;
+    }
+    auto service = device->GetService(service_id);
+    if (!service || service->playing_order_handle == kInvalidGattHandle) {
+      log::error("Service not ready for SetPlayingOrder: {}", address);
+      return;
+    }
+    std::vector<uint8_t> value(kPlayingOrderLen);
+    value[kPlayingOrderIndex] = static_cast<uint8_t>(playing_order);
+    BtaGattQueue::WriteCharacteristic(device->conn_id, service->playing_order_handle, value,
                                       GATT_WRITE_NO_RSP, nullptr, nullptr);
   }
 
@@ -186,8 +239,6 @@ public:
     log::verbose("event: {}", gatt_client_event_text(event));
 
     switch (event) {
-      case BTA_GATTC_DEREG_EVT:
-        break;
       case BTA_GATTC_OPEN_EVT:
         OnGattConnected(p_data->open);
         break;
@@ -202,7 +253,8 @@ public:
         break;
       case BTA_GATTC_ENC_CMPL_CB_EVT:
         OnEncryptionComplete(p_data->enc_cmpl.remote_bda,
-                             BTM_IsEncrypted(p_data->enc_cmpl.remote_bda, BT_TRANSPORT_LE));
+                             get_security_client_interface().BTM_IsEncrypted(
+                                     p_data->enc_cmpl.remote_bda, BT_TRANSPORT_LE));
         break;
       case BTA_GATTC_SRVC_CHG_EVT:
         OnServiceChangeEvent(p_data->service_changed.remote_bda);
@@ -222,25 +274,36 @@ public:
       return;
     }
 
+    auto service = device->GetServiceByHandle(handle);
+    if (!service) {
+      return;
+    }
+
     if (status != GATT_SUCCESS) {
       log::warn("Read failed for handle 0x{:04x}, status {}", handle, gatt_status_text(status));
       return;
     }
 
-    if (handle == device->media_player_name_handle) {
-      ParseMediaPlayerNameNotification(device, value, len);
-    } else if (handle == device->track_title_handle) {
-      ParseTrackTitleNotification(device, value, len);
-    } else if (handle == device->track_duration_handle) {
-      ParseTrackDurationNotification(device, value, len);
-    } else if (handle == device->track_position_handle) {
-      ParseTrackPositionNotification(device, value, len);
-    } else if (handle == device->media_state_handle) {
-      ParseMediaStateNotification(device, value, len);
-    } else if (handle == device->opcodes_supported_handle) {
-      ParseOpcodesSupported(device, value, len);
-    } else if (handle == device->playing_orders_supported_handle) {
-      ParsePlayingOrdersSupported(device, value, len);
+    if (handle == service->media_player_name_handle) {
+      ParseMediaPlayerNameNotification(device, *service, value, len);
+    } else if (handle == service->track_title_handle) {
+      ParseTrackTitleNotification(device, *service, value, len);
+    } else if (handle == service->track_duration_handle) {
+      ParseTrackDurationNotification(device, *service, value, len);
+    } else if (handle == service->track_position_handle) {
+      ParseTrackPositionNotification(device, *service, value, len);
+    } else if (handle == service->media_state_handle) {
+      ParseMediaStateNotification(device, *service, value, len);
+    } else if (handle == service->opcodes_supported_handle) {
+      ParseOpcodesSupported(device, *service, value, len);
+    } else if (handle == service->playing_order_handle) {
+      ParsePlayingOrderNotification(device, *service, value, len);
+    } else if (handle == service->playing_orders_supported_handle) {
+      ParsePlayingOrdersSupported(device, *service, value, len);
+    } else if (handle == service->playback_speed_handle) {
+      ParsePlaybackSpeedNotification(device, *service, value, len);
+    } else if (handle == service->seeking_speed_handle) {
+      ParseSeekingSpeedNotification(device, *service, value, len);
     }
   }
 
@@ -252,7 +315,13 @@ public:
   }
 
 private:
-  static constexpr uint16_t kInvalidGattHandle = 0x0000;
+  void StartOpportunisticConnect(const RawAddress& address) {
+    if (!com_android_bluetooth_flags_leaudio_peripheral_mcp_link_abstraction_layer()) {
+      return;
+    }
+    log::info("{}", address);
+    BTA_GATTC_Open(gatt_if_, address, BTM_BLE_OPPORTUNISTIC);
+  }
 
   void OnGattConnected(const tBTA_GATTC_OPEN& evt) {
     log::info("Connected to {}, conn_id {}", evt.remote_bda, evt.conn_id);
@@ -260,6 +329,7 @@ private:
     if (evt.status != GATT_SUCCESS) {
       log::error("Connect failed for {}: {}", evt.remote_bda, gatt_status_text(evt.status));
       callbacks_->OnConnectionState(evt.remote_bda, ConnectionState::DISCONNECTED);
+      StartOpportunisticConnect(evt.remote_bda);
       return;
     }
 
@@ -275,11 +345,11 @@ private:
     }
     callbacks_->OnConnectionState(evt.remote_bda, ConnectionState::CONNECTED);
 
-    if (BTM_IsEncrypted(device->addr, BT_TRANSPORT_LE)) {
+    if (get_security_client_interface().BTM_IsEncrypted(device->addr, BT_TRANSPORT_LE)) {
       OnEncryptionComplete(device->addr, true);
     } else {
-      tBTM_STATUS result = BTM_SetEncryption(device->addr, BT_TRANSPORT_LE, nullptr, nullptr,
-                                             BTM_BLE_SEC_ENCRYPT);
+      tBTM_STATUS result = get_security_client_interface().BTM_SetEncryption(
+              device->addr, BT_TRANSPORT_LE, nullptr, nullptr, BTM_BLE_SEC_ENCRYPT);
 
       if (result == tBTM_STATUS::BTM_ERR_KEY_MISSING) {
         log::error("Link key unknown for {}, disconnect profile", device->addr);
@@ -299,6 +369,7 @@ private:
     DoDisconnectCleanup(device);
     devices_.remove(device);
     callbacks_->OnConnectionState(evt.remote_bda, ConnectionState::DISCONNECTED);
+    StartOpportunisticConnect(evt.remote_bda);
   }
 
   void OnEncryptionComplete(const RawAddress& bda, bool success) {
@@ -318,9 +389,13 @@ private:
     if (device->service_found) {
       log::debug("Service already discovered, re-registering notifications for {}", device->addr);
       RegisterForNotifications(device);
+      if (com::android::bluetooth::flags::leaudio_peripheral_mcp_link_abstraction_layer()) {
+        ReadInitialState(device);
+      }
     } else {
       log::debug("Initiating service search for {}", device->addr);
-      BTA_GATTC_ServiceSearchRequest(device->conn_id, kGenericMediaControlServiceUuid);
+      device->ClearHandles();
+      BTA_GATTC_ServiceSearchRequest(device->conn_id);
     }
   }
 
@@ -332,7 +407,7 @@ private:
 
     log::info("Service changed for {}", device->addr);
     device->ClearHandles();
-    BTA_GATTC_ServiceSearchRequest(device->conn_id, kGenericMediaControlServiceUuid);
+    BTA_GATTC_ServiceSearchRequest(device->conn_id);
   }
 
   void OnServiceDiscoveryDoneEvent(const RawAddress& bda) {
@@ -343,7 +418,9 @@ private:
 
     log::info("Service discovery done for {}", device->addr);
     if (!device->service_found) {
-      BTA_GATTC_ServiceSearchRequest(device->conn_id, kGenericMediaControlServiceUuid);
+      log::debug("Initiating service search for {}", device->addr);
+      device->ClearHandles();
+      BTA_GATTC_ServiceSearchRequest(device->conn_id);
     }
   }
 
@@ -367,129 +444,199 @@ private:
       return;
     }
 
-    device->ClearHandles();
+    int mcs_index = 1;
+    bool gmcs_found = false;
+    for (const auto& service : *services) {
+      if (service.uuid == kGenericMediaControlServiceUuid) {
+        Mcs mcs;
+        mcs.id = kGmcsServiceId;
+        mcs.is_gmcs = true;
+        mcs.start_handle = service.handle;
+        mcs.end_handle = service.end_handle;
+        device->services.push_back(mcs);
+        gmcs_found = true;
+      } else if (service.uuid == kMediaControlServiceUuid) {
+        Mcs mcs;
+        mcs.id = mcs_index++;
+        mcs.is_gmcs = false;
+        mcs.start_handle = service.handle;
+        mcs.end_handle = service.end_handle;
+        device->services.push_back(mcs);
+      }
+    }
+
+    if (!gmcs_found) {
+      if (device->searching_for_gmcs) {
+        log::error("GMCS not found on device {}", device->addr);
+        BTA_GATTC_Close(device->conn_id);
+        return;
+      }
+      device->ClearHandles();
+      device->searching_for_gmcs = true;
+      BTA_GATTC_ServiceSearchRequest(device->conn_id);
+      return;
+    }
+    device->searching_for_gmcs = false;
+    if (!com::android::bluetooth::flags::leaudio_peripheral_mcp_link_abstraction_layer()) {
+      device->service_found = true;
+    }
+
+    log::info("Found {} GMCS/MCS services on {}. Discovering characteristics...",
+              device->services.size(), device->addr);
 
     for (const auto& service : *services) {
-      if (service.uuid != kGenericMediaControlServiceUuid) {
+      auto mcs = device->GetServiceByHandle(service.handle);
+      if (!mcs) {
         continue;
       }
 
-      log::info("Found MCS on {}. Discovering characteristics...", device->addr);
-      device->service_found = true;
       for (const auto& chrc : service.characteristics) {
         if (chrc.uuid == kMediaPlayerNameUuid) {
-          device->media_player_name_handle = chrc.value_handle;
+          mcs->media_player_name_handle = chrc.value_handle;
         } else if (chrc.uuid == kTrackChangedUuid) {
-          device->track_changed_handle = chrc.value_handle;
+          mcs->track_changed_handle = chrc.value_handle;
         } else if (chrc.uuid == kTrackTitleUuid) {
-          device->track_title_handle = chrc.value_handle;
+          mcs->track_title_handle = chrc.value_handle;
         } else if (chrc.uuid == kTrackDurationUuid) {
-          device->track_duration_handle = chrc.value_handle;
+          mcs->track_duration_handle = chrc.value_handle;
         } else if (chrc.uuid == kTrackPositionUuid) {
-          device->track_position_handle = chrc.value_handle;
+          mcs->track_position_handle = chrc.value_handle;
         } else if (chrc.uuid == kPlaybackSpeedUuid) {
-          device->playback_speed_handle = chrc.value_handle;
+          mcs->playback_speed_handle = chrc.value_handle;
+        } else if (chrc.uuid == kPlayingOrderUuid) {
+          mcs->playing_order_handle = chrc.value_handle;
         } else if (chrc.uuid == kPlayingOrderSupportedUuid) {
-          device->playing_orders_supported_handle = chrc.value_handle;
+          mcs->playing_orders_supported_handle = chrc.value_handle;
         } else if (chrc.uuid == kSeekingSpeedUuid) {
-          device->seeking_speed_handle = chrc.value_handle;
+          mcs->seeking_speed_handle = chrc.value_handle;
         } else if (chrc.uuid == kMediaStateUuid) {
-          device->media_state_handle = chrc.value_handle;
+          mcs->media_state_handle = chrc.value_handle;
         } else if (chrc.uuid == kMediaControlPointUuid) {
-          device->media_control_point_handle = chrc.value_handle;
+          mcs->media_control_point_handle = chrc.value_handle;
         } else if (chrc.uuid == kMediaControlPointOpcodesSupportedUuid) {
-          device->opcodes_supported_handle = chrc.value_handle;
+          mcs->opcodes_supported_handle = chrc.value_handle;
         } else if (chrc.uuid == kContentControlIdUuid) {
-          device->content_control_id_handle = chrc.value_handle;
+          mcs->content_control_id_handle = chrc.value_handle;
         }
       }
     }
 
-    if (device->service_found) {
-      if (device->media_state_handle == 0 || device->media_control_point_handle == 0 ||
-          device->opcodes_supported_handle == 0) {
-        log::error("Mandatory MCS characteristics not found on {}", device->addr);
+    for (const auto& service : device->services) {
+      if (service.media_player_name_handle == kInvalidGattHandle ||
+          service.track_changed_handle == kInvalidGattHandle ||
+          service.track_title_handle == kInvalidGattHandle ||
+          service.track_duration_handle == kInvalidGattHandle ||
+          service.track_position_handle == kInvalidGattHandle ||
+          service.media_state_handle == kInvalidGattHandle ||
+          service.content_control_id_handle == kInvalidGattHandle ||
+          (service.media_control_point_handle != kInvalidGattHandle &&
+           service.opcodes_supported_handle == kInvalidGattHandle)) {
+        log::error("Mandatory MCS characteristics not found on {} for service {}", device->addr,
+                   service.id);
         BTA_GATTC_Close(device->conn_id);
         return;
       }
-      callbacks_->OnDiscovered(device->addr);
+    }
+
+    callbacks_->OnDiscovered(device->addr);
+
+    if (com::android::bluetooth::flags::leaudio_peripheral_mcp_link_abstraction_layer()) {
+      device->service_found = true;
+
+      /* Initial state would be read after encryption complete */
+      if (get_security_client_interface().BTM_IsEncrypted(device->addr, BT_TRANSPORT_LE)) {
+        RegisterForNotifications(device);
+        ReadInitialState(device);
+      }
+    } else {
       RegisterForNotifications(device);
       ReadInitialState(device);
-    } else {
-      log::error("MCS not found on device {}", device->addr);
-      BTA_GATTC_Close(device->conn_id);
     }
   }
 
-  void ParseMcpIndication(const std::shared_ptr<McpDevice>& device, const tBTA_GATTC_NOTIFY& evt) {
-    if (evt.handle == device->media_control_point_handle) {
-      if (evt.len >= 2) {
-        uint8_t opcode = evt.value[0];
-        MediaControlResultCode result = static_cast<MediaControlResultCode>(evt.value[1]);
-        callbacks_->OnMediaControlResult(device->addr, opcode, result);
+  void ParseMcpIndication(const std::shared_ptr<McpDevice>& device, const Mcs& service,
+                          const tBTA_GATTC_NOTIFY& evt) {
+    if (evt.handle == service.media_control_point_handle) {
+      if (evt.len >= kMcpNotificationLen) {
+        uint8_t opcode = evt.value[kMcpNotificationOpcodeIndex];
+        MediaControlResultCode result =
+                static_cast<MediaControlResultCode>(evt.value[kMcpNotificationResultIndex]);
+        callbacks_->OnMediaControlResult(device->addr, service.id, opcode, result);
       }
     }
   }
 
   void ParseMediaPlayerNameNotification(const std::shared_ptr<McpDevice>& device,
-                                        const uint8_t* value, uint16_t len) {
-    callbacks_->OnMediaPlayerNameChanged(device->addr, std::string((char*)value, len));
+                                        const Mcs& service, const uint8_t* value, uint16_t len) {
+    callbacks_->OnMediaPlayerNameChanged(device->addr, service.id, std::string((char*)value, len));
   }
 
-  void ParseTrackChangedNotification(const std::shared_ptr<McpDevice>& device) {
-    callbacks_->OnTrackChanged(device->addr);
+  void ParseTrackChangedNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service) {
+    callbacks_->OnTrackChanged(device->addr, service.id);
   }
 
-  void ParseTrackTitleNotification(const std::shared_ptr<McpDevice>& device, const uint8_t* value,
-                                   uint16_t len) {
-    callbacks_->OnTrackTitleChanged(device->addr, std::string((char*)value, len));
+  void ParseTrackTitleNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service,
+                                   const uint8_t* value, uint16_t len) {
+    callbacks_->OnTrackTitleChanged(device->addr, service.id, std::string((char*)value, len));
   }
 
-  void ParseTrackDurationNotification(const std::shared_ptr<McpDevice>& device,
+  void ParseTrackDurationNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service,
                                       const uint8_t* value, uint16_t len) {
-    if (len != 4) {
+    if (len != kTrackDurationLen) {
       log::error("Invalid Track Duration notification from device: {}, len: {}", device->addr, len);
       return;
     }
     int32_t duration;
     const uint8_t* p = value;
     STREAM_TO_UINT32(duration, p);
-    callbacks_->OnTrackDurationChanged(device->addr, duration);
+    callbacks_->OnTrackDurationChanged(device->addr, service.id, duration);
   }
 
-  void ParseTrackPositionNotification(const std::shared_ptr<McpDevice>& device,
+  void ParseTrackPositionNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service,
                                       const uint8_t* value, uint16_t len) {
-    if (len != 4) {
+    if (len != kTrackPositionLen) {
       log::error("Invalid Track Position notification from device: {}, len: {}", device->addr, len);
       return;
     }
     int32_t position;
     const uint8_t* p = value;
     STREAM_TO_UINT32(position, p);
-    callbacks_->OnTrackPositionChanged(device->addr, position);
+    callbacks_->OnTrackPositionChanged(device->addr, service.id, position);
   }
 
-  void ParseMediaStateNotification(const std::shared_ptr<McpDevice>& device, const uint8_t* value,
-                                   uint16_t len) {
-    if (len != 1) {
+  void ParseMediaStateNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service,
+                                   const uint8_t* value, uint16_t len) {
+    if (len != kMediaStateLen) {
       log::error("Invalid Media State notification from device: {}, len: {}", device->addr, len);
       return;
     }
-    callbacks_->OnMediaStateChanged(device->addr, value[0]);
+    callbacks_->OnMediaStateChanged(device->addr, service.id,
+                                    static_cast<MediaState>(value[kMediaStateIndex]));
   }
 
-  void ParsePlaybackSpeedNotification(const std::shared_ptr<McpDevice>& device,
+  void ParsePlaybackSpeedNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service,
                                       const uint8_t* value, uint16_t len) {
-    if (len != 1) {
+    if (len != kPlaybackSpeedLen) {
       log::error("Invalid Playback Speed notification from device: {}, len: {}", device->addr, len);
       return;
     }
-    callbacks_->OnPlaybackSpeedChanged(device->addr, static_cast<int8_t>(value[0]));
+    callbacks_->OnPlaybackSpeedChanged(device->addr, service.id,
+                                       static_cast<int8_t>(value[kPlaybackSpeedIndex]));
   }
 
-  void ParsePlayingOrdersSupported(const std::shared_ptr<McpDevice>& device, const uint8_t* value,
-                                   uint16_t len) {
-    if (len != 2) {
+  void ParsePlayingOrderNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service,
+                                     const uint8_t* value, uint16_t len) {
+    if (len != kPlayingOrderLen) {
+      log::error("Invalid Playing Order notification from device: {}, len: {}", device->addr, len);
+      return;
+    }
+    callbacks_->OnPlayingOrderChanged(device->addr, service.id,
+                                      static_cast<PlayingOrder>(value[kPlayingOrderIndex]));
+  }
+
+  void ParsePlayingOrdersSupported(const std::shared_ptr<McpDevice>& device, const Mcs& service,
+                                   const uint8_t* value, uint16_t len) {
+    if (len != kPlayingOrdersSupportedLen) {
       log::error("Invalid Playing Orders Supported notification from device: {}, len: {}",
                  device->addr, len);
       return;
@@ -497,21 +644,22 @@ private:
     uint16_t playing_orders;
     const uint8_t* p = value;
     STREAM_TO_UINT16(playing_orders, p);
-    callbacks_->OnPlayingOrdersSupportedChanged(device->addr, playing_orders);
+    callbacks_->OnPlayingOrdersSupportedChanged(device->addr, service.id, playing_orders);
   }
 
-  void ParseSeekingSpeedNotification(const std::shared_ptr<McpDevice>& device, const uint8_t* value,
-                                     uint16_t len) {
-    if (len != 1) {
+  void ParseSeekingSpeedNotification(const std::shared_ptr<McpDevice>& device, const Mcs& service,
+                                     const uint8_t* value, uint16_t len) {
+    if (len != kSeekingSpeedLen) {
       log::error("Invalid Seeking Speed notification from device: {}, len: {}", device->addr, len);
       return;
     }
-    callbacks_->OnSeekingSpeedChanged(device->addr, static_cast<int8_t>(value[0]));
+    callbacks_->OnSeekingSpeedChanged(device->addr, service.id,
+                                      static_cast<int8_t>(value[kSeekingSpeedIndex]));
   }
 
-  void ParseOpcodesSupported(const std::shared_ptr<McpDevice>& device, const uint8_t* value,
-                             uint16_t len) {
-    if (len != 4) {
+  void ParseOpcodesSupported(const std::shared_ptr<McpDevice>& device, const Mcs& service,
+                             const uint8_t* value, uint16_t len) {
+    if (len != kOpcodesSupportedLen) {
       log::error("Invalid Opcodes Supported notification from device: {}, len: {}", device->addr,
                  len);
       return;
@@ -519,7 +667,7 @@ private:
     uint32_t opcodes;
     const uint8_t* p = value;
     STREAM_TO_UINT32(opcodes, p);
-    callbacks_->OnOpcodesSupportedChanged(device->addr, opcodes);
+    callbacks_->OnOpcodesSupportedChanged(device->addr, service.id, opcodes);
   }
 
   void OnNotification(const tBTA_GATTC_NOTIFY& evt) {
@@ -528,93 +676,123 @@ private:
       return;
     }
 
-    if (!evt.is_notify) {  // Indication
-      BTA_GATTC_SendIndConfirm(device->conn_id, evt.cid);
-      ParseMcpIndication(device, evt);
+    auto service = device->GetServiceByHandle(evt.handle);
+    if (!service) {
       return;
     }
 
-    if (evt.handle == device->media_player_name_handle) {
-      ParseMediaPlayerNameNotification(device, evt.value, evt.len);
-    } else if (evt.handle == device->track_changed_handle) {
-      ParseTrackChangedNotification(device);
-    } else if (evt.handle == device->track_title_handle) {
-      ParseTrackTitleNotification(device, evt.value, evt.len);
-    } else if (evt.handle == device->track_duration_handle) {
-      ParseTrackDurationNotification(device, evt.value, evt.len);
-    } else if (evt.handle == device->track_position_handle) {
-      ParseTrackPositionNotification(device, evt.value, evt.len);
-    } else if (evt.handle == device->playback_speed_handle) {
-      ParsePlaybackSpeedNotification(device, evt.value, evt.len);
-    } else if (evt.handle == device->seeking_speed_handle) {
-      ParseSeekingSpeedNotification(device, evt.value, evt.len);
-    } else if (evt.handle == device->media_state_handle) {
-      ParseMediaStateNotification(device, evt.value, evt.len);
+    if (!evt.is_notify) {  // Indication
+      BTA_GATTC_SendIndConfirm(device->conn_id, evt.cid);
+      ParseMcpIndication(device, *service, evt);
+      return;
+    }
+
+    if (evt.handle == service->media_player_name_handle) {
+      ParseMediaPlayerNameNotification(device, *service, evt.value, evt.len);
+    } else if (evt.handle == service->track_changed_handle) {
+      ParseTrackChangedNotification(device, *service);
+    } else if (evt.handle == service->track_title_handle) {
+      ParseTrackTitleNotification(device, *service, evt.value, evt.len);
+    } else if (evt.handle == service->track_duration_handle) {
+      ParseTrackDurationNotification(device, *service, evt.value, evt.len);
+    } else if (evt.handle == service->track_position_handle) {
+      ParseTrackPositionNotification(device, *service, evt.value, evt.len);
+    } else if (evt.handle == service->playback_speed_handle) {
+      ParsePlaybackSpeedNotification(device, *service, evt.value, evt.len);
+    } else if (evt.handle == service->seeking_speed_handle) {
+      ParseSeekingSpeedNotification(device, *service, evt.value, evt.len);
+    } else if (evt.handle == service->playing_order_handle) {
+      ParsePlayingOrderNotification(device, *service, evt.value, evt.len);
+    } else if (evt.handle == service->media_state_handle) {
+      ParseMediaStateNotification(device, *service, evt.value, evt.len);
     } else {
       log::warn("Unhandled notification on handle 0x{:04x}", evt.handle);
     }
   }
 
   void ReadInitialState(std::shared_ptr<McpDevice>& device) {
-    if (device->media_player_name_handle != kInvalidGattHandle) {
-      BtaGattQueue::ReadCharacteristic(device->conn_id, device->media_player_name_handle,
-                                       OnGattReadStatic, nullptr);
-    }
-    if (device->media_state_handle != kInvalidGattHandle) {
-      BtaGattQueue::ReadCharacteristic(device->conn_id, device->media_state_handle,
-                                       OnGattReadStatic, nullptr);
-    }
-    if (device->opcodes_supported_handle != kInvalidGattHandle) {
-      BtaGattQueue::ReadCharacteristic(device->conn_id, device->opcodes_supported_handle,
-                                       OnGattReadStatic, nullptr);
-    }
-    if (device->track_title_handle != kInvalidGattHandle) {
-      BtaGattQueue::ReadCharacteristic(device->conn_id, device->track_title_handle,
-                                       OnGattReadStatic, nullptr);
-    }
-    if (device->track_duration_handle != kInvalidGattHandle) {
-      BtaGattQueue::ReadCharacteristic(device->conn_id, device->track_duration_handle,
-                                       OnGattReadStatic, nullptr);
-    }
-    if (device->track_position_handle != kInvalidGattHandle) {
-      BtaGattQueue::ReadCharacteristic(device->conn_id, device->track_position_handle,
-                                       OnGattReadStatic, nullptr);
-    }
-    if (device->playing_orders_supported_handle != kInvalidGattHandle) {
-      BtaGattQueue::ReadCharacteristic(device->conn_id, device->playing_orders_supported_handle,
-                                       OnGattReadStatic, nullptr);
+    for (const auto& service : device->services) {
+      if (service.media_player_name_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.media_player_name_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.media_state_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.media_state_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.opcodes_supported_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.opcodes_supported_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.track_title_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.track_title_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.track_duration_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.track_duration_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.track_position_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.track_position_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.playing_order_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.playing_order_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.playing_orders_supported_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.playing_orders_supported_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.playback_speed_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.playback_speed_handle,
+                                         OnGattReadStatic, nullptr);
+      }
+      if (service.seeking_speed_handle != kInvalidGattHandle) {
+        BtaGattQueue::ReadCharacteristic(device->conn_id, service.seeking_speed_handle,
+                                         OnGattReadStatic, nullptr);
+      }
     }
   }
 
   void DeregisterNotifications(const std::shared_ptr<McpDevice>& device) {
-    if (device->media_player_name_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr,
-                                           device->media_player_name_handle);
-    }
-    if (device->track_changed_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, device->track_changed_handle);
-    }
-    if (device->track_title_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, device->track_title_handle);
-    }
-    if (device->track_duration_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, device->track_duration_handle);
-    }
-    if (device->track_position_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, device->track_position_handle);
-    }
-    if (device->playback_speed_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, device->playback_speed_handle);
-    }
-    if (device->seeking_speed_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, device->seeking_speed_handle);
-    }
-    if (device->media_state_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, device->media_state_handle);
-    }
-    if (device->media_control_point_handle != kInvalidGattHandle) {
-      BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr,
-                                           device->media_control_point_handle);
+    for (const auto& service : device->services) {
+      if (service.media_player_name_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr,
+                                             service.media_player_name_handle);
+      }
+      if (service.track_changed_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.track_changed_handle);
+      }
+      if (service.track_title_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.track_title_handle);
+      }
+      if (service.track_duration_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.track_duration_handle);
+      }
+      if (service.track_position_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.track_position_handle);
+      }
+      if (service.playback_speed_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.playback_speed_handle);
+      }
+      if (service.playing_order_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.playing_order_handle);
+      }
+      if (service.seeking_speed_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.seeking_speed_handle);
+      }
+      if (service.media_state_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr, service.media_state_handle);
+      }
+      if (service.media_control_point_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr,
+                                             service.media_control_point_handle);
+      }
+      if (service.opcodes_supported_handle != kInvalidGattHandle) {
+        BTA_GATTC_DeregisterForNotifications(gatt_if_, device->addr,
+                                             service.opcodes_supported_handle);
+      }
     }
   }
 
@@ -630,51 +808,66 @@ private:
   }
 
   void RegisterForNotifications(const std::shared_ptr<McpDevice>& device) {
-    if (device->media_player_name_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->media_player_name_handle);
-    }
-    if (device->track_changed_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->track_changed_handle);
-    }
-    if (device->track_title_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->track_title_handle);
-    }
-    if (device->track_duration_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->track_duration_handle);
-    }
-    if (device->track_position_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->track_position_handle);
-    }
-    if (device->playback_speed_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->playback_speed_handle);
-    }
-    if (device->seeking_speed_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->seeking_speed_handle);
-    }
-    if (device->media_state_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, device->media_state_handle);
-    }
-    if (device->media_control_point_handle != kInvalidGattHandle) {
-      BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr,
-                                         device->media_control_point_handle);
+    for (const auto& service : device->services) {
+      if (service.media_player_name_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr,
+                                           service.media_player_name_handle);
+      }
+      if (service.track_changed_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.track_changed_handle);
+      }
+      if (service.track_title_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.track_title_handle);
+      }
+      if (service.track_duration_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.track_duration_handle);
+      }
+      if (service.track_position_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.track_position_handle);
+      }
+      if (service.playback_speed_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.playback_speed_handle);
+      }
+      if (service.playing_order_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.playing_order_handle);
+      }
+      if (service.seeking_speed_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.seeking_speed_handle);
+      }
+      if (service.media_state_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr, service.media_state_handle);
+      }
+      if (service.media_control_point_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr,
+                                           service.media_control_point_handle);
+      }
+      if (service.opcodes_supported_handle != kInvalidGattHandle) {
+        BTA_GATTC_RegisterForNotifications(gatt_if_, device->addr,
+                                           service.opcodes_supported_handle);
+      }
     }
   }
 
-  void WriteMediaControlPoint(const RawAddress& address, uint8_t opcode) {
-    WriteMediaControlPoint(address, opcode, {});
+  void WriteMediaControlPoint(const RawAddress& address, int service_id, uint8_t opcode) {
+    WriteMediaControlPoint(address, service_id, opcode, {});
   }
 
-  void WriteMediaControlPoint(const RawAddress& address, uint8_t opcode,
+  void WriteMediaControlPoint(const RawAddress& address, int service_id, uint8_t opcode,
                               const std::vector<uint8_t>& params) {
     auto device = FindDevice(address);
-    if (!device || !device->IsConnected() || device->media_control_point_handle == 0) {
+    if (!device || !device->IsConnected()) {
       log::error("Device not ready for MCP command: {}", address);
+      return;
+    }
+    auto service = device->GetService(service_id);
+    if (!service || service->media_control_point_handle == kInvalidGattHandle) {
+      log::error("Service not ready for MCP command: {}", address);
       return;
     }
     std::vector<uint8_t> value_to_write;
     value_to_write.push_back(opcode);
     value_to_write.insert(value_to_write.end(), params.begin(), params.end());
-    BtaGattQueue::WriteCharacteristic(device->conn_id, device->media_control_point_handle,
+    BtaGattQueue::WriteCharacteristic(device->conn_id, service->media_control_point_handle,
                                       value_to_write, GATT_WRITE_NO_RSP, nullptr, nullptr);
   }
 
@@ -694,16 +887,18 @@ private:
   std::list<std::shared_ptr<McpDevice>> devices_;
 };
 
+std::unique_ptr<McpClientImpl> instance = nullptr;
+
 }  // namespace
 
 // --- McpClient static methods ---
-void McpClient::Initialize(McpClientCallbacks* callbacks, base::Closure initCb) {
+void McpClient::Initialize(McpClientCallbacks* callbacks, base::OnceClosure initCb) {
   std::scoped_lock<std::mutex> lock(instance_mutex);
   if (instance) {
     log::error("Already initialized");
     return;
   }
-  instance = std::make_unique<McpClientImpl>(callbacks, initCb);
+  instance = std::make_unique<McpClientImpl>(callbacks, std::move(initCb));
 }
 
 void McpClient::Cleanup() {
@@ -717,22 +912,16 @@ void McpClient::Cleanup() {
 
 McpClient* McpClient::Get() { return instance.get(); }
 
-void McpDevice::DebugDump(std::stringstream& stream) const {
-  GattServiceDevice::DebugDump(stream);
+void McpClient::AddFromStorage(const RawAddress& address) {
+  std::scoped_lock<std::mutex> lock(instance_mutex);
+  if (instance) {
+    instance->AddFromStorage(address);
+  }
+}
 
-  stream << "\n    Media Player Name Handle: "
-         << bluetooth::common::ToHexString(media_player_name_handle)
-         << "\n    Track Changed Handle: " << bluetooth::common::ToHexString(track_changed_handle)
-         << "\n    Track Title Handle: " << bluetooth::common::ToHexString(track_title_handle)
-         << "\n    Track Duration Handle: " << bluetooth::common::ToHexString(track_duration_handle)
-         << "\n    Track Position Handle: " << bluetooth::common::ToHexString(track_position_handle)
-         << "\n    Playback Speed Handle: " << bluetooth::common::ToHexString(playback_speed_handle)
-         << "\n    Seeking Speed Handle: " << bluetooth::common::ToHexString(seeking_speed_handle)
-         << "\n    Media State Handle: " << bluetooth::common::ToHexString(media_state_handle)
-         << "\n    Media Control Point Handle: "
-         << bluetooth::common::ToHexString(media_control_point_handle)
-         << "\n    Opcodes Supported Handle: "
-         << bluetooth::common::ToHexString(opcodes_supported_handle)
-         << "\n    Content Control ID Handle: "
-         << bluetooth::common::ToHexString(content_control_id_handle) << "\n";
+void McpClient::DebugDump(int fd) {
+  std::scoped_lock<std::mutex> lock(instance_mutex);
+  if (instance) {
+    instance->DebugDump(fd);
+  }
 }

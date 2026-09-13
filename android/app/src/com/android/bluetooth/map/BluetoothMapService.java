@@ -50,6 +50,7 @@ import android.util.Log;
 import android.util.SparseArray;
 
 import com.android.bluetooth.R;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.profile.ConnectableProfile;
@@ -376,7 +377,7 @@ public class BluetoothMapService extends ConnectableProfile {
                             BluetoothDevice.EXTRA_ACCESS_REQUEST_TYPE,
                             BluetoothDevice.REQUEST_TYPE_MESSAGE_ACCESS);
                     BluetoothMapService.this.sendBroadcast(
-                            intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastBundle());
+                            intent, BLUETOOTH_CONNECT, Util.getTempBroadcastBundle());
                     cancelUserTimeoutAlarm();
                     mIsWaitingAuthorization = false;
                     stopObexServerSessions(-1);
@@ -504,7 +505,7 @@ public class BluetoothMapService extends ConnectableProfile {
         intent.putExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, prevState);
         intent.putExtra(BluetoothProfile.EXTRA_STATE, mState);
         intent.putExtra(BluetoothDevice.EXTRA_DEVICE, mRemoteDevice);
-        sendBroadcast(intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastBundle());
+        sendBroadcast(intent, BLUETOOTH_CONNECT, Util.getTempBroadcastBundle());
     }
 
     @Override
@@ -541,7 +542,7 @@ public class BluetoothMapService extends ConnectableProfile {
 
     List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
         List<BluetoothDevice> deviceList = new ArrayList<>();
-        BluetoothDevice[] bondedDevices = getAdapterService().getBondedDevices();
+        var bondedDevices = getAdapterService().getBondedDevices();
         synchronized (this) {
             for (BluetoothDevice device : bondedDevices) {
                 final ParcelUuid[] featureUuids = getAdapterService().getRemoteUuids(device);
@@ -596,10 +597,8 @@ public class BluetoothMapService extends ConnectableProfile {
     public boolean setConnectionPolicy(BluetoothDevice device, int connectionPolicy) {
         Log.v(TAG, "Saved connectionPolicy " + device + " = " + connectionPolicy);
 
-        if (!getAdapterService()
-                .setProfileConnectionPolicy(device, getProfileId(), connectionPolicy)) {
-            return false;
-        }
+        getAdapterService().setProfileConnectionPolicy(device, getProfileId(), connectionPolicy);
+
         if (connectionPolicy == CONNECTION_POLICY_FORBIDDEN) {
             disconnect(device);
         }
@@ -802,7 +801,7 @@ public class BluetoothMapService extends ConnectableProfile {
             sendOrderedBroadcast(
                     intent,
                     BLUETOOTH_CONNECT,
-                    Utils.getTempBroadcastBundle(),
+                    Util.getTempBroadcastBundle(),
                     null,
                     null,
                     Activity.RESULT_OK,

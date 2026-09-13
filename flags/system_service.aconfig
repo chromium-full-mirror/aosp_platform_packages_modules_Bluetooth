@@ -2,36 +2,6 @@ package: "com.android.bluetooth.flags"
 container: "com.android.bt"
 
 flag {
-    name: "only_broadcast_to_local_user"
-    namespace: "bluetooth"
-    description: "The bluetooth stack start and exist only for the current user. We should only restrict the intent to the current user"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-    bug: "435244086"
-}
-
-flag {
-    name: "bluetooth_system_server_messenger"
-    namespace: "bluetooth"
-    description: "Replace binder call to the system server with a Messenger to enforce thread safety"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-    bug: "321804999"
-}
-
-flag {
-    name: "skip_ble_on_when_turning_off"
-    namespace: "bluetooth"
-    description: "Now that transitioning from ON to BLE_ON go through OFF, we should not broadcast BLE_ON when going OFF."
-    bug: "444761370"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
-flag {
     name: "reject_enable_from_unknown_requester"
     namespace: "bluetooth"
     description: "Sometimes, the requester of enable/enableBle is unknown, making investigation impossible. Let's reject them to trace and properly identify the caller"
@@ -42,26 +12,26 @@ flag {
 }
 
 flag {
-    name: "set_name_in_system_server"
+    name: "system_server_migrate_bms_to_kotlin"
     namespace: "bluetooth"
-    description: "We should offer a consistent API to set the Bluetooth friendly name, whatever if Bluetooth is ON or OFF"
-    bug: "448709503"
+    description: "The entire Bluetooth System Server is now in Kotlin, except BluetoothManagerService. Let's finish it"
+    bug: "478056203"
+}
+
+flag {
+    name: "system_server_no_longer_provide_process_exemption"
+    namespace: "bluetooth"
+    description: "Calling in process must have appropriate permissions."
+    bug: "483470879"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
 }
 
 flag {
-    name: "user_visible_on_user_starting"
-    namespace: "bluetooth"
-    description: "Check userVisible API to determine if user should startup bluetooth instance"
-    bug: "438756896"
-}
-
-flag {
     name: "concurrent_user_instances"
     namespace: "bluetooth"
-    description: "Allow concurent stack instances given multiple published hci instances"
+    description: "Allow concurrent stack instances given multiple published hci instances"
     bug: "444519431"
 }
 
@@ -70,5 +40,22 @@ flag {
     namespace: "bluetooth"
     description: "Backup and restore airplane mode and auto on bluetooth settings"
     bug: "450288332"
+}
+
+flag {
+    name: "switch_when_current_user_stop"
+    namespace: "bluetooth"
+    description: "Due to race condition in user controller we may receive a user_stop prior to a user_switch. This enable a fallback workaround to emulate an user switch when receiving an user stop on the current user"
+    bug: "469419496"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "validate_bluetooth_name_in_platform_config"
+    namespace: "bluetooth"
+    description: "Validate that the platform config match the installed bluetooth package"
+    bug: "467963541"
 }
 

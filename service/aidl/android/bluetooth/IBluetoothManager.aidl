@@ -61,8 +61,6 @@ interface IBluetoothManager {
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)")
     String getName(in AttributionSource source);
     @JavaPassthrough(annotation="@android.annotation.RequiresNoPermission")
-    boolean isHearingAidProfileSupported();
-    @JavaPassthrough(annotation="@android.annotation.RequiresNoPermission")
     boolean isBleScanAvailable();
 
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)")
@@ -81,7 +79,7 @@ interface IBluetoothManager {
 
     // SnoopLogMode
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED)")
-    int setBtHciSnoopLogMode(int mode);
+    void setBtHciSnoopLogMode(int mode);
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED)")
     int getBtHciSnoopLogMode();
 
@@ -92,7 +90,4 @@ interface IBluetoothManager {
     boolean isAutoOnEnabled();
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED)")
     void setAutoOnEnabled(boolean status);
-
-    @JavaPassthrough(annotation="@android.annotation.RequiresNoPermission")
-    Messenger getServiceMessenger();
 }

@@ -18,16 +18,18 @@ package com.android.bluetooth.le_scan;
 
 import android.bluetooth.BluetoothUuid;
 import android.bluetooth.le.ScanFilter;
+import android.bluetooth.le.ScanRecord;
 import android.os.ParcelUuid;
+import android.util.Log;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Objects;
-import java.util.UUID;
 
 /** Helper class used to manage MSFT Advertisement Monitors. */
 public class MsftAdvMonitor {
+    private static final String TAG = ScanUtil.TAG_PREFIX + MsftAdvMonitor.class.getSimpleName();
+
     /* IRK filtering is not yet supported */
     public static final int MSFT_CONDITION_TYPE_INVALID = 0x00;
     public static final int MSFT_CONDITION_TYPE_PATTERNS = 0x01;
@@ -115,18 +117,41 @@ public class MsftAdvMonitor {
             return;
         }
 
-        if (filter.getServiceDataUuid() != null && dataMaskIsEmpty(filter.getServiceDataMask())) {
+        if (filter.getServiceDataUuid() != null) {
             Pattern pattern = new Pattern();
-            pattern.ad_type = (byte) 0x16; // Bluetooth Core Spec Part A, Section 1
+            final ParcelUuid uuid = new ParcelUuid(filter.getServiceDataUuid().getUuid());
+            final byte[] uuid_bytes = BluetoothUuid.uuidToBytes(uuid);
+
+            if (BluetoothUuid.is16BitUuid(uuid)) {
+                pattern.ad_type = (byte) ScanRecord.DATA_TYPE_SERVICE_DATA_16_BIT;
+            } else if (BluetoothUuid.is32BitUuid(uuid)) {
+                pattern.ad_type = (byte) ScanRecord.DATA_TYPE_SERVICE_DATA_32_BIT;
+            } else { // if 128-bit UUID
+                pattern.ad_type = (byte) ScanRecord.DATA_TYPE_SERVICE_DATA_128_BIT;
+            }
             pattern.start_byte = FILTER_PATTERN_START_POSITION;
-            pattern.pattern = getUuid16Bit(filter.getServiceDataUuid().getUuid());
+
+            byte[] data_bytes = filter.getServiceData();
+            if (!dataIsEmpty(filter.getServiceDataMask())) {
+                // MSFT does not support data masks
+                Log.w(TAG, "MSFT: Ignoring data mask for filter: " + filter);
+                pattern.pattern = uuid_bytes;
+            } else if (dataIsEmpty(data_bytes)) {
+                pattern.pattern = uuid_bytes;
+            } else {
+                pattern.pattern =
+                        java.nio.ByteBuffer.allocate(uuid_bytes.length + data_bytes.length)
+                                .put(uuid_bytes)
+                                .put(data_bytes)
+                                .array();
+            }
 
             mPatterns.add(pattern);
         }
 
         if (filter.getAdvertisingData() != null
                 && filter.getAdvertisingData().length != 0
-                && dataMaskIsEmpty(filter.getAdvertisingDataMask())) {
+                && dataIsEmpty(filter.getAdvertisingDataMask())) {
             Pattern pattern = new Pattern();
             pattern.ad_type = (byte) filter.getAdvertisingDataType();
             pattern.start_byte = FILTER_PATTERN_START_POSITION;
@@ -165,18 +190,9 @@ public class MsftAdvMonitor {
         return mAddress;
     }
 
-    private static byte[] getUuid16Bit(UUID uuid) {
-        // Extract the 16-bit UUID (third and fourth bytes) from the 128-bit
-        // UUID in reverse endianness
-        ByteBuffer bb = ByteBuffer.allocate(16); // 16 byte (128 bit) UUID
-        bb.putLong(uuid.getMostSignificantBits());
-        bb.putLong(uuid.getLeastSignificantBits());
-        return new byte[] {bb.get(3), bb.get(2)};
-    }
-
-    private static boolean dataMaskIsEmpty(byte[] mask) {
-        if (mask == null || mask.length == 0) return true;
-        if (mask.length == 1 && mask[0] == 0) return true;
+    private static boolean dataIsEmpty(byte[] data) {
+        if (data == null || data.length == 0) return true;
+        if (data.length == 1 && data[0] == 0) return true;
         return false;
     }
 }

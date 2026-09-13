@@ -56,9 +56,6 @@ typedef void (*connection_callback)(int conn_id, int server_if, int transport, i
 typedef void (*service_added_callback)(int status, int server_if,
                                        const btgatt_db_element_t* service, size_t service_count);
 
-/** Callback invoked in response to stop_service */
-typedef void (*service_stopped_callback)(int status, int server_if, int srvc_handle);
-
 /** Callback triggered when a service has been deleted */
 typedef void (*service_deleted_callback)(int status, int server_if, int srvc_handle);
 
@@ -126,7 +123,6 @@ typedef struct {
   register_server_callback register_server_cb;
   connection_callback connection_cb;
   service_added_callback service_added_cb;
-  service_stopped_callback service_stopped_cb;
   service_deleted_callback service_deleted_cb;
   request_read_callback request_read_characteristic_cb;
   request_read_callback request_read_descriptor_cb;
@@ -161,9 +157,6 @@ typedef struct {
   /** Create a new service */
   BtStatus (*add_service)(int server_if, const btgatt_db_element_t* service, size_t service_count);
 
-  /** Stops a local service */
-  BtStatus (*stop_service)(int server_if, int service_handle);
-
   /** Delete a local service */
   BtStatus (*delete_service)(int server_if, int service_handle);
 
@@ -179,11 +172,12 @@ typedef struct {
                                 uint16_t phy_options);
 
   BtStatus (*read_phy)(const RawAddress& bd_addr,
-                       base::Callback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb);
+                       base::OnceCallback<void(uint8_t tx_phy, uint8_t rx_phy, uint8_t status)> cb);
 
   /** Offload GATT characteristics */
   BtStatus (*offload_characteristics)(int conn_id, btgatt_db_element_t* service,
                                       size_t element_count, uint64_t endpoint_id, uint64_t hub_id,
+                                      int uid, std::string attribution_tag,
                                       btgatt_offload_result_t* result);
 
   /** Unoffload GATT characteristics */

@@ -15,12 +15,12 @@
  */
 #pragma once
 
+#include <base/functional/callback.h>
 #include <bluetooth/log.h>
 
 #include <memory>
 #include <vector>
 
-#include "common/callback.h"
 #include "hci/controller.h"
 #include "hci/hci_interface.h"
 #include "hci/hci_packets.h"
@@ -48,8 +48,6 @@ public:
   LeAdvertisingManagerImpl(const LeAdvertisingManagerImpl&) = delete;
   LeAdvertisingManagerImpl& operator=(const LeAdvertisingManagerImpl&) = delete;
   ~LeAdvertisingManagerImpl() override;
-
-  size_t GetNumberOfAdvertisingInstances() const override;
 
   size_t GetNumberOfAdvertisingInstancesInUse() const override;
 

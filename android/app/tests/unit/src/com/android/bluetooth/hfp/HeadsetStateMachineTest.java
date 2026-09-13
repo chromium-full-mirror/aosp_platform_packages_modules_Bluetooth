@@ -31,12 +31,14 @@ import static android.bluetooth.BluetoothProfile.STATE_CONNECTING;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTING;
 import static android.bluetooth.BluetoothStatusCodes.SUCCESS;
+import static android.platform.test.flag.junit.DeviceFlagsValueProvider.createCheckFlagsRule;
 
 import static androidx.test.espresso.intent.matcher.IntentMatchers.hasAction;
 import static androidx.test.espresso.intent.matcher.IntentMatchers.hasExtra;
 
 import static com.android.bluetooth.TestUtils.getTestDevice;
 import static com.android.bluetooth.TestUtils.mockSystemPropertyGet;
+import static com.android.bluetooth.hfp.HeadsetStateMachine.FLAG_ABSOLUTE_VOLUME;
 import static com.android.bluetooth.hfp.HeadsetStateMachine.HFP_VOLUME_CONTROL_ENABLED;
 import static com.android.bluetooth.hfp.HeadsetStateMachine.sConnectTimeoutMs;
 
@@ -68,13 +70,11 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.SystemProperties;
-import android.os.UserHandle;
 import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.RequiresFlagsDisabled;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
-import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.provider.CallLog;
 import android.provider.CallLog.Calls;
@@ -91,7 +91,6 @@ import com.android.bluetooth.TestLooper;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.RemoteDevices;
 import com.android.bluetooth.btservice.SilenceDeviceManager;
-import com.android.bluetooth.btservice.storage.DatabaseManager;
 import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.storage.BluetoothStorageManager;
 import com.android.tests.bluetooth.FlagsWrapper;
@@ -120,10 +119,8 @@ import java.util.List;
 @MediumTest
 @RunWith(ParameterizedAndroidJunit4.class)
 public class HeadsetStateMachineTest {
+    @Rule public final CheckFlagsRule mCheckFlagsRule = createCheckFlagsRule();
     @Rule public final SetFlagsRule mSetFlagsRule;
-
-    @Rule
-    public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
 
     @Rule
     public final StaticMockitoRule mMockitoRule = new StaticMockitoRule(SystemProperties.class);
@@ -131,7 +128,6 @@ public class HeadsetStateMachineTest {
     @Mock private BluetoothSinkAudioPolicy sinkAudioPolicy;
     @Mock private AdapterService mAdapterService;
     @Mock private AudioManager mAudioManager;
-    @Mock private DatabaseManager mDatabaseManager;
     @Mock private BluetoothStorageManager mStorage;
     @Mock private HeadsetNativeInterface mNativeInterface;
     @Mock private HeadsetPhoneState mPhoneState;
@@ -149,15 +145,13 @@ public class HeadsetStateMachineTest {
     private final BluetoothDevice mDevice = getTestDevice(87);
 
     private MockContentResolver mMockContentResolver;
-    private HeadsetStateMachine mStateMachine;
     private InOrder mInOrder;
     private TestLooper mLooper;
+    private HeadsetStateMachine mStateMachine;
 
     @Parameters(name = "{0}")
     public static List<FlagsWrapper> getParams() {
-        return FlagsWrapper.progressionOf(
-                android.media.audio.Flags.FLAG_SCO_MANAGED_BY_AUDIO,
-                Flags.FLAG_MAINLINE_BETA_STORAGE);
+        return FlagsWrapper.progressionOf(android.media.audio.Flags.FLAG_SCO_MANAGED_BY_AUDIO);
     }
 
     public HeadsetStateMachineTest(FlagsWrapper flags) {
@@ -173,7 +167,6 @@ public class HeadsetStateMachineTest {
         doReturn(mPhoneState).when(mSystemInterface).getHeadsetPhoneState();
         doReturn(mAudioManager).when(mSystemInterface).getAudioManager();
 
-        doReturn(true).when(mDatabaseManager).setAudioPolicyMetadata(any(), any());
         doReturn(sinkAudioPolicy).when(mStorage).getAudioPolicyMetadata(any());
 
         doReturn(true).when(mNativeInterface).connectHfp(mDevice);
@@ -181,7 +174,6 @@ public class HeadsetStateMachineTest {
         doReturn(true).when(mNativeInterface).connectAudio(mDevice);
         doReturn(true).when(mNativeInterface).disconnectAudio(mDevice);
 
-        doReturn(mDatabaseManager).when(mAdapterService).getDatabaseManager();
         doReturn(mSilenceDeviceManager).when(mAdapterService).getSilenceDeviceManager();
         doReturn(mRemoteDevices).when(mAdapterService).getRemoteDevices();
         mMockContentResolver = new MockContentResolver();
@@ -195,7 +187,7 @@ public class HeadsetStateMachineTest {
         doReturn(true).when(mHeadsetService).okToAcceptConnection(any(), anyBoolean());
         doReturn(SUCCESS).when(mHeadsetService).isScoAcceptable(any());
 
-        mInOrder = inOrder(mHeadsetService, mNativeInterface, mDatabaseManager, mStorage);
+        mInOrder = inOrder(mHeadsetService, mNativeInterface, mStorage);
 
         mLooper = new TestLooper();
 
@@ -1219,7 +1211,6 @@ public class HeadsetStateMachineTest {
         verify(mNativeInterface).atResponseCode(mDevice, HeadsetHalConstants.AT_RESPONSE_OK, 0);
     }
 
-    @EnableFlags(Flags.FLAG_MICROPHONE_MUTE_STATUS_SYNC)
     @Test
     public void testMicMuteStatusChange_WhenAudioOn() {
         setUpAudioOnState();
@@ -1243,8 +1234,8 @@ public class HeadsetStateMachineTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_MICROPHONE_MUTE_STATUS_SYNC)
-    public void testProcessVolumeEvent_withVolumeTypeMic() {
+    @DisableFlags(Flags.FLAG_MICROPHONE_MUTE_GAIN_RETAIN)
+    public void testProcessVolumeEvent_withVolumeTypeMic_old() {
         doReturn(mDevice).when(mHeadsetService).getActiveDevice();
         AudioManager mockAudioManager = mock(AudioManager.class);
         doReturn(mockAudioManager).when(mSystemInterface).getAudioManager();
@@ -1261,13 +1252,50 @@ public class HeadsetStateMachineTest {
     }
 
     @Test
-    @DisableFlags(Flags.FLAG_MICROPHONE_MUTE_STATUS_SYNC)
-    public void testProcessVolumeEvent_withVolumeTypeMic_old() {
+    @EnableFlags(Flags.FLAG_MICROPHONE_MUTE_GAIN_RETAIN)
+    public void testProcessVolumeEvent_withVolumeTypeMic() {
         doReturn(mDevice).when(mHeadsetService).getActiveDevice();
+        AudioManager mockAudioManager = mock(AudioManager.class);
+        doReturn(mockAudioManager).when(mSystemInterface).getAudioManager();
 
-        mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_MIC, 1);
+        mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_MIC, MIC_UNMUTE);
 
-        assertThat(mStateMachine.mMicVolume).isEqualTo(1);
+        assertThat(mStateMachine.mMicVolume).isEqualTo(MIC_UNMUTE);
+        verify(mockAudioManager).setMicrophoneMute(false);
+
+        mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_MIC, MIC_MUTE);
+
+        assertThat(mStateMachine.mMicVolume).isEqualTo(MIC_UNMUTE);
+        verify(mockAudioManager).setMicrophoneMute(true);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_MICROPHONE_MUTE_GAIN_RETAIN)
+    public void testProcessVolumeEvent_and_MicMuteStatusChange() {
+        setUpAudioOnState();
+        doReturn(mDevice).when(mHeadsetService).getActiveDevice();
+        AudioManager mockAudioManager = mock(AudioManager.class);
+        doReturn(mockAudioManager).when(mSystemInterface).getAudioManager();
+
+        mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_MIC, MIC_UNMUTE);
+
+        assertThat(mStateMachine.mMicVolume).isEqualTo(MIC_UNMUTE);
+        verify(mockAudioManager).setMicrophoneMute(false);
+        mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_MIC, MIC_MUTE);
+
+        Intent micMuteChange = new Intent(AudioManager.ACTION_MICROPHONE_MUTE_CHANGED);
+
+        doReturn(true).when(mAudioManager).isMicrophoneMute();
+
+        sendAndDispatchMessage(HeadsetStateMachine.MICROPHONE_VOL_MUTE_CHANGED, micMuteChange);
+
+        // verify volume processed
+        verify(mNativeInterface)
+                .setVolume(mDevice, HeadsetHalConstants.VOLUME_TYPE_MIC, MIC_UNMUTE);
+        assertThat(mStateMachine.mMicVolume).isEqualTo(MIC_UNMUTE);
+        mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_MIC, MIC_MUTE);
+        verify(mockAudioManager, times(2)).setMicrophoneMute(true);
+        assertThat(mStateMachine.mMicVolume).isEqualTo(MIC_UNMUTE);
     }
 
     @Test
@@ -1281,7 +1309,8 @@ public class HeadsetStateMachineTest {
         mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_SPK, 2);
 
         assertThat(mStateMachine.mSpeakerVolume).isEqualTo(2);
-        verify(mockAudioManager).setStreamVolume(AudioManager.STREAM_BLUETOOTH_SCO, 2, 0);
+        verify(mockAudioManager)
+                .setStreamVolume(AudioManager.STREAM_BLUETOOTH_SCO, 2, FLAG_ABSOLUTE_VOLUME);
     }
 
     @Test
@@ -1295,7 +1324,8 @@ public class HeadsetStateMachineTest {
         mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_SPK, 2);
 
         assertThat(mStateMachine.mSpeakerVolume).isEqualTo(2);
-        verify(mockAudioManager).setStreamVolume(AudioManager.STREAM_VOICE_CALL, 2, 0);
+        verify(mockAudioManager)
+                .setStreamVolume(AudioManager.STREAM_VOICE_CALL, 2, FLAG_ABSOLUTE_VOLUME);
     }
 
     @Test
@@ -1333,6 +1363,22 @@ public class HeadsetStateMachineTest {
         var flagsCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mockAudioManager).setStreamVolume(anyInt(), anyInt(), flagsCaptor.capture());
         assertThat(flagsCaptor.getValue() & AudioManager.FLAG_SHOW_UI).isEqualTo(0);
+    }
+
+    @Test
+    public void testProcessVolumeEventAudioConnected_withVolumeControlEnabled_SetAbsVolFlag() {
+        setUpAudioOnState();
+
+        doReturn(mDevice).when(mHeadsetService).getActiveDevice();
+        AudioManager mockAudioManager = mock(AudioManager.class);
+        doReturn(1).when(mockAudioManager).getStreamVolume(anyInt());
+        doReturn(mockAudioManager).when(mSystemInterface).getAudioManager();
+
+        mStateMachine.processVolumeEvent(HeadsetHalConstants.VOLUME_TYPE_SPK, 2);
+
+        var flagsCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(mockAudioManager).setStreamVolume(anyInt(), anyInt(), flagsCaptor.capture());
+        assertThat(flagsCaptor.getValue() & FLAG_ABSOLUTE_VOLUME).isEqualTo(FLAG_ABSOLUTE_VOLUME);
     }
 
     @Test
@@ -1494,7 +1540,6 @@ public class HeadsetStateMachineTest {
 
     /** A end to end test to validate received Android AT commands and processing */
     @Test
-    @EnableFlags(Flags.FLAG_MAINLINE_BETA_STORAGE)
     public void testCheckAndProcessAndroidAtFromStateMachine() {
         mInOrder.verify(mStorage).getAudioPolicyMetadata(any());
         setUpConnectedState();
@@ -1515,33 +1560,6 @@ public class HeadsetStateMachineTest {
                         "AT+ANDROID=PROBE,1,1,\"PQGHRSBCTU__\"",
                         mDevice));
         mInOrder.verify(mStorage, never()).setAudioPolicyMetadata(any(), any());
-    }
-
-    @Test
-    @DisableFlags(Flags.FLAG_MAINLINE_BETA_STORAGE)
-    public void testCheckAndProcessAndroidAtFromStateMachine_old() {
-        // setAudioPolicyMetadata is invoked in HeadsetStateMachine.init()
-        mInOrder.verify(mDatabaseManager).setAudioPolicyMetadata(any(), any());
-
-        // setup Audio Policy Feature
-        setUpConnectedState();
-
-        setUpAudioPolicy();
-        // receive and set android policy
-        sendAndDispatchStackEvent(
-                new HeadsetStackEvent(
-                        HeadsetStackEvent.EVENT_TYPE_UNKNOWN_AT,
-                        "+ANDROID=SINKAUDIOPOLICY,1,1,1",
-                        mDevice));
-        mInOrder.verify(mDatabaseManager).setAudioPolicyMetadata(any(), any());
-
-        // receive and not set android policy
-        sendAndDispatchStackEvent(
-                new HeadsetStackEvent(
-                        HeadsetStackEvent.EVENT_TYPE_UNKNOWN_AT,
-                        "AT+ANDROID=PROBE,1,1,\"PQGHRSBCTU__\"",
-                        mDevice));
-        mInOrder.verify(mDatabaseManager, never()).setAudioPolicyMetadata(any(), any());
     }
 
     /** A test to verify whether the sink audio policy command is valid */
@@ -1648,7 +1666,8 @@ public class HeadsetStateMachineTest {
                         HeadsetHalConstants.AUDIO_STATE_CONNECTED,
                         mDevice));
 
-        verify(mAudioManager, times(0)).setParameters(any());
+        //Should set nrec and wbs properties when AMSCO enabled
+        verify(mAudioManager, times(1)).setParameters(any());
     }
 
     /**
@@ -1766,29 +1785,15 @@ public class HeadsetStateMachineTest {
 
     @SafeVarargs
     private void verifyIntentSent(Matcher<Intent>... matchers) {
-        if (Flags.onlyBroadcastToLocalUser()) {
-            mInOrder.verify(mHeadsetService)
-                    .sendBroadcast(
-                            MockitoHamcrest.argThat(AllOf.allOf(matchers)),
-                            eq(BLUETOOTH_CONNECT),
-                            any());
-        } else {
-            mInOrder.verify(mHeadsetService)
-                    .sendBroadcastAsUser(
-                            MockitoHamcrest.argThat(AllOf.allOf(matchers)),
-                            eq(UserHandle.ALL),
-                            eq(BLUETOOTH_CONNECT),
-                            any());
-        }
+        mInOrder.verify(mHeadsetService)
+                .sendBroadcast(
+                        MockitoHamcrest.argThat(AllOf.allOf(matchers)),
+                        eq(BLUETOOTH_CONNECT),
+                        any());
     }
 
     private void verifyNoIntentSent() {
-        if (Flags.onlyBroadcastToLocalUser()) {
-            mInOrder.verify(mHeadsetService, never()).sendBroadcast(any(), any(), any());
-        } else {
-            mInOrder.verify(mHeadsetService, never())
-                    .sendBroadcastAsUser(any(), any(), any(), any());
-        }
+        mInOrder.verify(mHeadsetService, never()).sendBroadcast(any(), any(), any());
     }
 
     private void verifyConnectionStateIntent(int oldState, int newState) {

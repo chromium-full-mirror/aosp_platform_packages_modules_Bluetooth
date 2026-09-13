@@ -42,23 +42,23 @@
 #include "bta_api.h"
 #include "bta_gatt_api.h"
 #include "bta_hh_api.h"
-#include "btm_ble_api_types.h"
-#include "btm_sec_api_types.h"
 #include "device/include/interop.h"
 #include "gatt/database.h"
-#include "gatt_api.h"
-#include "gattdefs.h"
 #include "hardware/bt_gatt_types.h"
-#include "hiddefs.h"
 #include "osi/include/allocator.h"
 #include "osi/include/osi.h"    // ARRAY_SIZE
 #include "stack/btm/btm_sec.h"  // BTM_
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/bt_uuid16.h"
+#include "stack/include/btm_ble_api_types.h"
 #include "stack/include/btm_client_interface.h"
 #include "stack/include/btm_log_history.h"
+#include "stack/include/btm_sec_api_types.h"
 #include "stack/include/btm_status.h"
+#include "stack/include/gatt_api.h"
+#include "stack/include/gattdefs.h"
+#include "stack/include/hiddefs.h"
 #include "stack/include/l2cap_interface.h"
 #include "stack/include/main_thread.h"
 #include "stack/include/srvc_api.h"  // tDIS_VALUE
@@ -236,7 +236,10 @@ void bta_hh_le_enable(void) {
  * Returns          void
  *
  ******************************************************************************/
-void bta_hh_le_deregister(void) { BTA_GATTC_AppDeregister(bta_hh_cb.gatt_if); }
+void bta_hh_le_deregister(void) {
+  BTA_GATTC_AppDeregister(bta_hh_cb.gatt_if);
+  bta_hh_cleanup_disable(static_cast<bthh_status_t>(GATT_SUCCESS));
+}
 
 /******************************************************************************
  *
@@ -280,7 +283,8 @@ void bta_hh_le_open_conn(tBTA_HH_DEV_CB* p_cb, bool direct) {
   bta_hh_cb.le_cb_index[BTA_HH_GET_LE_CB_IDX(p_cb->hid_handle)] = p_cb->index;  // Update index map
   if (!direct) {
     // don't reconnect unbonded device
-    if (!BTM_IsBonded(p_cb->link_spec.addrt.bda, BT_TRANSPORT_LE)) {
+    if (!get_security_client_interface().BTM_IsBonded(p_cb->link_spec.addrt.bda,
+                                                          BT_TRANSPORT_LE)) {
       return;
     }
     log::debug("Add {} to background connection list", p_cb->link_spec);
@@ -288,7 +292,7 @@ void bta_hh_le_open_conn(tBTA_HH_DEV_CB* p_cb, bool direct) {
     return;
   }
 
-  BTA_GATTC_Open(bta_hh_cb.gatt_if, p_cb->link_spec.addrt.bda, BTM_BLE_DIRECT_CONNECTION, false);
+  BTA_GATTC_Open(bta_hh_cb.gatt_if, p_cb->link_spec.addrt.bda, BTM_BLE_DIRECT_CONNECTION);
 }
 
 /*******************************************************************************
@@ -632,11 +636,15 @@ static void bta_hh_le_open_cmpl(tBTA_HH_DEV_CB* p_cb) {
     bta_hh_le_register_input_notif(p_cb, p_cb->mode, true);
     bta_hh_sm_execute(p_cb, BTA_HH_OPEN_CMPL_EVT, NULL);
 
-    // Some HOGP devices requires MTU exchange be part of the initial setup to function. The size of
-    // the requested MTU does not matter as long as the procedure is triggered.
-    if (interop_match_vendor_product_ids(INTEROP_HOGP_FORCE_MTU_EXCHANGE, p_cb->dscp_info.vendor_id,
-                                         p_cb->dscp_info.product_id)) {
-      BTA_GATTC_ConfigureMTU(p_cb->conn_id, GATT_MAX_MTU_SIZE);
+    // TODO(b/444476206): Remove INTEROP_HOGP_FORCE_MTU_EXCHANGE from interop database when
+    // hogp_host_mtu_exchange flag is shipped.
+    if (!com_android_bluetooth_flags_hogp_host_mtu_exchange()) {
+      // Some HOGP devices requires MTU exchange be part of the initial setup to function. The size
+      // of the requested MTU does not matter as long as the procedure is triggered.
+      if (interop_match_vendor_product_ids(INTEROP_HOGP_FORCE_MTU_EXCHANGE,
+                                           p_cb->dscp_info.vendor_id, p_cb->dscp_info.product_id)) {
+        BTA_GATTC_ConfigureMTU(p_cb->conn_id, GATT_MAX_MTU_SIZE);
+      }
     }
   }
 }
@@ -925,8 +933,7 @@ static void bta_hh_le_dis_cback(const RawAddress& addr, tDIS_VALUE* p_dis_value)
     p_cb->dscp_info.version = p_dis_value->pnp_id.product_version;
   }
 
-  Uuid pri_srvc = Uuid::From16Bit(UUID_SERVCLASS_LE_HID);
-  BTA_GATTC_ServiceSearchRequest(p_cb->conn_id, pri_srvc);
+  BTA_GATTC_ServiceSearchRequest(p_cb->conn_id);
 }
 
 /*******************************************************************************
@@ -948,8 +955,7 @@ static void bta_hh_le_pri_service_discovery(tBTA_HH_DEV_CB* p_cb) {
   if (!DIS_ReadDISInfo(p_cb->link_spec.addrt.bda, bta_hh_le_dis_cback, DIS_ATTR_PNP_ID_BIT)) {
     log::error("read DIS failed");
     p_cb->disc_active &= ~BTA_HH_LE_DISC_DIS;
-    Uuid pri_srvc = Uuid::From16Bit(UUID_SERVCLASS_LE_HID);
-    BTA_GATTC_ServiceSearchRequest(p_cb->conn_id, pri_srvc);
+    BTA_GATTC_ServiceSearchRequest(p_cb->conn_id);
     return;
   }
 
@@ -1103,24 +1109,29 @@ static void bta_hh_clear_service_cache(tBTA_HH_DEV_CB* p_cb) {
  *
  ******************************************************************************/
 void bta_hh_start_security(tBTA_HH_DEV_CB* p_cb, const tBTA_HH_DATA* /* p_buf */) {
-  if (BTM_IsEncrypted(p_cb->link_spec.addrt.bda, BT_TRANSPORT_LE)) {
+  if (get_security_client_interface().BTM_IsEncrypted(p_cb->link_spec.addrt.bda,
+                                                          BT_TRANSPORT_LE)) {
     log::debug("{} is already encrypted", p_cb->link_spec);
     p_cb->status = BTHH_OK;
     bta_hh_sm_execute(p_cb, BTA_HH_ENC_CMPL_EVT, NULL);
-  } else if (BTM_SecIsLeSecurityPending(p_cb->link_spec.addrt.bda)) {
+  } else if (get_security_client_interface().BTM_SecIsLeSecurityPending(
+                     p_cb->link_spec.addrt.bda)) {
     log::warn("Some security procedure already pending for {}", p_cb->link_spec);
     p_cb->security_pending = true;  // Wait for encryption to complete
-  } else if (BTM_IsBonded(p_cb->link_spec.addrt.bda, BT_TRANSPORT_LE)) {
+  } else if (get_security_client_interface().BTM_IsBonded(p_cb->link_spec.addrt.bda,
+                                                              BT_TRANSPORT_LE)) {
     log::info("{} is bonded, but not encrypted", p_cb->link_spec);
     p_cb->status = BTHH_ERR_AUTH_FAILED;
-    BTM_SetEncryption(p_cb->link_spec.addrt.bda, BT_TRANSPORT_LE, bta_hh_le_encrypt_cback, NULL,
-                      BTM_BLE_SEC_ENCRYPT);
+    get_security_client_interface().BTM_SetEncryption(p_cb->link_spec.addrt.bda,
+                                                          BT_TRANSPORT_LE, bta_hh_le_encrypt_cback,
+                                                          NULL, BTM_BLE_SEC_ENCRYPT);
   } else {
     log::error("{} is not bonded", p_cb->link_spec);
     p_cb->status = BTHH_ERR_AUTH_FAILED;
     bta_hh_clear_service_cache(p_cb);
-    BTM_SetEncryption(p_cb->link_spec.addrt.bda, BT_TRANSPORT_LE, bta_hh_le_encrypt_cback, NULL,
-                      BTM_BLE_SEC_ENCRYPT_NO_MITM);
+    get_security_client_interface().BTM_SetEncryption(p_cb->link_spec.addrt.bda,
+                                                          BT_TRANSPORT_LE, bta_hh_le_encrypt_cback,
+                                                          NULL, BTM_BLE_SEC_ENCRYPT_NO_MITM);
   }
 }
 
@@ -1162,8 +1173,11 @@ void bta_hh_gatt_open(tBTA_HH_DEV_CB* p_cb, const tBTA_HH_DATA* p_buf) {
     log::verbose("hid_handle=0x{:2x} conn_id=0x{:04x} cb_index={}", p_cb->hid_handle, p_cb->conn_id,
                  p_cb->index);
 
+    if (com_android_bluetooth_flags_hogp_host_mtu_exchange()) {
+      // Ensure that the MTU is set to the maximum size
+      BTA_GATTC_ConfigureMTU(p_cb->conn_id, GATT_MAX_MTU_SIZE);
+    }
     bta_hh_sm_execute(p_cb, BTA_HH_START_ENC_EVT, NULL);
-
   } else {
     /* open failure */
     tBTA_HH_DATA bta_hh_data;
@@ -1193,9 +1207,7 @@ static void bta_hh_le_close(const tBTA_GATTC_CLOSE& gattc_data) {
   }
 
   // remove bg conn here so hogp connection can be re-armed when acl is disconnected.
-  if (com_android_bluetooth_flags_hogp_fix_reconnection()) {
-    bta_hh_le_remove_dev_bg_conn(p_cb);
-  }
+  bta_hh_le_remove_dev_bg_conn(p_cb);
 
   if (p_cb->hid_srvc.state == BTA_HH_SERVICE_CHANGED) {
     /* Service change would have already prompted a local disconnection */
@@ -1793,9 +1805,6 @@ void bta_hh_le_api_disc_act(tBTA_HH_DEV_CB* p_cb) {
 
   BtaGattQueue::Clean(p_cb->conn_id);
   BTA_GATTC_Close(p_cb->conn_id);
-  if (!com_android_bluetooth_flags_hogp_fix_reconnection()) {
-    bta_hh_le_remove_dev_bg_conn(p_cb);
-  }
 }
 
 /*******************************************************************************
@@ -2124,8 +2133,7 @@ static void bta_hh_le_add_dev_bg_conn(tBTA_HH_DEV_CB* p_cb) {
   }
 
   /* Add device into BG connection to accept remote initiated connection */
-  BTA_GATTC_Open(bta_hh_cb.gatt_if, p_cb->link_spec.addrt.bda, BTM_BLE_BKG_CONNECT_ALLOW_LIST,
-                 false);
+  BTA_GATTC_Open(bta_hh_cb.gatt_if, p_cb->link_spec.addrt.bda, BTM_BLE_BKG_CONNECT_ALLOW_LIST);
   p_cb->in_bg_conn = true;
 }
 
@@ -2263,10 +2271,6 @@ static void bta_hh_gattc_callback(tBTA_GATTC_EVT event, tBTA_GATTC* p_data) {
   }
 
   switch (event) {
-    case BTA_GATTC_DEREG_EVT: /* 1 */
-      bta_hh_cleanup_disable(static_cast<bthh_status_t>(p_data->reg_oper.status));
-      break;
-
     case BTA_GATTC_OPEN_EVT: /* 2 */
       link_spec.addrt.bda = p_data->open.remote_bda;
       link_spec.transport = p_data->open.transport;

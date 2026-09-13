@@ -35,8 +35,8 @@ RawAddress addressFromJByteArray(JNIEnv* env, jbyteArray object) {
   return address;
 }
 
-ScopedLocalRef<jbyteArray> addressToJByteArray(JNIEnv* env, RawAddress address) {
-  ScopedLocalRef<jbyteArray> object(env, env->NewByteArray(RawAddress::kLength));
+ScopedLocalRef<jbyteArray> addressToJByteArray(const CallbackEnv& env, RawAddress address) {
+  ScopedLocalRef<jbyteArray> object(env.get(), env->NewByteArray(RawAddress::kLength));
   log::assert_that(object.get() != nullptr, "null jbyte array allocation");
   // SetByteArrayRegion performs a copy of the original buffer and is safe
   // to use with a local reference to the address data.
@@ -45,16 +45,24 @@ ScopedLocalRef<jbyteArray> addressToJByteArray(JNIEnv* env, RawAddress address) 
   return object;
 }
 
-ScopedLocalRef<jstring> addressToJString(JNIEnv* env, RawAddress address) {
+ScopedLocalRef<jstring> addressToJString(const CallbackEnv& env, RawAddress address) {
   char address_cstr[32];
   snprintf(address_cstr, sizeof(address_cstr), "%02X:%02X:%02X:%02X:%02X:%02X", address.address[0],
            address.address[1], address.address[2], address.address[3], address.address[4],
            address.address[5]);
   // NewStringUTF performs a copy of the original buffer and is safe to use with
   // a local reference to the address string.
-  ScopedLocalRef<jstring> object(env, env->NewStringUTF(address_cstr));
+  ScopedLocalRef<jstring> object(env.get(), env->NewStringUTF(address_cstr));
   log::assert_that(object.get() != nullptr, "null jstring allocation");
   return object;
+}
+
+std::string stringFromJstring(JNIEnv* env, const jstring object) {
+  const char* string_char = env->GetStringUTFChars(object, nullptr);
+  log::assert_that(string_char != nullptr, "null string");
+  std::string cpp_string = std::string(string_char);
+  env->ReleaseStringUTFChars(object, string_char);
+  return cpp_string;
 }
 
 }  // namespace android

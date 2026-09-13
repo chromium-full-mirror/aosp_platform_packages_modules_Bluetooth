@@ -20,11 +20,11 @@
 #include <sstream>
 #include <vector>
 
-#include "a2dp_codec_api.h"
-#include "a2dp_constants.h"
-#include "avdt_api.h"
 #include "common/message_loop_thread.h"
 #include "hardware/bt_av.h"
+#include "stack/include/a2dp_codec_api.h"
+#include "stack/include/a2dp_constants.h"
+#include "stack/include/avdt_api.h"
 
 namespace bluetooth {
 namespace audio {
@@ -69,6 +69,10 @@ public:
     return Status::FAILURE;
   }
   virtual Status SourceMetadataChanged(btav_a2dp_codec_audio_context_t /*audio_context*/) const {
+    log::error("unimplemented");
+    return Status::FAILURE;
+  }
+  virtual Status UpdateSinkLatency(int64_t /* latency_ms */) const {
     log::error("unimplemented");
     return Status::FAILURE;
   }
@@ -119,6 +123,9 @@ void ack_stream_suspended(Status status);
 
 // Read from the FMQ of BluetoothAudio HAL
 size_t read(uint8_t* p_buf, uint32_t len);
+
+// Clear the audio FMQ.
+void flush_source();
 
 // Update A2DP delay report to BluetoothAudio HAL
 void set_remote_delay(uint16_t delay_report);
@@ -208,7 +215,7 @@ struct a2dp_remote_capabilities {
 std::optional<a2dp_configuration> get_a2dp_configuration(
         RawAddress peer_address, std::vector<a2dp_remote_capabilities> const& remote_seps,
         btav_a2dp_codec_config_t const& user_preferences,
-        ::bluetooth::a2dp::CodecId user_preferred_codec_id, bool is_source);
+        std::optional<::bluetooth::a2dp::CodecId> user_preferred_codec_id, bool is_source);
 
 // Query the codec parameters from the audio HAL.
 // The HAL is expected to parse the codec configuration

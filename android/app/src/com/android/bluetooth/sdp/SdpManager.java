@@ -35,6 +35,7 @@ import android.os.ParcelUuid;
 import android.os.Parcelable;
 import android.util.Log;
 
+import com.android.bluetooth.Util;
 import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AbstractionLayer;
 import com.android.bluetooth.btservice.AdapterService;
@@ -223,7 +224,6 @@ public class SdpManager {
             int supportedMessageTypes,
             String serviceName,
             boolean moreResults) {
-
         synchronized (TRACKER_LOCK) {
             SdpSearchInstance inst = mSdpSearchTracker.getSearchInstance(address, uuid);
             SdpMasRecord sdpRecord = null;
@@ -327,7 +327,6 @@ public class SdpManager {
             String serviceName,
             byte[] formatsList,
             boolean moreResults) {
-
         synchronized (TRACKER_LOCK) {
             SdpSearchInstance inst = mSdpSearchTracker.getSearchInstance(address, uuid);
             SdpOppOpsRecord sdpRecord = null;
@@ -360,7 +359,6 @@ public class SdpManager {
             int profileVersion,
             String serviceName,
             boolean moreResults) {
-
         synchronized (TRACKER_LOCK) {
             SdpSearchInstance inst = mSdpSearchTracker.getSearchInstance(address, uuid);
             SdpSapsRecord sdpRecord = null;
@@ -453,7 +451,6 @@ public class SdpManager {
     /* Caller must hold the mTrackerLock */
     @GuardedBy("TRACKER_LOCK")
     private void startSearch() {
-
         SdpSearchInstance inst = mSdpSearchTracker.getNext();
 
         if ((inst != null) && (!mSearchInProgress)) {
@@ -478,7 +475,6 @@ public class SdpManager {
     /* Caller must hold the mTrackerLock */
     @GuardedBy("TRACKER_LOCK")
     private void sendSdpIntent(SdpSearchInstance inst, Parcelable record, boolean moreResults) {
-
         inst.stopSearch();
 
         mAdapterService.sendSdpSearchRecord(
@@ -496,7 +492,7 @@ public class SdpManager {
          * Keep in mind that the MAP client needs to use this as well,
          * hence to make it call-backs, the MAP client profile needs to be
          * part of the Bluetooth APK. */
-        mAdapterService.sendBroadcast(intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastBundle());
+        mAdapterService.sendBroadcast(intent, BLUETOOTH_CONNECT, Util.getTempBroadcastBundle());
 
         if (!moreResults) {
             // Remove the outstanding UUID request

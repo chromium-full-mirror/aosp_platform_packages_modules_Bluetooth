@@ -36,7 +36,8 @@ Handler::Handler(Thread* thread)
   alarm_ = new Alarm(thread_, false);
   event_ = thread_->GetReactor()->NewEvent();
   reactable_ = thread_->GetReactor()->Register(
-          event_->Id(), base::BindRepeating(&Handler::handle_next_event, base::Unretained(this)),
+          event_->Id(),
+          base::BindRepeating(&Handler::handle_all_queued_events, base::Unretained(this)),
           base::RepeatingClosure());
 }
 
@@ -50,17 +51,30 @@ Handler::~Handler() {
   event_->Close();
 }
 
-void Handler::Post(base::OnceClosure closure) {
+std::optional<base::OnceClosure> Handler::Post(base::OnceClosure closure) {
+  bool should_notify = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (was_cleared()) {
       log::warn("Posting to a handler which has been cleared, thread: {}",
                 thread_->GetThreadName());
-      return;
+      return std::move(closure);
     }
     tasks_->emplace(std::move(closure));
+    if (!is_active_) {
+      is_active_ = true;
+      should_notify = true;
+    }
   }
-  event_->Notify();
+
+  // We only skip notification if we are currently inside the handle_all_queued_events
+  // loop for this specific handler.
+  // Otherwise, we must notify to ensure the Reactor triggers a new
+  // handle_all_queued_events turn.
+  if (should_notify) {
+    event_->Notify();
+  }
+  return std::nullopt;
 }
 
 void Handler::Clear() {
@@ -101,24 +115,24 @@ void Handler::WaitUntilStopped(std::chrono::milliseconds timeout) {
                    "assert failed: thread_->GetReactor()->WaitForUnregisteredReactable(timeout)");
 }
 
-void Handler::handle_next_event() {
-  base::OnceClosure closure;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    bool has_data = event_->Read();
+void Handler::handle_all_queued_events() {
+  event_->Read();
+  while (true) {
+    base::OnceClosure closure;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (was_cleared() || tasks_->empty()) {
+        is_active_ = false;
+        return;
+      }
+      is_active_ = true;
 
-    if (was_cleared()) {
-      return;
+      closure = std::move(tasks_->front());
+      tasks_->pop();
+      notify_promise_if_idle();
     }
-    log::assert_that(has_data, "Notified for work but no work available, thread: {}",
-                     thread_->GetThreadName());
-
-    closure = std::move(tasks_->front());
-    tasks_->pop();
-    notify_promise_if_idle();
+    std::move(closure).Run();
   }
-
-  std::move(closure).Run();
 }
 
 std::future<void> Handler::NotifyWhenIdle() {
@@ -133,10 +147,10 @@ std::future<void> Handler::NotifyWhenIdle() {
   return future;
 }
 
-bool Handler::PostWithDelay(base::OnceClosure closure, std::chrono::milliseconds delay) {
+std::optional<base::OnceClosure> Handler::PostWithDelay(base::OnceClosure closure,
+                                                        std::chrono::milliseconds delay) {
   if (delay == std::chrono::milliseconds::zero()) {
-    Post(std::move(closure));
-    return true;
+    return Post(std::move(closure));
   }
 
   bool reschedule = false;
@@ -145,7 +159,7 @@ bool Handler::PostWithDelay(base::OnceClosure closure, std::chrono::milliseconds
     if (was_cleared()) {
       log::warn("Posting to a handler which has been cleared, thread: {}",
                 thread_->GetThreadName());
-      return false;
+      return std::move(closure);
     }
 
     auto time_to_run = boottime_clock::now() + delay;
@@ -160,7 +174,7 @@ bool Handler::PostWithDelay(base::OnceClosure closure, std::chrono::milliseconds
   if (reschedule) {
     reschedule_delayed_tasks();
   }
-  return true;
+  return std::nullopt;
 }
 
 void Handler::handle_delayed_event() {

@@ -33,7 +33,6 @@
 #include "internal_include/bt_target.h"
 #include "p_256_ecc_pp.h"
 #include "smp_int.h"
-#include "stack/btm/btm_ble_sec.h"
 #include "stack/btm/btm_dev.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/btm/btm_sec_utils.h"
@@ -123,7 +122,7 @@ void smp_send_app_cback(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
       case SMP_IO_CAP_REQ_EVT:
         cb_data.io_req.auth_req = p_cb->peer_auth_req;
         cb_data.io_req.oob_data = SMP_OOB_NONE;
-        cb_data.io_req.io_cap = BtIoCap::KEYBOARD_DISPLAY;
+        cb_data.io_req.io_cap = kBtIoCapLeMax;  // This will be overridden by BTM
         cb_data.io_req.max_key_size = SMP_MAX_ENC_KEY_SIZE;
         cb_data.io_req.init_keys = p_cb->local_i_key;
         cb_data.io_req.resp_keys = p_cb->local_r_key;
@@ -162,7 +161,7 @@ void smp_send_app_cback(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
         cb_data.pairing_algorithm = smp_get_pairing_algorithm(p_cb);
         break;
       case SMP_SEC_REQUEST_EVT:
-        cb_data.pairing_algorithm = PairingAlgorithm::NONE; // Pairing participation
+        cb_data.pairing_algorithm = PairingAlgorithm::NONE;  // Pairing participation
         break;
 
       default:
@@ -401,7 +400,8 @@ void smp_send_enc_info(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
   };
 
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) && (p_cb->loc_auth_req & SMP_AUTH_BOND)) {
-    btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_LENC, &le_key, true);
+    get_security_client_interface().BTM_SecSaveLeKey(p_cb->pairing_bda, BTM_LE_KEY_LENC, le_key,
+                                                         true);
   }
   smp_key_distribution(p_cb, NULL);
 }
@@ -418,7 +418,8 @@ void smp_send_id_info(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
   smp_send_cmd(SMP_OPCODE_ID_ADDR, p_cb);
 
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) && (p_cb->loc_auth_req & SMP_AUTH_BOND)) {
-    btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_LID, nullptr, true);
+    get_security_client_interface().BTM_SecSaveLeKey(p_cb->pairing_bda, BTM_LE_KEY_LID,
+                                                         tBTM_LE_KEY_VALUE{}, true);
   }
 
   smp_key_distribution_by_transport(p_cb, NULL);
@@ -439,7 +440,8 @@ void smp_send_csrk_info(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
                             .csrk = p_cb->csrk,
                     },
     };
-    btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_LCSRK, &key, true);
+    get_security_client_interface().BTM_SecSaveLeKey(p_cb->pairing_bda, BTM_LE_KEY_LCSRK, key,
+                                                         true);
   }
 
   smp_key_distribution_by_transport(p_cb, NULL);
@@ -455,7 +457,7 @@ void smp_send_ltk_reply(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   Octet16 stk;
   memcpy(stk.data(), p_data->key.p_data, stk.size());
   /* send stk as LTK response */
-  btm_ble_ltk_request_reply(p_cb->pairing_bda, true, stk);
+  get_security_client_interface().BTM_BleLtkRequestReply(p_cb->pairing_bda, true, stk);
 }
 
 /*******************************************************************************
@@ -471,7 +473,8 @@ void smp_proc_sec_req(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   }
 
   tBTM_LE_AUTH_REQ auth_req = *(tBTM_LE_AUTH_REQ*)p_data->p_data;
-  tBTM_BLE_SEC_REQ_ACT sec_req_act = btm_ble_link_sec_check(p_cb->pairing_bda, auth_req);
+  tBTM_BLE_SEC_REQ_ACT sec_req_act =
+          get_security_client_interface().BTM_BleLinkSecCheck(p_cb->pairing_bda, auth_req);
 
   p_cb->cb_evt = SMP_EVT_NONE;
   log::verbose("auth_req={:#x} sec_req_act={}", auth_req, sec_req_act);
@@ -558,9 +561,9 @@ void smp_proc_pair_cmd(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
      * If we are bonded, its key upgrade and ok to continue.
      * If we are not bonded, its new device pairing and ok.
      */
-    if (BTM_IsBonded(p_cb->pairing_bda, BT_TRANSPORT_LE) &&
-        !BTM_IsEncrypted(p_cb->pairing_bda, BT_TRANSPORT_LE)) {
-      get_btm_client_interface().security.BTM_SecReportBondLoss(p_cb->pairing_bda, BT_TRANSPORT_LE);
+    if (get_security_client_interface().BTM_IsBonded(p_cb->pairing_bda, BT_TRANSPORT_LE) &&
+        !get_security_client_interface().BTM_IsEncrypted(p_cb->pairing_bda, BT_TRANSPORT_LE)) {
+      get_security_client_interface().BTM_SecReportBondLoss(p_cb->pairing_bda, BT_TRANSPORT_LE);
       if (!is_autonomous_repairing_supported() || !p_device->bond_lost) {
         // continue with pairing if it's a bond loss scenario.
         return;
@@ -589,10 +592,12 @@ void smp_proc_pair_cmd(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 
   p_cb->peer_io_caps = static_cast<BtIoCap>(peer_io_caps);
 
-  tSMP_STATUS reason = p_cb->cert_failure;
-  if (reason == SMP_ENC_KEY_SIZE) {
+  int min_key_size = btm_sec_get_min_enc_key_size();
+  if (p_cb->cert_failure == SMP_ENC_KEY_SIZE || p_cb->peer_enc_size < min_key_size) {
+    log::warn("Encryption key size {} smaller than the minimum {}", p_cb->peer_enc_size,
+              min_key_size);
     tSMP_INT_DATA smp_int_data;
-    smp_int_data.status = reason;
+    smp_int_data.status = SMP_ENC_KEY_SIZE;
     smp_sm_event(p_cb, SMP_AUTH_CMPL_EVT, &smp_int_data);
     return;
   }
@@ -854,7 +859,8 @@ void smp_br_process_pairing_command(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   }
 
   /* rejecting BR pairing request over non-SC BR link */
-  if (!p_device->sec_rec.new_encryption_key_is_p256 && p_cb->role == HCI_ROLE_PERIPHERAL) {
+  if (p_device->sec_rec.bredr_sc_enc_reason == BtmSecurityRecord::BrEdrScEncReason::OTHER &&
+      p_cb->role == HCI_ROLE_PERIPHERAL) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_XTRANS_DERIVE_NOT_ALLOW;
     smp_br_state_machine_event(p_cb, SMP_BR_AUTH_CMPL_EVT, &smp_int_data);
@@ -885,6 +891,16 @@ void smp_br_process_pairing_command(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 
   p_cb->peer_io_caps = static_cast<BtIoCap>(peer_io_caps);
 
+  int min_key_size = btm_sec_get_min_enc_key_size();
+  if (p_cb->peer_enc_size < min_key_size) {
+    log::warn("Encryption key size {} smaller than the minimum {}", p_cb->peer_enc_size,
+              min_key_size);
+    tSMP_INT_DATA smp_int_data;
+    smp_int_data.status = SMP_ENC_KEY_SIZE;
+    smp_br_state_machine_event(p_cb, SMP_BR_AUTH_CMPL_EVT, &smp_int_data);
+    return;
+  }
+
   if (smp_command_has_invalid_parameters(p_cb)) {
     tSMP_INT_DATA smp_int_data;
     smp_int_data.status = SMP_INVALID_PARAMETERS;
@@ -899,7 +915,7 @@ void smp_br_process_pairing_command(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   p_cb->local_r_key = p_cb->peer_r_key;
 
   if (p_cb->role == HCI_ROLE_PERIPHERAL) {
-    p_device->sec_rec.new_encryption_key_is_p256 = false;
+    p_device->sec_rec.bredr_sc_enc_reason = BtmSecurityRecord::BrEdrScEncReason::OTHER;
     /* shortcut to skip Security Grant step */
     p_cb->cb_evt = SMP_BR_KEYS_REQ_EVT;
   } else {
@@ -1041,7 +1057,8 @@ void smp_proc_central_id(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   le_key.pairing_algorithm = smp_get_pairing_algorithm(p_cb);
 
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) && (p_cb->loc_auth_req & SMP_AUTH_BOND)) {
-    btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_PENC, &le_key, true);
+    get_security_client_interface().BTM_SecSaveLeKey(p_cb->pairing_bda, BTM_LE_KEY_PENC, le_key,
+                                                         true);
   }
 
   smp_key_distribution(p_cb, NULL);
@@ -1094,7 +1111,8 @@ void smp_proc_id_addr(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 
   /* store the ID key from peer device */
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) && (p_cb->loc_auth_req & SMP_AUTH_BOND)) {
-    btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_PID, &pid_key, true);
+    get_security_client_interface().BTM_SecSaveLeKey(p_cb->pairing_bda, BTM_LE_KEY_PID, pid_key,
+                                                         true);
     p_cb->cb_evt = SMP_LE_ADDR_ASSOC_EVT;
     smp_send_app_cback(p_cb, NULL);
   }
@@ -1132,7 +1150,8 @@ void smp_proc_srk_info(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
   le_key.pcsrk_key.counter = 0;
 
   if ((p_cb->peer_auth_req & SMP_AUTH_BOND) && (p_cb->loc_auth_req & SMP_AUTH_BOND)) {
-    btm_sec_save_le_key(p_cb->pairing_bda, BTM_LE_KEY_PCSRK, &le_key, true);
+    get_security_client_interface().BTM_SecSaveLeKey(p_cb->pairing_bda, BTM_LE_KEY_PCSRK,
+                                                         le_key, true);
   }
 }
 
@@ -1194,9 +1213,10 @@ void smp_start_enc(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
 
   log::verbose("addr:{}", p_cb->pairing_bda);
   if (p_data != NULL) {
-    cmd = btm_ble_start_encrypt(p_cb->pairing_bda, true, (Octet16*)p_data->key.p_data);
+    cmd = get_security_client_interface().BTM_BleStartEncrypt(p_cb->pairing_bda, true,
+                                                                  (Octet16*)p_data->key.p_data);
   } else {
-    cmd = btm_ble_start_encrypt(p_cb->pairing_bda, false, NULL);
+    cmd = get_security_client_interface().BTM_BleStartEncrypt(p_cb->pairing_bda, false, NULL);
   }
 
   if (cmd != tBTM_STATUS::BTM_CMD_STARTED && cmd != tBTM_STATUS::BTM_BUSY) {
@@ -1386,11 +1406,17 @@ void smp_key_distribution(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
           return;
         }
 
-        if (!(p_device->sec_rec.sec_flags & BTM_SEC_LE_LINK_KEY_AUTHED) &&
-            (p_device->sec_rec.sec_flags & BTM_SEC_LINK_KEY_AUTHED)) {
-          log::verbose("BR key is higher security than existing LE keys, don't derive LK from LTK");
-        } else {
+        if ((p_device->sec_rec.sec_flags & BTM_SEC_LE_LINK_KEY_AUTHED) ||
+            !(p_device->sec_rec.sec_flags & BTM_SEC_LINK_KEY_AUTHED)) {
           smp_derive_link_key_from_long_term_key(p_cb, NULL);
+        } else if (is_autonomous_repairing_supported() &&
+                   com_android_bluetooth_flags_bugfix_autonomous_repairing() &&
+                   p_device->bond_lost) {
+          // Derive the LK again, if the device is recovering from a bond loss.
+          log::error("Forcing LK derivation from LTK due to bond loss recovery!!");
+          smp_derive_link_key_from_long_term_key(p_cb, NULL);
+        } else {
+          log::verbose("BR key is higher security than existing LE keys, don't derive LK from LTK");
         }
         p_cb->derive_lk = false;
       }
@@ -1620,9 +1646,13 @@ void smp_br_send_pair_response(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
  * Description      This function is called to send the pairing complete
  *                  callback and remove the connection if needed.
  ******************************************************************************/
-void smp_pairing_cmpl(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
-  if (p_cb->total_tx_unacked == 0) {
+void smp_pairing_cmpl(tSMP_CB* p_cb, tSMP_INT_DATA* p_data) {
+  if (p_cb->total_tx_unacked == 0 && p_data != nullptr) {
     /* process the pairing complete */
+    if (p_cb->is_pair_cancel == true) {
+      log::verbose("Canceled pairing with p_data->status: {}", smp_status_text(p_data->status));
+      p_cb->status = p_data->status;
+    }
     smp_proc_pairing_cmpl(p_cb);
   }
 }
@@ -2109,7 +2139,7 @@ void smp_link_encrypted(const RawAddress& bda, uint8_t encr_enable) {
      * overwritten when key exchange happens                                 */
     if (p_cb->loc_enc_size != 0 && encr_enable) {
       /* update the link encryption key size if a SMP pairing just performed */
-      btm_ble_update_sec_key_size(bda, p_cb->loc_enc_size);
+      get_security_client_interface().BTM_BleUpdateSecKeySize(bda, p_cb->loc_enc_size);
     }
 
     tSMP_INT_DATA smp_int_data = {

@@ -22,13 +22,11 @@ import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_UNKNOWN;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
 
 import android.annotation.RequiresPermission;
-import android.bluetooth.BluetoothAudioConfig;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.IBluetoothA2dpSink;
 import android.content.AttributionSource;
 
 import com.android.bluetooth.Util;
-import com.android.bluetooth.Utils;
 import com.android.bluetooth.profile.ProfileService.IProfileServiceBinder;
 
 import java.util.Collections;
@@ -52,12 +50,12 @@ class A2dpSinkServiceBinder extends IBluetoothA2dpSink.Stub implements IProfileS
     private A2dpSinkService getService(AttributionSource source) {
         A2dpSinkService service = mService;
 
-        if (Utils.isInstrumentationTestMode()) {
+        if (Util.isInstrumentationTestMode()) {
             return service;
         }
 
         if (!Util.checkProfileAvailable(service, TAG)
-                || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
+                || !Util.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
                 || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
             return null;
         }
@@ -125,14 +123,5 @@ class A2dpSinkServiceBinder extends IBluetoothA2dpSink.Stub implements IProfileS
 
         service.enforceCallingOrSelfPermission(BLUETOOTH_PRIVILEGED, null);
         return service.isA2dpPlaying(device);
-    }
-
-    @Override
-    public BluetoothAudioConfig getAudioConfig(BluetoothDevice device, AttributionSource source) {
-        A2dpSinkService service = getService(source);
-        if (service == null) {
-            return null;
-        }
-        return service.getAudioConfig(device);
     }
 }

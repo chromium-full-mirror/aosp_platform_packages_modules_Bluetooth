@@ -25,10 +25,13 @@
 #include <map>
 
 #include "bta/le_audio/common/gatt_client_data_tracker.h"
+#include "bta/le_audio/common/le_audio_event_tracker.h"
 #include "bta/le_audio/le_audio_types.h"
 
 // Generated packet headers:
 #include "ascs/ascs_packets.h"
+
+using bluetooth::stack::tGATT_REQ_CBACK;
 
 namespace bluetooth::le_audio {
 
@@ -74,6 +77,8 @@ bool ParseAseCtpRequestWithAseIds(
 }
 }  // namespace
 
+static const char* EVT_LOG_TAG = "Asc Service";
+
 // Static instance lifetime management
 static std::shared_ptr<Ascs> instance = nullptr;
 std::shared_ptr<Ascs> InstantiateAscs() {
@@ -113,6 +118,7 @@ struct Ascs::service_impl {
   int server_if_ = 0;
   Ascs::Callbacks* callbacks_ = nullptr;
   GattClientDataTracker<AscDevice> device_tracker_;
+  std::shared_ptr<LeAudioEventTracker> event_tracker_;
 
   ServiceDescriptor service_descriptor_;
 
@@ -130,7 +136,7 @@ struct Ascs::service_impl {
   // variable's destructors are executed, rendering them invalid.
   base::WeakPtrFactory<Ascs::service_impl> weak_factory_{this};
 
-  service_impl() = default;
+  service_impl() { event_tracker_ = LeAudioEventTracker::GetLeAudioSinkInstance(); }
   ~service_impl() {
     if (server_if_ != 0) {
       BTA_GATTS_AppDeregister(server_if_);
@@ -154,14 +160,143 @@ struct Ascs::service_impl {
 
     callbacks_ = callbacks;
 
-    BTA_GATTS_AppRegister(
-            uuid::kAudioStreamControlServiceUuid,
-            [](tBTA_GATTS_EVT event, tBTA_GATTS* p_data) {
-              if (instance) {
-                instance->service_impl_->OnGattEventHandler(event, p_data);
-              }
-            },
-            false);
+    static bluetooth::stack::tGATT_REQ_CBACK ascs_req_cb = {
+            .read_characteristic_cb = OnGattReadCharacteristicStatic,
+            .read_descriptor_cb = OnGattReadDescriptorStatic,
+            .write_characteristic_cb = OnGattWriteCharacteristicStatic,
+            .write_descriptor_cb = OnGattWriteDescriptorStatic,
+            .exec_write_cb = tGATT_REQ_CBACK::do_nothing,
+            .mtu_changed_cb = tGATT_REQ_CBACK::do_nothing,
+            .conf_cb = tGATT_REQ_CBACK::do_nothing,
+    };
+    static const stack::tGATT_CBACK ascs_ops = {
+            .p_conn_cb = OnGattConnStatic,
+            .p_req_cb = &ascs_req_cb,
+    };
+
+    server_if_ = BTA_GATTS_AppRegister(uuid::kAudioStreamControlServiceUuid, &ascs_ops, false);
+    log::assert_that(server_if_ != stack::GATT_IF_INVALID, "Failed to register GATT Server");
+    log::info("GATT Server Registered with server_if: {}", server_if_);
+
+    auto gatt_db = BuildGattDatabase(service_descriptor_);
+
+    log::info("Adding LE Audio Service {} service to GATT database.", gatt_db.begin()->uuid);
+    auto status = BTA_GATTS_AddService(server_if_, &gatt_db);
+    log::info("GATT Service Add status: {}, server_if: {}", gatt_status_text(status), server_if_);
+    event_tracker_->OnEvent(EVT_LOG_TAG, LeAudioEventTracker::EventType::POINT,
+                            "GATT Service Add status: {}, server_if: {}", gatt_status_text(status),
+                            server_if_);
+
+    log::assert_that(status == GATT_SERVICE_STARTED, "Unable to add GATT service");
+    log::assert_that(gatt_db.size() != 0, "Service is empty");
+    log::assert_that(gatt_db.begin()->uuid == uuid::kAudioStreamControlServiceUuid,
+                     "Service not mine!");
+
+    AscCharacteristicMetadata* last_char_metadata = nullptr;
+    uint8_t ase_id = 0x01;
+
+    std::set<uint8_t> sink_ases;
+    std::set<uint8_t> source_ases;
+
+    for (const auto& element : gatt_db) {
+      if (element.type == BTGATT_DB_CHARACTERISTIC) {
+        log::info("Characteristic added: UUID {}, handle:0x{:04x}", element.uuid.ToString(),
+                  element.attribute_handle);
+        char_metadata_by_value_handle_[element.attribute_handle] = {.uuid = element.uuid};
+        // Keep the pointer to the last discovered characteristic metadata to add CCCD handle info
+        last_char_metadata = &char_metadata_by_value_handle_.at(element.attribute_handle);
+
+        if (element.uuid == uuid::kAudioStreamEndpointControlPointCharacteristicUuid) {
+          ase_ctp_characteristic_handle_ = element.attribute_handle;
+
+        } else {
+          // Assign ASE IDs
+          if (element.uuid == uuid::kSinkAudioStreamEndpointUuid) {
+            sink_ases.insert(ase_id);
+            last_char_metadata->svc_data.ase_id = ase_id++;
+            ase_char_handle_by_id_[last_char_metadata->svc_data.ase_id] = element.attribute_handle;
+
+          } else if (element.uuid == uuid::kSourceAudioStreamEndpointUuid) {
+            source_ases.insert(ase_id);
+            last_char_metadata->svc_data.ase_id = ase_id++;
+            ase_char_handle_by_id_[last_char_metadata->svc_data.ase_id] = element.attribute_handle;
+
+          } else {
+            log::assert_that(false, "Unknown characteristic uuid: {} found",
+                             element.uuid.ToString());
+            continue;
+          }
+        }
+
+      } else if (element.type == BTGATT_DB_DESCRIPTOR) {
+        log::assert_that(element.uuid == Uuid::From16Bit(kClientCharacteristicDescriptorUuidU16),
+                         "Unknown descriptor uuid: {} found at handle: 0x{:04x}",
+                         element.uuid.ToString(), element.attribute_handle);
+
+        // Match the descriptor with the previous characteristic declaration
+        log::assert_that(last_char_metadata, "No known characteristic for the added descriptor");
+        last_char_metadata->cccd_handle = element.attribute_handle;
+
+      } else if (element.type == BTGATT_DB_PRIMARY_SERVICE) {
+        log::info("Service handle:0x{:04x}, UUID: {}", element.attribute_handle,
+                  element.uuid.ToString());
+        if (element.uuid == uuid::kAudioStreamControlServiceUuid) {
+          service_handle_ = element.attribute_handle;
+        }
+      }
+    }
+
+    callbacks_->OnAscsRegistered(sink_ases, source_ases);
+  }
+
+  static void OnGattConnStatic(tGATT_IF /*server_if*/, const RawAddress& remote_bda,
+                               tCONN_ID conn_id, bool connected, tGATT_DISCONN_REASON /*reason*/,
+                               tBT_TRANSPORT transport) {
+    if (instance) {
+      if (connected) {
+        instance->service_impl_->OnGattConnect(remote_bda, conn_id, transport);
+      } else {
+        instance->service_impl_->OnGattDisconnect(remote_bda, conn_id);
+      }
+    }
+  }
+
+  static void OnGattReadCharacteristicStatic(tCONN_ID conn_id, uint32_t trans_id,
+                                             const RawAddress& remote_bda, uint16_t handle,
+                                             uint16_t offset, bool is_long) {
+    if (instance) {
+      instance->service_impl_->OnGattReadCharacteristic(conn_id, trans_id, remote_bda, handle,
+                                                        offset, is_long);
+    }
+  }
+
+  static void OnGattWriteCharacteristicStatic(tCONN_ID conn_id, uint32_t trans_id,
+                                              const RawAddress& remote_bda, uint16_t handle,
+                                              uint16_t offset, bool need_rsp, bool is_prep,
+                                              uint8_t* value, uint16_t len) {
+    if (instance) {
+      instance->service_impl_->OnGattWriteCharacteristic(conn_id, trans_id, remote_bda, handle,
+                                                         offset, need_rsp, is_prep, value, len);
+    }
+  }
+
+  static void OnGattReadDescriptorStatic(tCONN_ID conn_id, uint32_t trans_id,
+                                         const RawAddress& /*remote_bda*/, uint16_t handle,
+                                         uint16_t offset, bool is_long) {
+    if (instance) {
+      instance->service_impl_->device_tracker_.OnGattReadDescriptor(conn_id, trans_id, handle,
+                                                                    offset, is_long);
+    }
+  }
+
+  static void OnGattWriteDescriptorStatic(tCONN_ID conn_id, uint32_t trans_id,
+                                          const RawAddress& /*remote_bda*/, uint16_t handle,
+                                          uint16_t offset, bool need_rsp, bool is_prep,
+                                          uint8_t* value, uint16_t len) {
+    if (instance) {
+      instance->service_impl_->OnGattWriteDescriptor(conn_id, trans_id, handle, offset, need_rsp,
+                                                     is_prep, value, len);
+    }
   }
 
   // Prepares the attribute database structure according to the requirements
@@ -224,88 +359,6 @@ struct Ascs::service_impl {
     ascs_service_db.push_back(ase_control_point_cccd);
 
     return ascs_service_db;
-  }
-
-  void OnGattServerAppRegistered(tBTA_GATTS* p_data) {
-    log::assert_that(p_data->reg_oper.status == tGATT_STATUS::GATT_SUCCESS,
-                     "Failed to register GATT Server, status: {}",
-                     gatt_status_text(p_data->reg_oper.status));
-
-    server_if_ = p_data->reg_oper.server_if;
-    log::info("GATT Server Registered with server_if: {}", server_if_);
-
-    auto gatt_db = BuildGattDatabase(service_descriptor_);
-
-    log::info("Adding LE Audio Service {} service to GATT database.", gatt_db.begin()->uuid);
-    BTA_GATTS_AddService(server_if_, gatt_db,
-                         base::BindRepeating(&Ascs::service_impl::OnGattServiceAdded,
-                                             weak_factory_.GetWeakPtr()));
-  }
-
-  void OnGattServiceAdded(tGATT_STATUS status, int server_if,
-                          std::vector<btgatt_db_element_t> service_elements) {
-    log::info("GATT Service Add status: {}, server_if: {}", gatt_status_text(status), server_if);
-
-    log::assert_that(status == GATT_SUCCESS, "Unable to add GATT service");
-    log::assert_that(service_elements.size() != 0, "Service is empty");
-    log::assert_that(service_elements.begin()->uuid == uuid::kAudioStreamControlServiceUuid,
-                     "Service not mine!");
-
-    AscCharacteristicMetadata* last_char_metadata = nullptr;
-    uint8_t ase_id = 0x01;
-
-    std::set<uint8_t> sink_ases;
-    std::set<uint8_t> source_ases;
-
-    for (const auto& element : service_elements) {
-      if (element.type == BTGATT_DB_CHARACTERISTIC) {
-        log::info("Characteristic added: UUID {}, handle:0x{:04x}", element.uuid.ToString(),
-                  element.attribute_handle);
-        char_metadata_by_value_handle_[element.attribute_handle] = {.uuid = element.uuid};
-        // Keep the pointer to the last discovered characteristic metadata to add CCCD handle info
-        last_char_metadata = &char_metadata_by_value_handle_.at(element.attribute_handle);
-
-        if (element.uuid == uuid::kAudioStreamEndpointControlPointCharacteristicUuid) {
-          ase_ctp_characteristic_handle_ = element.attribute_handle;
-
-        } else {
-          // Assign ASE IDs
-          if (element.uuid == uuid::kSinkAudioStreamEndpointUuid) {
-            sink_ases.insert(ase_id);
-            last_char_metadata->svc_data.ase_id = ase_id++;
-            ase_char_handle_by_id_[last_char_metadata->svc_data.ase_id] = element.attribute_handle;
-
-          } else if (element.uuid == uuid::kSourceAudioStreamEndpointUuid) {
-            source_ases.insert(ase_id);
-            last_char_metadata->svc_data.ase_id = ase_id++;
-            ase_char_handle_by_id_[last_char_metadata->svc_data.ase_id] = element.attribute_handle;
-
-          } else {
-            log::assert_that(false, "Unknown characteristic uuid: {} found",
-                             element.uuid.ToString());
-            continue;
-          }
-        }
-
-      } else if (element.type == BTGATT_DB_DESCRIPTOR) {
-        log::assert_that(element.uuid == Uuid::From16Bit(kClientCharacteristicDescriptorUuidU16),
-                         "Unknown descriptor uuid: {} found at handle: 0x{:04x}",
-                         element.uuid.ToString(), element.attribute_handle);
-
-        // Match the descriptor with the previous characteristic declaration
-        log::assert_that(last_char_metadata, "No known characteristic for the added descriptor");
-        last_char_metadata->cccd_handle = element.attribute_handle;
-
-      } else if (element.type == BTGATT_DB_PRIMARY_SERVICE) {
-        log::info("Service handle:0x{:04x}, UUID: {}", element.attribute_handle,
-                  element.uuid.ToString());
-        if (element.uuid == uuid::kAudioStreamControlServiceUuid) {
-          service_handle_ = element.attribute_handle;
-        }
-      }
-    }
-
-    callbacks_->OnAscsRegistered(sink_ases, source_ases);
   }
 
   static std::vector<uint8_t> BuildAseStateCharValue(uint8_t ase_id,
@@ -402,61 +455,61 @@ struct Ascs::service_impl {
     return GATT_SUCCESS;
   }
 
-  void OnReadAseCharacteristic(tBTA_GATTS* p_data) {
-    auto const& read_req = p_data->req_data.p_data->read_req;
-    auto conn_id = p_data->req_data.conn_id;
-    log::info("handle: 0x{:04x}", read_req.handle);
+  void OnReadAseCharacteristic(tCONN_ID conn_id, uint32_t trans_id, uint16_t handle,
+                               uint16_t offset) {
+    log::info("handle: 0x{:04x}", handle);
 
     log::assert_that(callbacks_ != nullptr, "Callbacks not set");
-    log::assert_that(char_metadata_by_value_handle_.count(read_req.handle) != 0,
-                     "Invalid handle 0x{:04x} for read request.", read_req.handle);
+    log::assert_that(char_metadata_by_value_handle_.count(handle) != 0,
+                     "Invalid handle 0x{:04x} for read request.", handle);
 
     auto asc_device = device_tracker_.FindConnectedDevice(conn_id);
     log::assert_that(asc_device != nullptr, "Invalid ASC device at conn_id 0x{:04x}", conn_id);
 
     // Get the ASE state from the upper layer
-    auto ase_id = char_metadata_by_value_handle_.at(read_req.handle).svc_data.ase_id;
+    auto ase_id = char_metadata_by_value_handle_.at(handle).svc_data.ase_id;
     auto ase_state = callbacks_->OnGetAseState(asc_device->pseudo_addr, ase_id);
     auto ase_state_data = BuildAseStateCharValue(ase_id, ase_state);
     log::assert_that(!ase_state_data.empty(), "No ASE State data available for handle 0x{:04x}",
-                     read_req.handle);
+                     handle);
 
     asc_device->data.last_notified_ase_state_by_ase_id[ase_id] = ase_state;
 
-    tGATTS_RSP p_msg;
-    auto status = FillGattReadReqRspValue(p_msg.attr_value, read_req.handle, read_req.offset,
-                                          ase_state_data);
-    BTA_GATTS_SendRsp(p_data->req_data.conn_id, p_data->req_data.trans_id, status, &p_msg);
+    std::unique_ptr<tGATTS_RSP> p_msg = std::make_unique<tGATTS_RSP>();
+    auto status = FillGattReadReqRspValue(p_msg->attr_value, handle, offset, ase_state_data);
+    BTA_GATTS_SendRsp(conn_id, trans_id, status, std::move(p_msg));
   }
 
-  void OnGattReadCharacteristic(tBTA_GATTS* p_data) {
-    uint16_t read_req_handle = p_data->req_data.p_data->read_req.handle;
-    log::info("Read request for handle: 0x{:04x}", read_req_handle);
+  void OnGattReadCharacteristic(tCONN_ID conn_id, uint32_t trans_id,
+                                const RawAddress& /*remote_bda*/, uint16_t handle, uint16_t offset,
+                                bool /*is_long*/) {
+    log::info("Read request for handle: 0x{:04x}", handle);
 
-    log::assert_that(char_metadata_by_value_handle_.count(read_req_handle) != 0,
-                     "Invalid handle 0x{:04x} for read request.", read_req_handle);
-    auto char_uuid = char_metadata_by_value_handle_.at(read_req_handle).uuid;
+    log::assert_that(char_metadata_by_value_handle_.count(handle) != 0,
+                     "Invalid handle 0x{:04x} for read request.", handle);
+    auto char_uuid = char_metadata_by_value_handle_.at(handle).uuid;
     log::info("Read characteristic UUID: {}", char_uuid.ToString());
 
     if (char_uuid == uuid::kSinkAudioStreamEndpointUuid ||
         char_uuid == uuid::kSourceAudioStreamEndpointUuid) {
-      OnReadAseCharacteristic(p_data);
+      OnReadAseCharacteristic(conn_id, trans_id, handle, offset);
     } else {
       log::assert_that(false, "Unhandled characteristic UUID for read request: {}",
                        char_uuid.ToString());
     }
   }
 
-  void OnGattWriteCharacteristic(tBTA_GATTS* p_data) {
-    auto const& write_req = p_data->req_data.p_data->write_req;
-    uint16_t conn_id = p_data->req_data.conn_id;
-    log::info("Write request for handle: 0x{:04x}, conn_id: {}", write_req.handle, conn_id);
+  void OnGattWriteCharacteristic(tCONN_ID conn_id, uint32_t trans_id,
+                                 const RawAddress& /*remote_bda*/, uint16_t handle,
+                                 uint16_t /*offset*/, bool need_rsp, bool /*is_prep*/,
+                                 uint8_t* value, uint16_t len) {
+    log::info("Write request for handle: 0x{:04x}, conn_id: {}", handle, conn_id);
 
-    if (write_req.len == 0) {
+    if (len == 0) {
       log::error("Invalid ASE control point request");
 
-      if (write_req.need_rsp) {
-        BTA_GATTS_SendRsp(conn_id, p_data->req_data.trans_id, GATT_INVALID_ATTR_LEN, nullptr);
+      if (need_rsp) {
+        BTA_GATTS_SendRsp(conn_id, trans_id, GATT_INVALID_ATTR_LEN, nullptr);
       }
       return;
     }
@@ -465,17 +518,16 @@ struct Ascs::service_impl {
                      "ASE control point characteristic is not initialized");
     log::assert_that(callbacks_ != nullptr, "Callbacks not set for LeAudioGattServer!");
 
-    auto asc_device = device_tracker_.FindConnectedDevice(p_data->req_data.conn_id);
+    auto asc_device = device_tracker_.FindConnectedDevice(conn_id);
     log::assert_that(asc_device != nullptr, "Could not find the requesting device!");
 
-    auto packet_data = std::make_shared<std::vector<uint8_t>>(write_req.value,
-                                                              write_req.value + write_req.len);
+    auto packet_data = std::make_shared<std::vector<uint8_t>>(value, value + len);
     auto request_packet = ::bluetooth::ascs::AseControlPointRequestBaseView::Create(
             packet::PacketView<true>(packet_data));
     if (!request_packet.IsValid()) {
       log::error("Invalid request!");
-      if (write_req.need_rsp) {
-        BTA_GATTS_SendRsp(conn_id, p_data->req_data.trans_id, GATT_VALUE_NOT_ALLOWED, nullptr);
+      if (need_rsp) {
+        BTA_GATTS_SendRsp(conn_id, trans_id, GATT_VALUE_NOT_ALLOWED, nullptr);
       }
       return;
     }
@@ -581,16 +633,23 @@ struct Ascs::service_impl {
 
     if (!success) {
       log::error("Invalid request!");
-      if (write_req.need_rsp) {
-        BTA_GATTS_SendRsp(conn_id, p_data->req_data.trans_id, GATT_VALUE_NOT_ALLOWED, nullptr);
+      if (need_rsp) {
+        BTA_GATTS_SendRsp(conn_id, trans_id, GATT_VALUE_NOT_ALLOWED, nullptr);
       }
+      event_tracker_->OnEvent(EVT_LOG_TAG, LeAudioEventTracker::EventType::POINT,
+                              "Invalid ASE control point request, con_id: {}, request opcode: {}",
+                              conn_id, pending_request.opcode);
       return;
     }
 
+    event_tracker_->OnEvent(EVT_LOG_TAG, LeAudioEventTracker::EventType::POINT,
+                            "ASE control point request, con_id: {}, request opcode: {}", conn_id,
+                            pending_request.opcode);
+
     if (pending_request_by_address_.count(asc_device->pseudo_addr)) {
       log::warn("Device {} has a pending request, rejecting new one.", asc_device->pseudo_addr);
-      if (write_req.need_rsp) {
-        BTA_GATTS_SendRsp(conn_id, p_data->req_data.trans_id, GATT_SUCCESS, nullptr);
+      if (need_rsp) {
+        BTA_GATTS_SendRsp(conn_id, trans_id, GATT_SUCCESS, nullptr);
       }
 
       AseCtpResponse response = {.opcode = pending_request.opcode, .entries = {}};
@@ -622,9 +681,9 @@ struct Ascs::service_impl {
     }
 
     /* TODO check here if subscribed for all required CCC then send Connected native event */
-    if (write_req.need_rsp) {
-      log::debug("Sending Ctp write response to transaction: {}!", p_data->req_data.trans_id);
-      BTA_GATTS_SendRsp(conn_id, p_data->req_data.trans_id, GATT_SUCCESS, nullptr);
+    if (need_rsp) {
+      log::debug("Sending Ctp write response to transaction: {}!", trans_id);
+      BTA_GATTS_SendRsp(conn_id, trans_id, GATT_SUCCESS, nullptr);
     }
 
     // Store the pending request for the peer device and call the request callback
@@ -633,44 +692,61 @@ struct Ascs::service_impl {
     callbacks_->OnAseControlPointRequest(asc_device->pseudo_addr, pending_request);
   }
 
-  void OnGattEventHandler(tBTA_GATTS_EVT event, tBTA_GATTS* p_data) {
-    log::verbose("event: {}", gatt_server_event_text(event));
-    log::assert_that(p_data != nullptr, "No valid GATT event data");
+  void OnGattConnect(const RawAddress& remote_bda, tCONN_ID conn_id, tBT_TRANSPORT transport) {
+    // TODO: Inject an initial state of the connected PAC device from the persistent storage
+    //       (e.g. CCCD values). For now, start with an empty state for all devices and notify
+    //       the device as connected, when it subscribes to the ASE Control Point notifications
+    if (auto asc_device = device_tracker_.OnGattConnectedEventHandler(conn_id, remote_bda,
+                                                                      transport, AscDevice())) {
+      auto const& char_meta = char_metadata_by_value_handle_.at(ase_ctp_characteristic_handle_);
 
-    switch (event) {
-      case BTA_GATTS_CONNECT_EVT: {
-        // TODO: Inject an initial state of the connected PAC device from the persistent storage
-        //       (e.g. CCCD values). For now, start with an empty state for all devices.
-        auto asc_device = device_tracker_.OnGattConnectedEventHandler(p_data, AscDevice());
-        if (asc_device) {
-          callbacks_->OnDeviceConnected(asc_device->pseudo_addr);
+      // Notify as connected if the control point notifications are enabled
+      if (asc_device->GetDescriptorValueAsU16(char_meta.cccd_handle) != GATT_CLT_CONFIG_NONE) {
+        event_tracker_->OnEvent(EVT_LOG_TAG, LeAudioEventTracker::EventType::START,
+                                "GATT device {} connected with conn_id: {}",
+                                asc_device->pseudo_addr,
+                                device_tracker_.FindConnectionId(asc_device->pseudo_addr));
+        callbacks_->OnDeviceConnected(asc_device->pseudo_addr);
+      }
+    }
+  }
+
+  void OnGattDisconnect(const RawAddress& /*remote_bda*/, tCONN_ID conn_id) {
+    auto asc_device = device_tracker_.FindConnectedDevice(conn_id);
+    if (device_tracker_.OnGattDisconnectedEventHandler(conn_id, RawAddress::kEmpty)) {
+      auto const& char_meta = char_metadata_by_value_handle_.at(ase_ctp_characteristic_handle_);
+
+      pending_request_by_address_.erase(asc_device->pseudo_addr);
+
+      // Notify as disconnected if the control point notifications were enabled
+      if (asc_device->GetDescriptorValueAsU16(char_meta.cccd_handle) != GATT_CLT_CONFIG_NONE) {
+        event_tracker_->OnEvent(EVT_LOG_TAG, LeAudioEventTracker::EventType::END,
+                                "GATT device {} disconnected", asc_device->pseudo_addr);
+        callbacks_->OnDeviceDisconnected(asc_device->pseudo_addr);
+      }
+    }
+  }
+
+  void OnGattWriteDescriptor(tCONN_ID conn_id, uint32_t trans_id, uint16_t handle, uint16_t offset,
+                             bool need_rsp, bool is_prep, uint8_t* value, uint16_t len) {
+    if (auto asc_device = device_tracker_.FindConnectedDevice(conn_id)) {
+      auto const& char_meta = char_metadata_by_value_handle_.at(ase_ctp_characteristic_handle_);
+      auto const old_descr_val = asc_device->GetDescriptorValueAsU16(char_meta.cccd_handle);
+
+      device_tracker_.OnGattWriteDescriptor(conn_id, trans_id, handle, offset, len, need_rsp,
+                                            is_prep, value);
+
+      // Notify as connected if the control point notifications are enabled
+      if (handle == char_meta.cccd_handle) {
+        auto const new_descr_val = asc_device->GetDescriptorValueAsU16(char_meta.cccd_handle);
+        if (new_descr_val != old_descr_val) {
+          if (new_descr_val == GATT_CLT_CONFIG_NONE) {
+            callbacks_->OnDeviceDisconnected(asc_device->pseudo_addr);
+          } else if (old_descr_val == GATT_CLT_CONFIG_NONE) {
+            callbacks_->OnDeviceConnected(asc_device->pseudo_addr);
+          }
         }
-      } break;
-      case BTA_GATTS_DISCONNECT_EVT: {
-        auto asc_device = device_tracker_.OnGattDisconnectedEventHandler(p_data);
-        if (asc_device) {
-          pending_request_by_address_.erase(asc_device->pseudo_addr);
-          callbacks_->OnDeviceDisconnected(asc_device->pseudo_addr);
-        }
-      } break;
-      case BTA_GATTS_REG_EVT:
-        OnGattServerAppRegistered(p_data);
-        break;
-      case BTA_GATTS_READ_CHARACTERISTIC_EVT:
-        OnGattReadCharacteristic(p_data);
-        break;
-      case BTA_GATTS_WRITE_CHARACTERISTIC_EVT:
-        OnGattWriteCharacteristic(p_data);
-        break;
-      case BTA_GATTS_READ_DESCRIPTOR_EVT:
-        device_tracker_.OnGattReadDescriptor(p_data);
-        break;
-      case BTA_GATTS_WRITE_DESCRIPTOR_EVT:
-        device_tracker_.OnGattWriteDescriptor(p_data);
-        break;
-      default:
-        log::verbose("Unhandled event {}", gatt_server_event_text(event));
-        break;
+      }
     }
   }
 
@@ -715,6 +791,9 @@ struct Ascs::service_impl {
     auto notify_value = BuildAseStateCharValue(ase_id, ase_state);
     log::info("Sending ASE notification value: {}",
               base::HexEncode(notify_value.data(), notify_value.size()));
+
+    event_tracker_->OnEvent(EVT_LOG_TAG, LeAudioEventTracker::EventType::POINT,
+                            "Sending ASE {} state notification", ase_state.state);
 
     BTA_GATTS_HandleValueIndication(conn_id, char_value_handle, notify_value, false);
   }

@@ -82,12 +82,13 @@ cc_library_shared {
         "libFraunhoferAAC",
         "libaconfig_storage_read_api_cc",
         "libbase",
-        "libbluetooth_core_rs",
-        "libbluetooth_core_rs_bridge",
         "libbluetooth_crypto_toolbox",
         "libbluetooth_gd",
         "libbluetooth_log",
         "libbluetooth_metrics",
+        "libbluetooth_private_gatt_rs",
+        "libbluetooth_private_gatt_rs_bridge",
+        "libbluetooth_rs",
         "libbluetooth_types",
         "libbt-audio-asrc",
         "libbt-audio-hal-interface",
@@ -160,6 +161,7 @@ android_library {
 
     libs: [
         "PlatformProperties",
+        "android.app.privatecompute.flags-aconfig-java-export",
         "bluetooth_constants-java",
         "bluetooth_flags_java_lib",
         "error_prone_annotations",
@@ -171,6 +173,7 @@ android_library {
         "framework-location.stubs.module_lib",
         "framework-media.stubs.module_lib",
         "framework-mediaprovider.stubs.module_lib",
+        "framework-nfc.stubs.module_lib",
         "framework-statsd.stubs.module_lib",
         "framework-telecom.stubs.module_lib",
         "framework-tethering.stubs.module_lib",
@@ -178,6 +181,7 @@ android_library {
         "modules-utils-build",
     ],
     static_libs: [
+        "android.bluetooth.platform.flags-aconfig-java-export",
         "android.hardware.radio-V1.0-java",
         "android.hardware.radio.sap-V1-java",
         "android.media.audio-aconfig-exported-java",
@@ -189,7 +193,7 @@ android_library {
         "androidx.lifecycle_lifecycle-livedata",
         "androidx.media_media",
         "androidx.room_room-runtime",
-        "bluetooth-common-java",
+        "bluetooth-common-kotlinutils",
         "bluetooth-proto-enums-java-gen",
         "bluetooth-protos-lite",
         "bluetooth.change-ids",
@@ -205,6 +209,7 @@ android_library {
         "net-utils-services-common",
         "networkstack-client",
         "sap-api-java-static",
+        "telephony_flags_core_java_exported_lib",
     ],
 
     plugins: [
@@ -227,6 +232,14 @@ android_library {
     sdk_version: "module_current",
 }
 
+// See go/preinstall-allowlists:
+// From Android 17, all preinstalled apps must specify which user types they are
+// to be preinstalled on in a preinstall allowlist.
+filegroup {
+    name: "preinstalled-packages-com.android.bluetooth.xml",
+    srcs: ["preinstalled-packages-com.android.bluetooth.xml"],
+}
+
 // Bluetooth APK
 android_app {
     name: "Bluetooth",
@@ -242,6 +255,7 @@ android_app {
     sdk_version: "module_current",
     updatable: true,
     jarjar_rules: ":bluetooth-jarjar-rules",
+    preinstall_allowlist: ":preinstalled-packages-com.android.bluetooth.xml",
     privapp_allowlist: ":privapp_allowlist_com.android.bluetooth.xml",
 
     jni_uses_platform_apis: true,

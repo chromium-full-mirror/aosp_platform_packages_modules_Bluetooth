@@ -18,19 +18,26 @@
 #pragma once
 
 #include <base/functional/bind.h>
-#include <base/functional/callback.h>
 #include <com_android_bluetooth_flags.h>
 
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <format>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
+#include "bluetooth/log.h"
+#include "bluetooth/types/address.h"
 #include "btm_dev.h"
 #include "btm_iso_api.h"
 #include "btm_iso_api_types.h"
 #include "common/time_util.h"
 #include "hci/controller.h"
-#include "hci/include/hci_layer.h"
 #include "internal_include/stack_config.h"
 #include "main/shim/entry.h"
 #include "main/shim/hci_layer.h"
@@ -48,14 +55,16 @@ namespace iso_manager {
 static constexpr uint8_t kIsoHeaderWithTsLen = 12;
 static constexpr uint8_t kIsoHeaderWithoutTsLen = 8;
 
-static constexpr uint8_t kStateFlagsNone = 0x00;
-static constexpr uint8_t kStateFlagIsConnecting = 0x01;
-static constexpr uint8_t kStateFlagIsConnected = 0x02;
-static constexpr uint8_t kStateFlagHasDataPathSet = 0x04;
-static constexpr uint8_t kStateFlagIsBroadcastSource = 0x10;
-static constexpr uint8_t kStateFlagIsBroadcastSink = 0x80;
-static constexpr uint8_t kStateFlagIsCancelled = 0x20;
-static constexpr uint8_t kStateFlagSettingDataPath = 0x40;
+static constexpr uint16_t kStateFlagsNone = 0x00;
+static constexpr uint16_t kStateFlagIsConnecting = 0x01;
+static constexpr uint16_t kStateFlagIsConnected = 0x02;
+static constexpr uint16_t kStateFlagHasDataPathSet = 0x04;
+static constexpr uint16_t kStateFlagIsIncoming = 0x08;
+static constexpr uint16_t kStateFlagIsBroadcastSource = 0x10;
+static constexpr uint16_t kStateFlagIsBroadcastSink = 0x80;
+static constexpr uint16_t kStateFlagIsCancelled = 0x20;
+static constexpr uint16_t kStateFlagSettingDataPath = 0x40;
+static constexpr uint16_t kStateFlagIsRejecting = 0x0100;
 
 static constexpr IsoClientHandle kDefaultClientHandle = 1;
 
@@ -72,12 +81,18 @@ struct iso_group {
   std::vector<uint16_t> stream_conn_handles;
 };
 
+struct listening_iso_group {
+  uint8_t id;  // cig_id
+  IsoClientHandle client_handle;
+  std::unordered_map<uint8_t, uint16_t> cis_ids_to_stream_conn_handle_map;
+};
+
 struct iso_stream {
   uint16_t conn_handle;
   uint8_t group_id;  // cig id or big handle this stream belongs to.
 
   struct iso_sync_info sync_info;
-  std::atomic_uint8_t state_flags;
+  std::atomic_uint16_t state_flags;
   uint32_t sdu_itv;
   std::atomic_uint16_t used_credits;
 
@@ -174,6 +189,49 @@ struct iso_impl {
     return &client_it->second;
   }
 
+  IsoManagerCallbacks* get_client_callbacks_from_incoming_cis_conn_hdl(uint16_t cis_conn_hdl) {
+    if (!com_android_bluetooth_flags_leaudio_peripheral_feature()) {
+      return nullptr;
+    }
+
+    auto stream_ptr = GetStream(cis_conn_hdl);
+    if (stream_ptr == nullptr) {
+      log::error("No such cis_conn_hdl: {}", cis_conn_hdl);
+      return nullptr;
+    }
+
+    const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+    const auto pseudo_address = cis_hdl_to_addr[cis_conn_hdl];
+    auto incoming_iso_groups = peer_addr_to_listening_groups_map_.find(pseudo_address);
+    if (incoming_iso_groups == peer_addr_to_listening_groups_map_.end()) {
+      log::warn("Invalid peer address {}", pseudo_address);
+      return nullptr;
+    }
+
+    auto& cig_listeners = incoming_iso_groups->second;
+    auto group_it = std::find_if(
+            cig_listeners.begin(), cig_listeners.end(), [cis_conn_hdl](auto const& group) {
+              for (auto [_, conn_hdl] : group.cis_ids_to_stream_conn_handle_map) {
+                if (conn_hdl == cis_conn_hdl) {
+                  return true;
+                }
+              }
+              return false;
+            });
+    if (group_it == cig_listeners.end()) {
+      log::warn("Invalid CIS conn handle - does not exist: {}", cis_conn_hdl);
+      return nullptr;
+    }
+
+    auto client_it = iso_clients_.find(group_it->client_handle);
+    if (client_it == iso_clients_.end()) {
+      log::warn("Unable to find the client by handle: {}", group_it->client_handle);
+      return nullptr;
+    }
+
+    return &client_it->second;
+  }
+
   IsoManagerCallbacks* get_client_callbacks_from_big(uint8_t big_handle, bool is_source) {
     const std::lock_guard<std::mutex> lock(iso_client_mutex_);
     auto& big_handle_to_group_map_ =
@@ -252,21 +310,48 @@ struct iso_impl {
   }
 
   void notify_iso_traffic_active(bool is_active) {
-    const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+    std::vector<IsoClientHandle> safe_client_handles;
+    std::vector<std::function<void(bool)>> legacy_callbacks;
+
+    {
+      const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+
+      if (com_android_bluetooth_flags_btm_multi_client_support()) {
+        safe_client_handles.reserve(iso_clients_.size());
+        for (const auto& [handle, _] : iso_clients_) {
+          safe_client_handles.push_back(handle);
+        }
+      } else {
+        for (const auto& callback : iso_traffic_active_callbacks_list_) {
+          legacy_callbacks.push_back(callback);
+        }
+      }
+    }
+
     if (com_android_bluetooth_flags_btm_multi_client_support()) {
-      for (const auto& [_, iso_client] : iso_clients_) {
-        if (iso_client.iso_traffic_active_callback) {
-          iso_client.iso_traffic_active_callback(is_active);
+      for (auto handle : safe_client_handles) {
+        std::function<void(bool)> callback_to_invoke = nullptr;
+
+        {
+          const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+          auto it = iso_clients_.find(handle);
+          if (it != iso_clients_.end()) {
+            callback_to_invoke = it->second.iso_traffic_active_callback;
+          }
+        }
+
+        if (callback_to_invoke) {
+          callback_to_invoke(is_active);
         }
       }
     } else {
-      for (const auto& callback : iso_traffic_active_callbacks_list_) {
+      for (const auto& callback : legacy_callbacks) {
         callback(is_active);
       }
     }
   }
 
-  void on_set_cig_params(uint8_t cig_id, uint32_t sdu_itv_mtos, uint8_t* stream, uint16_t len) {
+  void on_set_cig_params(uint8_t cig_id, uint32_t sdu_itv_c_to_p, uint8_t* stream, uint16_t len) {
     uint8_t cis_cnt;
     uint16_t conn_handle;
     cig_create_cmpl_evt evt;
@@ -311,7 +396,7 @@ struct iso_impl {
         auto stream_ptr = std::make_unique<iso_stream>();
         stream_ptr->conn_handle = conn_handle;
         stream_ptr->group_id = cig_id;
-        stream_ptr->sdu_itv = sdu_itv_mtos;
+        stream_ptr->sdu_itv = sdu_itv_c_to_p;
         stream_ptr->sync_info = {.tx_seq_nb = 0, .rx_seq_nb = 0};
         stream_ptr->used_credits = 0;
         stream_ptr->state_flags = kStateFlagsNone;
@@ -331,7 +416,7 @@ struct iso_impl {
   }
 
   void create_cig(IsoClientHandle client_handle, uint8_t cig_id,
-                  struct iso_manager::cig_create_params cig_params) {
+                  struct cig_create_params cig_params) {
     log::assert_that(!IsCigKnown(cig_id), "Invalid cig - already exists: {}", cig_id);
 
     {
@@ -343,25 +428,25 @@ struct iso_impl {
     }
 
     btsnd_hcic_ble_set_cig_params(
-            cig_id, cig_params.sdu_itv_mtos, cig_params.sdu_itv_stom, cig_params.sca,
-            cig_params.packing, cig_params.framing, cig_params.max_trans_lat_stom,
-            cig_params.max_trans_lat_mtos, cig_params.cis_cfgs.size(), cig_params.cis_cfgs.data(),
+            cig_id, cig_params.sdu_itv_c_to_p, cig_params.sdu_itv_p_to_c, cig_params.sca,
+            cig_params.packing, cig_params.framing, cig_params.max_trans_lat_c_to_p,
+            cig_params.max_trans_lat_p_to_c, cig_params.cis_cfgs.size(), cig_params.cis_cfgs.data(),
             base::BindOnce(&iso_impl::on_set_cig_params, weak_factory_.GetWeakPtr(), cig_id,
-                           cig_params.sdu_itv_mtos));
+                           cig_params.sdu_itv_c_to_p));
 
     BTM_LogHistory(kBtmLogTag, RawAddress::kEmpty, "CIG Create",
                    std::format("cig_id:0x{:02x}, size: {}", cig_id, cig_params.cis_cfgs.size()));
   }
 
-  void reconfigure_cig(uint8_t cig_id, struct iso_manager::cig_create_params cig_params) {
+  void reconfigure_cig(uint8_t cig_id, struct cig_create_params cig_params) {
     log::assert_that(IsCigKnown(cig_id), "No such cig: {}", cig_id);
 
     btsnd_hcic_ble_set_cig_params(
-            cig_id, cig_params.sdu_itv_mtos, cig_params.sdu_itv_stom, cig_params.sca,
-            cig_params.packing, cig_params.framing, cig_params.max_trans_lat_stom,
-            cig_params.max_trans_lat_mtos, cig_params.cis_cfgs.size(), cig_params.cis_cfgs.data(),
+            cig_id, cig_params.sdu_itv_c_to_p, cig_params.sdu_itv_p_to_c, cig_params.sca,
+            cig_params.packing, cig_params.framing, cig_params.max_trans_lat_c_to_p,
+            cig_params.max_trans_lat_p_to_c, cig_params.cis_cfgs.size(), cig_params.cis_cfgs.data(),
             base::BindOnce(&iso_impl::on_set_cig_params, weak_factory_.GetWeakPtr(), cig_id,
-                           cig_params.sdu_itv_mtos));
+                           cig_params.sdu_itv_c_to_p));
   }
 
   void on_remove_cig(uint8_t cig_id, uint8_t* stream, uint16_t len) {
@@ -412,8 +497,8 @@ struct iso_impl {
                    std::format("cig_id:0x{:02x} (f:{})", cig_id, force));
   }
 
-  void on_status_establish_cis(struct iso_manager::cis_establish_params conn_params,
-                               uint8_t* stream, uint16_t len) {
+  void on_status_establish_cis(struct cis_establish_params conn_params, uint8_t* stream,
+                               uint16_t len) {
     uint8_t status;
 
     log::assert_that(len == 2, "Invalid packet length: {}", len);
@@ -452,7 +537,7 @@ struct iso_impl {
     }
   }
 
-  void establish_cis(struct iso_manager::cis_establish_params conn_params) {
+  void establish_cis(struct cis_establish_params conn_params) {
     for (auto& el : conn_params.conn_pairs) {
       auto stream_ptr = GetStream(el.cis_conn_handle);
       log::assert_that(stream_ptr, "No such cis: {}", el.cis_conn_handle);
@@ -523,6 +608,10 @@ struct iso_impl {
     }
 
     auto* client_cbs = get_client_callbacks_from_stream(iso);
+    if (client_cbs == nullptr) {
+      log::verbose("This is not an outgoing CIS, looking for an incoming CIS listener");
+      client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(conn_handle);
+    }
     log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
                      conn_handle);
 
@@ -548,8 +637,7 @@ struct iso_impl {
     }
   }
 
-  void setup_iso_data_path(uint16_t conn_handle,
-                           struct iso_manager::iso_data_path_params path_params) {
+  void setup_iso_data_path(uint16_t conn_handle, struct iso_data_path_params path_params) {
     iso_stream* iso = GetStream(conn_handle);
     if (!(iso->state_flags & (kStateFlagIsBroadcastSource | kStateFlagIsBroadcastSink))) {
       log::assert_that(iso->state_flags & kStateFlagIsConnected, "CIS not established");
@@ -588,6 +676,10 @@ struct iso_impl {
     }
 
     auto* client_cbs = get_client_callbacks_from_stream(iso);
+    if (client_cbs == nullptr) {
+      log::verbose("This is not an outgoing CIS, looking for an incoming CIS listener");
+      client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(conn_handle);
+    }
     log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
                      conn_handle);
 
@@ -630,13 +722,13 @@ struct iso_impl {
   void on_iso_link_quality_read(uint8_t* stream, uint16_t len) {
     uint8_t status;
     uint16_t conn_handle;
-    uint32_t txUnackedPackets;
-    uint32_t txFlushedPackets;
-    uint32_t txLastSubeventPackets;
-    uint32_t retransmittedPackets;
-    uint32_t crcErrorPackets;
-    uint32_t rxUnreceivedPackets;
-    uint32_t duplicatePackets;
+    uint32_t tx_unacked_packets;
+    uint32_t tx_flushed_packets;
+    uint32_t tx_last_subevent_packets;
+    uint32_t retransmitted_packets;
+    uint32_t crc_error_packets;
+    uint32_t rx_unreceived_packets;
+    uint32_t duplicate_packets;
 
     // 1 + 2 + 4 * 7
 #define ISO_LINK_QUALITY_SIZE 31
@@ -662,21 +754,26 @@ struct iso_impl {
     }
 
     auto* client_cbs = get_client_callbacks_from_stream(iso);
+    if (client_cbs == nullptr) {
+      log::verbose("This is not an outgoing CIS, looking for an incoming CIS listener");
+      client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(conn_handle);
+    }
     log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
                      conn_handle);
     log::assert_that(client_cbs->cig_callbacks != nullptr, "Invalid CIG callbacks");
 
-    STREAM_TO_UINT32(txUnackedPackets, stream);
-    STREAM_TO_UINT32(txFlushedPackets, stream);
-    STREAM_TO_UINT32(txLastSubeventPackets, stream);
-    STREAM_TO_UINT32(retransmittedPackets, stream);
-    STREAM_TO_UINT32(crcErrorPackets, stream);
-    STREAM_TO_UINT32(rxUnreceivedPackets, stream);
-    STREAM_TO_UINT32(duplicatePackets, stream);
+    STREAM_TO_UINT32(tx_unacked_packets, stream);
+    STREAM_TO_UINT32(tx_flushed_packets, stream);
+    STREAM_TO_UINT32(tx_last_subevent_packets, stream);
+    STREAM_TO_UINT32(retransmitted_packets, stream);
+    STREAM_TO_UINT32(crc_error_packets, stream);
+    STREAM_TO_UINT32(rx_unreceived_packets, stream);
+    STREAM_TO_UINT32(duplicate_packets, stream);
 
-    client_cbs->cig_callbacks->OnIsoLinkQualityRead(
-            conn_handle, iso->group_id, txUnackedPackets, txFlushedPackets, txLastSubeventPackets,
-            retransmittedPackets, crcErrorPackets, rxUnreceivedPackets, duplicatePackets);
+    client_cbs->cig_callbacks->OnIsoLinkQualityRead(conn_handle, iso->group_id, tx_unacked_packets,
+                                                    tx_flushed_packets, tx_last_subevent_packets,
+                                                    retransmitted_packets, crc_error_packets,
+                                                    rx_unreceived_packets, duplicate_packets);
   }
 
   void read_iso_link_quality(uint16_t conn_handle) {
@@ -790,12 +887,263 @@ struct iso_impl {
             "event. Flags: {:#x}",
             handle, stream_ptr->state_flags);
     auto* client_cbs = get_client_callbacks_from_stream(stream_ptr);
+    if (client_cbs == nullptr) {
+      log::verbose("This is not an outgoing CIS, looking for an incoming CIS listener");
+      client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(stream_ptr->conn_handle);
+    }
     log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
                      stream_ptr->conn_handle);
     log::assert_that(client_cbs->cig_callbacks != nullptr, "Invalid CIG callbacks");
 
     send_disconnect_complete_event(client_cbs, stream_ptr->group_id, handle,
                                    HCI_ERR_CONN_CAUSE_LOCAL_HOST);
+  }
+
+  bool add_incoming_cis_events_listener(IsoClientHandle client_handle,
+                                        const RawAddress& pseudo_address, uint8_t cig_id,
+                                        uint8_t cis_id) {
+    if (!com_android_bluetooth_flags_leaudio_peripheral_feature()) {
+      return false;
+    }
+
+    const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+
+    log::verbose("Adding/Updating listener entry for peer: {}, cig: {}", pseudo_address, cig_id);
+    auto& incoming_iso_groups = peer_addr_to_listening_groups_map_[pseudo_address];
+
+    for (auto const& group : incoming_iso_groups) {
+      if (group.id != cig_id) {
+        continue;
+      }
+
+      auto cis_it = group.cis_ids_to_stream_conn_handle_map.find(cis_id);
+      if (cis_it == group.cis_ids_to_stream_conn_handle_map.end()) {
+        continue;
+      }
+
+      // Reject listener registration if any other client has already registered
+      if (group.client_handle != client_handle) {
+        log::error("Another client is already listening for CIG {}, CIS {} on device {}", cig_id,
+                   cis_id, pseudo_address);
+        return false;
+      }
+
+      // Reject overriding if handle is already valid
+      if (cis_it->second != INVALID_ACL_HANDLE) {
+        log::error(
+                "Cannot override listener for CIG {}, CIS {} on {} which has a valid handle {:#x}",
+                cig_id, cis_id, pseudo_address, cis_it->second);
+        return false;
+      }
+    }
+
+    auto it = std::find_if(incoming_iso_groups.begin(), incoming_iso_groups.end(),
+                           [cig_id, client_handle](auto const& group) {
+                             return (group.id == cig_id) && (group.client_handle == client_handle);
+                           });
+    if (it == incoming_iso_groups.end()) {
+      listening_iso_group group = {
+              .id = cig_id,
+              .client_handle = client_handle,
+      };
+      it = incoming_iso_groups.insert(incoming_iso_groups.end(), std::move(group));
+    }
+
+    // Not yet connected but is expect to connect
+    it->cis_ids_to_stream_conn_handle_map[cis_id] = INVALID_ACL_HANDLE;
+
+    return true;
+  }
+
+  void remove_incoming_cis_events_listener(IsoClientHandle client_handle,
+                                           const RawAddress& pseudo_address, uint8_t cig_id,
+                                           uint8_t cis_id) {
+    if (!com_android_bluetooth_flags_leaudio_peripheral_feature()) {
+      return;
+    }
+
+    {
+      const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+
+      auto incoming_iso_groups = peer_addr_to_listening_groups_map_.find(pseudo_address);
+      if (incoming_iso_groups == peer_addr_to_listening_groups_map_.end()) {
+        log::warn("Invalid peer address {}", pseudo_address);
+        return;
+      }
+      auto cig_it =
+              std::find_if(incoming_iso_groups->second.begin(), incoming_iso_groups->second.end(),
+                           [cig_id, client_handle](auto const& group) {
+                             return (group.id == cig_id) && (group.client_handle == client_handle);
+                           });
+      if (cig_it == incoming_iso_groups->second.end()) {
+        log::warn("Invalid CIG ID - does not exist: {}", cig_id);
+        return;
+      }
+
+      auto cis_it = cig_it->cis_ids_to_stream_conn_handle_map.find(cis_id);
+      if (cis_it == cig_it->cis_ids_to_stream_conn_handle_map.end()) {
+        log::warn("Invalid CIS ID - does not exist: {}", cis_id);
+        return;
+      }
+
+      log::assert_that(
+              cis_it->second == INVALID_ACL_HANDLE,
+              "Cannot remove listener for CIG {}, CIS {} on {} which has a valid handle {:#x}",
+              cig_id, cis_id, pseudo_address, cis_it->second);
+
+      log::verbose("Erasing conn handle for CIS: {}", cis_id);
+      cig_it->cis_ids_to_stream_conn_handle_map.erase(cis_it);
+      if (cig_it->cis_ids_to_stream_conn_handle_map.size() == 0) {
+        log::verbose("Erasing entry for CIG: {}", cig_id);
+        incoming_iso_groups->second.erase(cig_it);
+      }
+
+      if (incoming_iso_groups->second.size() == 0) {
+        log::verbose("Erasing listener entry for peer: {}, cig: {}", pseudo_address, cig_id);
+        peer_addr_to_listening_groups_map_.erase(pseudo_address);
+      }
+    }
+  }
+
+  void accept_incoming_cis_connection(uint16_t conn_handle) {
+    if (!com_android_bluetooth_flags_leaudio_peripheral_feature()) {
+      return;
+    }
+
+    auto stream_ptr = GetStream(conn_handle);
+    log::assert_that(stream_ptr != nullptr, "No such iso connection handle: 0x{:x}", conn_handle);
+
+    stream_ptr->state_flags |= kStateFlagIsConnecting;
+
+    btsnd_hcic_ble_accept_cis_req(conn_handle);
+  }
+
+  void reject_incoming_cis_connection(uint16_t conn_handle, uint8_t reason) {
+    if (!com_android_bluetooth_flags_leaudio_peripheral_feature()) {
+      return;
+    }
+
+    auto stream_ptr = GetStream(conn_handle);
+    log::assert_that(stream_ptr != nullptr, "No such iso connection handle: 0x{:x}", conn_handle);
+
+    stream_ptr->state_flags |= kStateFlagIsRejecting;
+
+    btsnd_hcic_ble_reject_cis_req(
+            conn_handle, reason,
+            base::BindOnce(&iso_impl::on_cis_request_reject_status, weak_factory_.GetWeakPtr()));
+  }
+
+  void on_cis_request_reject_status(uint8_t* data, uint16_t len) {
+    log::assert_that(len == 3, "Invalid packet length: {}", len);
+
+    reject_cis_request_reject_status evt;
+    STREAM_TO_UINT8(evt.status, data);
+    STREAM_TO_UINT16(evt.cis_conn_hdl, data);
+
+    auto stream_ptr = GetStream(evt.cis_conn_hdl);
+    log::assert_that(stream_ptr != nullptr, "No such cis: {} is being created or accepted",
+                     evt.cis_conn_hdl);
+
+    if ((stream_ptr->state_flags & kStateFlagIsRejecting) == 0) {
+      log::warn("Unknown cis request reject status con_hdl: {}", evt.cis_conn_hdl);
+    }
+
+    auto* client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(evt.cis_conn_hdl);
+    if (client_cbs == nullptr) {
+      log::error("Cannot find client callbacks for stream {}", stream_ptr->conn_handle);
+      return;
+    }
+    log::assert_that(client_cbs->cig_callbacks != nullptr, "Invalid CIG callbacks");
+
+    log::verbose("Remove stream entry for the incoming ISO conn_hdl: {}", evt.cis_conn_hdl);
+    conn_hdl_to_iso_stream_map_.erase(evt.cis_conn_hdl);
+    cis_hdl_to_addr.erase(evt.cis_conn_hdl);
+
+    client_cbs->cig_callbacks->OnCisEvent(kIsoEventCisRequestRejectStatus, &evt);
+  }
+
+  void process_cis_req_pkt(uint8_t len, uint8_t* data) {
+    log::assert_that(len == 6, "Invalid packet length: {}", len);
+
+    cis_request_evt evt;
+    STREAM_TO_UINT16(evt.acl_conn_hdl, data);
+    STREAM_TO_UINT16(evt.cis_conn_hdl, data);
+    STREAM_TO_UINT8(evt.cig_id, data);
+    STREAM_TO_UINT8(evt.cis_id, data);
+
+    auto* p_device = btm_find_dev_by_handle(evt.acl_conn_hdl);
+    log::assert_that(p_device, "Missing security record for acl handle: 0x{:04x}",
+                     evt.acl_conn_hdl);
+
+    BTM_LogHistory(kBtmLogTag, p_device->ble.pseudo_addr, "CIS Request",
+                   std::format("handle: 0x{:04x}", evt.acl_conn_hdl));
+
+    IsoManagerCallbacks* client_cbs = nullptr;
+    {
+      const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+
+      auto incoming_iso_groups = peer_addr_to_listening_groups_map_.find(p_device->ble.pseudo_addr);
+      if (incoming_iso_groups == peer_addr_to_listening_groups_map_.end()) {
+        log::warn("Invalid peer address {}", p_device->ble.pseudo_addr);
+        btsnd_hcic_ble_reject_cis_req(evt.cis_conn_hdl, HCI_ERR_HOST_REJECT_DEVICE,
+                                      base::BindOnce(&iso_impl::on_cis_request_reject_status,
+                                                     weak_factory_.GetWeakPtr()));
+        return;
+      }
+      auto group_it =
+              std::find_if(incoming_iso_groups->second.begin(), incoming_iso_groups->second.end(),
+                           [&evt](auto const& group) { return group.id == evt.cig_id; });
+      if (group_it == incoming_iso_groups->second.end()) {
+        log::warn("Invalid CIG ID - does not exist: {}", evt.cig_id);
+        btsnd_hcic_ble_reject_cis_req(evt.cis_conn_hdl, HCI_ERR_HOST_REJECT_DEVICE,
+                                      base::BindOnce(&iso_impl::on_cis_request_reject_status,
+                                                     weak_factory_.GetWeakPtr()));
+        return;
+      }
+
+      auto cis_it = group_it->cis_ids_to_stream_conn_handle_map.find(evt.cis_id);
+      if (cis_it == group_it->cis_ids_to_stream_conn_handle_map.end()) {
+        log::warn("Invalid CIS ID - does not exist: {}", evt.cis_id);
+        btsnd_hcic_ble_reject_cis_req(evt.cis_conn_hdl, HCI_ERR_HOST_REJECT_DEVICE,
+                                      base::BindOnce(&iso_impl::on_cis_request_reject_status,
+                                                     weak_factory_.GetWeakPtr()));
+        return;
+      }
+
+      // Assign the CIS connection handle to the incoming CIS ID
+      // Note: Needed by `get_client_callbacks_from_incoming_cis_conn_hdl()`
+      cis_it->second = evt.cis_conn_hdl;
+
+      auto client_it = iso_clients_.find(group_it->client_handle);
+      if (client_it == iso_clients_.end()) {
+        log::warn("Unable to find the client by handle: {}", group_it->client_handle);
+        btsnd_hcic_ble_reject_cis_req(evt.cis_conn_hdl, HCI_ERR_HOST_REJECT_DEVICE,
+                                      base::BindOnce(&iso_impl::on_cis_request_reject_status,
+                                                     weak_factory_.GetWeakPtr()));
+        return;
+      }
+
+      client_cbs = &client_it->second;
+    }
+
+    log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
+                     evt.cis_conn_hdl);
+    log::assert_that(client_cbs->cig_callbacks != nullptr, "Invalid CIG callbacks");
+
+    // Create the stream entry and fill in the blanks in the upcoming events (if any)
+    log::verbose("Create stream entry for the incoming ISO conn_hdl: {}, peer addr: {}",
+                 evt.cis_conn_hdl, p_device->ble.pseudo_addr);
+    auto stream_ptr = std::make_unique<iso_stream>();
+    stream_ptr->conn_handle = evt.cis_conn_hdl;
+    stream_ptr->group_id = evt.cig_id;
+    stream_ptr->sdu_itv = 0;
+    stream_ptr->sync_info = {.tx_seq_nb = 0, .rx_seq_nb = 0};
+    stream_ptr->used_credits = 0;
+    stream_ptr->state_flags = kStateFlagIsIncoming;
+    conn_hdl_to_iso_stream_map_[evt.cis_conn_hdl] = std::move(stream_ptr);
+    cis_hdl_to_addr[evt.cis_conn_hdl] = p_device->ble.pseudo_addr;
+
+    client_cbs->cig_callbacks->OnCisEvent(kIsoEventCisRequest, &evt);
   }
 
   void process_cis_est_pkt(uint8_t len, uint8_t* data) {
@@ -807,9 +1155,23 @@ struct iso_impl {
     STREAM_TO_UINT16(evt.cis_conn_hdl, data);
 
     auto stream_ptr = GetStream(evt.cis_conn_hdl);
-    log::assert_that(stream_ptr != nullptr, "No such cis: {}", evt.cis_conn_hdl);
+    if (stream_ptr == nullptr) {
+      log::error("Event status: {} ignored. No such cis: {} is being created or accepted",
+                 hci_error_code_text((tHCI_STATUS)(evt.status)), evt.cis_conn_hdl);
+
+      if (evt.status == tHCI_STATUS::HCI_SUCCESS) {
+        log::warn("Rejecting a stray connection request for CIS connection {}", evt.cis_conn_hdl);
+        bluetooth::legacy::hci::GetInterface().Disconnect(
+                evt.cis_conn_hdl, tHCI_REASON::HCI_ERR_CANCELLED_BY_LOCAL_HOST);
+      }
+      return;
+    }
 
     auto* client_cbs = get_client_callbacks_from_stream(stream_ptr);
+    if (client_cbs == nullptr) {
+      log::verbose("This is not an outgoing CIS, looking for an incoming CIS listener");
+      client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(evt.cis_conn_hdl);
+    }
     log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
                      stream_ptr->conn_handle);
     log::assert_that(client_cbs->cig_callbacks != nullptr, "Invalid CIG callbacks");
@@ -821,17 +1183,17 @@ struct iso_impl {
 
     STREAM_TO_UINT24(evt.cig_sync_delay, data);
     STREAM_TO_UINT24(evt.cis_sync_delay, data);
-    STREAM_TO_UINT24(evt.trans_lat_mtos, data);
-    STREAM_TO_UINT24(evt.trans_lat_stom, data);
-    STREAM_TO_UINT8(evt.phy_mtos, data);
-    STREAM_TO_UINT8(evt.phy_stom, data);
+    STREAM_TO_UINT24(evt.trans_lat_c_to_p, data);
+    STREAM_TO_UINT24(evt.trans_lat_p_to_c, data);
+    STREAM_TO_UINT8(evt.phy_c_to_p, data);
+    STREAM_TO_UINT8(evt.phy_p_to_c, data);
     STREAM_TO_UINT8(evt.nse, data);
-    STREAM_TO_UINT8(evt.bn_mtos, data);
-    STREAM_TO_UINT8(evt.bn_stom, data);
-    STREAM_TO_UINT8(evt.ft_mtos, data);
-    STREAM_TO_UINT8(evt.ft_stom, data);
-    STREAM_TO_UINT16(evt.max_pdu_mtos, data);
-    STREAM_TO_UINT16(evt.max_pdu_stom, data);
+    STREAM_TO_UINT8(evt.bn_c_to_p, data);
+    STREAM_TO_UINT8(evt.bn_p_to_c, data);
+    STREAM_TO_UINT8(evt.ft_c_to_p, data);
+    STREAM_TO_UINT8(evt.ft_p_to_c, data);
+    STREAM_TO_UINT16(evt.max_pdu_c_to_p, data);
+    STREAM_TO_UINT16(evt.max_pdu_p_to_c, data);
     STREAM_TO_UINT16(evt.iso_itv, data);
 
     stream_ptr->state_flags &= ~kStateFlagIsConnecting;
@@ -897,6 +1259,42 @@ struct iso_impl {
                    std::format("cis_handle:0x{:04x}, reason:{}", handle,
                                hci_error_code_text((tHCI_REASON)(reason))));
 
+    // Warning: Find the callback first as after the cis_hdl_to_addr.erase(handle), we might
+    //          not be able to find it for the incoming CISes
+    auto client_cbs = get_client_callbacks_from_stream(stream_ptr);
+    if (client_cbs == nullptr) {
+      log::verbose("This is not an outgoing CIS, looking for an incoming CIS listener");
+      client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(handle);
+    }
+    log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
+                     stream_ptr->conn_handle);
+    log::assert_that(client_cbs->cig_callbacks != nullptr, "Invalid CIG callbacks");
+
+    if (stream_ptr->state_flags & kStateFlagIsIncoming) {
+      const std::lock_guard<std::mutex> lock(iso_client_mutex_);
+
+      // Invalidates the CIS connection handle to disarm the removal guard, allowing the listener to
+      // be safely unregistered without side effects.
+      [&] {
+        auto pseudo_address = cis_hdl_to_addr.find(handle);
+        if (pseudo_address == cis_hdl_to_addr.end()) {
+          return;
+        }
+        auto incoming_iso_groups = peer_addr_to_listening_groups_map_.find(pseudo_address->second);
+        if (incoming_iso_groups != peer_addr_to_listening_groups_map_.end()) {
+          for (auto& group : incoming_iso_groups->second) {
+            // Look into the CIGs
+            for (auto& cis_it : group.cis_ids_to_stream_conn_handle_map) {
+              if (cis_it.second == handle) {
+                cis_it.second = INVALID_ACL_HANDLE;
+                return;
+              }
+            }
+          }
+        }
+      }();
+    }
+
     if (stream_ptr->state_flags & kStateFlagIsConnecting) {
       log::info("{}, cis_handle: {:#x} waiting for cis established event with cancel status",
                 cis_hdl_to_addr[handle], handle);
@@ -932,12 +1330,13 @@ struct iso_impl {
 
     stream_ptr->state_flags &= ~kStateFlagIsCancelled;
 
-    auto client_cbs = get_client_callbacks_from_stream(stream_ptr);
-    log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
-                     stream_ptr->conn_handle);
-    log::assert_that(client_cbs->cig_callbacks != nullptr, "Invalid CIG callbacks");
-
     send_disconnect_complete_event(client_cbs, stream_ptr->group_id, handle, reason);
+
+    if (stream_ptr->state_flags & kStateFlagIsIncoming) {
+      log::verbose("Remove stream entry for the incoming ISO conn_hdl: {}",
+                   stream_ptr->conn_handle);
+      conn_hdl_to_iso_stream_map_.erase(stream_ptr->conn_handle);
+    }
 
     /* Note:  Data path is considered still valid, but can be reconfigured only once
      * CIS is reestablished.
@@ -1039,6 +1438,9 @@ struct iso_impl {
     client_cbs->big_callbacks->OnBigSourceEvent(BigSourceEvent::kTerminateCmpl, &evt);
 
     for (auto handle : group_it->second->stream_conn_handles) {
+      auto stream_ptr = GetStream(handle);
+      iso_credits_ += stream_ptr->used_credits;
+      stream_ptr->used_credits = 0;
       conn_hdl_to_iso_stream_map_.erase(handle);
     }
     source_big_handle_to_group_map_.erase(group_it);
@@ -1298,7 +1700,7 @@ struct iso_impl {
         process_terminate_big_cmpl_pkt(packet_len, packet);
         break;
       case HCI_BLE_CIS_REQ_EVT:
-        /* Not supported */
+        process_cis_req_pkt(packet_len, packet);
         break;
       case HCI_BLE_BIG_SYNC_EST_EVT:
         process_big_sync_est_pkt(packet_len, packet);
@@ -1331,6 +1733,10 @@ struct iso_impl {
     }
 
     auto* client_cbs = get_client_callbacks_from_stream(iso);
+    if (client_cbs == nullptr) {
+      log::verbose("This is not an outgoing CIS, looking for an incoming CIS listener");
+      client_cbs = get_client_callbacks_from_incoming_cis_conn_hdl(iso->conn_handle);
+    }
     log::assert_that(client_cbs != nullptr, "Cannot find client callbacks for stream {}",
                      iso->conn_handle);
 
@@ -1521,6 +1927,10 @@ struct iso_impl {
   // CIG/BIG Ownership Tracking
   std::unordered_map<uint8_t /* cig_id */, std::unique_ptr<iso_group>> cig_id_to_group_map_;
   std::unordered_map<uint8_t /* big_handle */, std::unique_ptr<iso_group>> big_handle_to_group_map_;
+
+  // Incoming CIG Ownership Tracking.
+  std::unordered_map<RawAddress /* peer_pseudo_address */, std::list<listening_iso_group>>
+          peer_addr_to_listening_groups_map_;
 
   std::unordered_map<uint8_t /* big_handle */, std::unique_ptr<iso_group>>
           source_big_handle_to_group_map_;

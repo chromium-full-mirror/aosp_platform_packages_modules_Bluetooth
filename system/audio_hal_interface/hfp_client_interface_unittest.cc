@@ -462,7 +462,7 @@ TEST_F(HfpClientInterfaceTest, EncodeConfirmStreamingRequest) {
   // Test case: pending_cmd is HFP_CTRL_CMD_NONE
   SetEncodingPendingCmd(bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
   encode_->ConfirmStreamingRequest();
-  ASSERT_TRUE(stream_started_called);
+  ASSERT_FALSE(stream_started_called);
   ASSERT_EQ(bluetooth::audio::aidl::hfp::hfp_encoding_transport_pending_cmd,
             bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
 
@@ -493,7 +493,7 @@ TEST_F(HfpClientInterfaceTest, EncodeCancelStreamingRequest) {
   stream_started_called = false;
   SetEncodingPendingCmd(bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
   encode_->CancelStreamingRequest();
-  ASSERT_TRUE(stream_suspended_called);
+  ASSERT_FALSE(stream_suspended_called);
   ASSERT_EQ(bluetooth::audio::aidl::hfp::hfp_encoding_transport_pending_cmd,
             bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
 
@@ -529,6 +529,33 @@ TEST_F(HfpClientInterfaceTest, DecodeStopSession) {
   HfpClientInterface::Get()->ReleaseDecode(decode_);
 }
 
+TEST_F(HfpClientInterfaceTest, DecodeStartSessionUsesDecodeTransport) {
+  // Get both encode and decode interfaces to ensure both transport instances are active.
+  HfpClientInterface::Encode* encode = HfpClientInterface::Get()->GetEncode(&message_loop_thread);
+  ASSERT_NE(nullptr, encode);
+  HfpClientInterface::Decode* decode = HfpClientInterface::Get()->GetDecode(&message_loop_thread);
+  ASSERT_NE(nullptr, decode);
+
+  // Set a pending command on both transports to verify the correct one is used.
+  SetEncodingPendingCmd(bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_START);
+  SetDecodingPendingCmd(bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_START);
+
+  // When starting a decode session, it should reset the pending command on the
+  // decode transport. The bug was that it incorrectly used the encode transport.
+  decode->StartSession();
+  ASSERT_TRUE(start_session_called);
+
+  // Verify that the decode transport's command was reset, and the encode's was
+  // not.
+  ASSERT_EQ(bluetooth::audio::aidl::hfp::hfp_decoding_transport_pending_cmd,
+            bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
+  ASSERT_EQ(bluetooth::audio::aidl::hfp::hfp_encoding_transport_pending_cmd,
+            bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_START);
+
+  HfpClientInterface::Get()->ReleaseEncode(encode);
+  HfpClientInterface::Get()->ReleaseDecode(decode);
+}
+
 TEST_F(HfpClientInterfaceTest, DecodeUpdateAudioConfigToHalPcm) {
   HfpClientInterface::Decode* decode_ = HfpClientInterface::Get()->GetDecode(&message_loop_thread);
   ASSERT_NE(nullptr, decode_);
@@ -559,7 +586,7 @@ TEST_F(HfpClientInterfaceTest, DecodeConfirmStreamingRequest) {
   // Test case: pending_cmd is HFP_CTRL_CMD_NONE
   SetDecodingPendingCmd(bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
   decode_->ConfirmStreamingRequest();
-  ASSERT_TRUE(stream_started_called);
+  ASSERT_FALSE(stream_started_called);
   ASSERT_EQ(bluetooth::audio::aidl::hfp::hfp_decoding_transport_pending_cmd,
             bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
 
@@ -590,7 +617,7 @@ TEST_F(HfpClientInterfaceTest, DecodeCancelStreamingRequest) {
   stream_started_called = false;
   SetDecodingPendingCmd(bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
   decode_->CancelStreamingRequest();
-  ASSERT_TRUE(stream_suspended_called);
+  ASSERT_FALSE(stream_suspended_called);
   ASSERT_EQ(bluetooth::audio::aidl::hfp::hfp_decoding_transport_pending_cmd,
             bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
 
@@ -691,7 +718,7 @@ TEST_F(HfpClientInterfaceTest, OffloadCancelStreamingRequest) {
   stream_started_called = false;
   SetEncodingPendingCmd(bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
   offload_->CancelStreamingRequest();
-  ASSERT_TRUE(stream_suspended_called);
+  ASSERT_FALSE(stream_suspended_called);
   ASSERT_EQ(bluetooth::audio::aidl::hfp::hfp_encoding_transport_pending_cmd,
             bluetooth::audio::aidl::hfp::HFP_CTRL_CMD_NONE);
 

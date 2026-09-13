@@ -51,7 +51,6 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 import static org.mockito.hamcrest.MockitoHamcrest.argThat;
 
 import android.bluetooth.BluetoothDevice;
@@ -69,7 +68,7 @@ import android.platform.test.flag.junit.SetFlagsRule;
 import androidx.test.filters.MediumTest;
 
 import com.android.bluetooth.TestLooper;
-import com.android.bluetooth.Utils;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.btservice.ActiveDeviceManager;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.csip.CsipSetCoordinatorService;
@@ -559,7 +558,7 @@ public class HapClientServiceTest {
         initTest();
         IBluetoothHapClientCallback callback = Mockito.mock(IBluetoothHapClientCallback.class);
         Binder binder = Mockito.mock(Binder.class);
-        when(callback.asBinder()).thenReturn(binder);
+        doReturn(binder).when(callback).asBinder();
 
         synchronized (mService.mCallbacks) {
             int size = mService.mCallbacks.getRegisteredCallbackCount();
@@ -630,10 +629,10 @@ public class HapClientServiceTest {
     /** Helper function to get byte array for a device address */
     private static byte[] getByteAddress(BluetoothDevice device) {
         if (device == null) {
-            return Utils.getBytesFromAddress("00:00:00:00:00:00");
+            return Util.getBytesFromAddress("00:00:00:00:00:00");
         }
         final String address = device.getAddress();
-        return Utils.getBytesFromAddress(address);
+        return Util.getBytesFromAddress(address);
     }
 
     @SafeVarargs

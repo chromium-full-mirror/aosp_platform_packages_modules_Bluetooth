@@ -60,12 +60,12 @@ class A2dpServiceBinder extends IBluetoothA2dp.Stub implements IProfileServiceBi
     private A2dpService getService() {
         A2dpService service = mService;
 
-        if (Utils.isInstrumentationTestMode()) {
+        if (Util.isInstrumentationTestMode()) {
             return service;
         }
 
         if (!Util.checkProfileAvailable(service, TAG)
-                || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)) {
+                || !Util.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)) {
             return null;
         }
         return service;
@@ -73,15 +73,27 @@ class A2dpServiceBinder extends IBluetoothA2dp.Stub implements IProfileServiceBi
 
     @RequiresPermission(BLUETOOTH_CONNECT)
     private A2dpService getServiceAndEnforceConnect(AttributionSource source) {
+        return getServiceAndEnforceConnectInternal(source, false);
+    }
+
+    @RequiresPermission(BLUETOOTH_CONNECT)
+    private A2dpService getServiceAndEnforceConnectAllowPcc(AttributionSource source) {
+        return getServiceAndEnforceConnectInternal(source, true);
+    }
+
+    @RequiresPermission(BLUETOOTH_CONNECT)
+    private A2dpService getServiceAndEnforceConnectInternal(
+            AttributionSource source, boolean allowPccBypass) {
         A2dpService service = mService;
 
-        if (Utils.isInstrumentationTestMode()) {
+        if (Util.isInstrumentationTestMode()) {
             return service;
         }
 
         if (!Util.checkProfileAvailable(service, TAG)
-                || !Utils.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
-                || !Util.enforceConnectPermissionForDataDelivery(service, source, TAG)) {
+                || !Util.checkCallerIsSystemOrActiveOrManagedUser(service, TAG)
+                || !Util.enforceConnectPermissionForDataDelivery(
+                        service, source, TAG, null, allowPccBypass)) {
             return null;
         }
         return service;
@@ -107,7 +119,7 @@ class A2dpServiceBinder extends IBluetoothA2dp.Stub implements IProfileServiceBi
 
     @Override
     public List<BluetoothDevice> getConnectedDevices(AttributionSource source) {
-        A2dpService service = getServiceAndEnforceConnect(source);
+        A2dpService service = getServiceAndEnforceConnectAllowPcc(source);
         if (service == null) {
             return Collections.emptyList();
         }
@@ -149,7 +161,7 @@ class A2dpServiceBinder extends IBluetoothA2dp.Stub implements IProfileServiceBi
 
     @Override
     public BluetoothDevice getActiveDevice(AttributionSource source) {
-        A2dpService service = getServiceAndEnforceConnect(source);
+        A2dpService service = getServiceAndEnforceConnectAllowPcc(source);
         if (service == null) {
             return null;
         }

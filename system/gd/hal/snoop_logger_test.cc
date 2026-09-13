@@ -16,12 +16,11 @@
 
 #include "hal/snoop_logger.h"
 
+#include <arpa/inet.h>
 #include <bluetooth/log.h>
 #include <com_android_bluetooth_flags.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 
 #include <future>
 #include <unordered_map>
@@ -40,6 +39,21 @@ namespace bluetooth::hal {
 using os::fake_timer::fake_timerfd_advance;
 using os::fake_timer::fake_timerfd_reset;
 using namespace std::chrono_literals;
+
+// Matcher for a byte array.
+// Unsafe since the actual size of the argument is unchecked.
+MATCHER_P2(MemEq, bytes, size, "") {
+  char const* c_bytes = reinterpret_cast<char const*>(bytes);
+  char const* c_arg = reinterpret_cast<char const*>(arg);
+  for (unsigned i = 0; i < (unsigned)size; i++) {
+    if (c_bytes[i] != c_arg[i]) {
+      *result_listener << std::format("arg[{}] ({:#x}) != expected[{}] ({:#x})", i, c_arg[i], i,
+                                      c_bytes[i]);
+      return false;
+    }
+  }
+  return true;
+}
 
 namespace {
 static const std::vector<uint8_t> kInformationRequest = {
@@ -101,6 +115,11 @@ static const std::vector<bluetooth::hal::HciPacket> kTestData = {
 
 }  // namespace
 
+class MockSnoopLoggerSocket : public SnoopLoggerSocketInterface {
+public:
+  MOCK_METHOD(void, Write, (const void*, size_t), (override));
+};
+
 class SnoopLoggerTest : public testing::Test {
 protected:
   void SetUp() override {
@@ -112,18 +131,20 @@ protected:
 
     log::debug("Setup for test {} in test suite {}.", test_info->name(),
                test_info->test_suite_name());
-    const std::filesystem::path temp_dir_ = std::filesystem::temp_directory_path();
+    temp_dir_ = std::filesystem::temp_directory_path();
     test_name_ = test_info->name();
     std::replace(test_name_.begin(), test_name_.end(), '/', '_');
 
-    temp_snoop_log_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log");
-    temp_snoop_log_last_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.last");
-    temp_snooz_log_ = temp_dir_ / (test_name_ + "_btsnooz_hci.log");
-    temp_snooz_log_last_ = temp_dir_ / (test_name_ + "_btsnooz_hci.log.last");
-    temp_snoop_log_filtered_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.filtered");
-    temp_snoop_log_filtered_last_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.filtered.last");
+    temp_snoop_log_ = temp_dir_ / "btsnoop_hci.log";
+    temp_snoop_log_last_ = temp_dir_ / "btsnoop_hci.log.last";
+    temp_snooz_log_ = temp_dir_ / "btsnooz_hci.log";
+    temp_snooz_log_last_ = temp_dir_ / "btsnooz_hci.log.last";
+    temp_snoop_log_filtered_ = temp_dir_ / "btsnoop_hci.log.filtered";
+    temp_snoop_log_filtered_last_ = temp_dir_ / "btsnoop_hci.log.filtered.last";
 
+    // TODO: this step is not necessary, temp_dir points to a newly created temporary folder.
     DeleteSnoopLogFiles();
+
     ASSERT_FALSE(std::filesystem::exists(temp_snoop_log_));
     ASSERT_FALSE(std::filesystem::exists(temp_snoop_log_last_));
     ASSERT_FALSE(std::filesystem::exists(temp_snoop_log_filtered_));
@@ -140,7 +161,7 @@ protected:
     thread_->Stop();
     delete thread_;
 
-    com::android::bluetooth::flags::provider_->reset_flags();
+    com_android_bluetooth_flags_reset_flags();
     DeleteSnoopLogFiles();
     fake_timerfd_reset();
 
@@ -155,14 +176,14 @@ protected:
     return SnoopLogger::MAX_HCI_ACL_LEN - SnoopLogger::PACKET_TYPE_LENGTH;
   }
 
-  std::unique_ptr<SnoopLogger> NewSnoopLogger(size_t max_packets_per_file,
-                                              const std::string& btsnoop_mode,
-                                              bool qualcomm_debug_log_enabled,
-                                              bool snoop_log_persists, int port = 0) {
-    return std::unique_ptr<SnoopLogger>(new SnoopLogger(
-            shared_handler_, temp_snoop_log_.string(), temp_snooz_log_.string(), max_packets_per_file,
-            SnoopLogger::GetMaxPacketsPerBuffer(), btsnoop_mode, qualcomm_debug_log_enabled, 20ms,
-            5ms, snoop_log_persists, port));
+  std::unique_ptr<SnoopLogger> NewSnoopLogger(
+          size_t max_packets_per_file, const std::string& btsnoop_mode,
+          bool qualcomm_debug_log_enabled, bool snoop_log_persists,
+          std::unique_ptr<SnoopLoggerSocketInterface> socket = nullptr) {
+    return std::unique_ptr<SnoopLogger>(
+            new SnoopLogger(shared_handler_, std::move(socket), temp_dir_, max_packets_per_file,
+                            SnoopLogger::GetMaxPacketsPerBuffer(), btsnoop_mode,
+                            qualcomm_debug_log_enabled, 20ms, 5ms, snoop_log_persists));
   }
 
   void DeleteSnoopLogFiles() {
@@ -188,6 +209,7 @@ protected:
 
   os::Thread* thread_ = nullptr;
   os::Handler* shared_handler_ = nullptr;  // Not necessarily used, depending on flags.
+  std::filesystem::path temp_dir_;
   std::filesystem::path temp_snoop_log_;
   std::filesystem::path temp_snoop_log_last_;
   std::filesystem::path temp_snooz_log_;
@@ -199,6 +221,7 @@ protected:
 
 TEST_F(SnoopLoggerTest, empty_snoop_log_test) {
   // Actual test
+  NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeDisabled, false, false).reset();
   auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFull, false, false);
   snoop_logger.reset();
 
@@ -1102,174 +1125,23 @@ TEST_F(SnoopLoggerTest, profiles_filtered_pbap_fullfilter_test) {
 
 static constexpr int INVALID_FD = -1;
 
-TEST_F(SnoopLoggerTest, socket_disabled_connect_fail_test) {
-  int port;
-  {
-    // Temporarily run a new logger so that we can grab an unused port.
-    auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFull, true, false);
-    port = snoop_logger->GetSocketThread()->GetSocket()->port();
-  }
-
-  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeDisabled, true, false, port);
-
-  // // Create a TCP socket file descriptor
-  int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
-  ASSERT_TRUE(socket_fd != INVALID_FD);
-
-  struct sockaddr_in addr;
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(SnoopLoggerSocket::kLocalHost);
-  addr.sin_port = htons(port);
-
-  int ret;
-
-  // Connect to snoop logger socket
-  RUN_NO_INTR(ret = connect(socket_fd, (struct sockaddr*)&addr, sizeof(addr)));
-  ASSERT_NE(0, ret);
-
-  snoop_logger.reset();
-  close(socket_fd);
-}
-
 TEST_F(SnoopLoggerTest, default_socket_enabled_capture_recv_test) {
-  int ret;
-  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFull, true, false);
+  auto* socket = new MockSnoopLoggerSocket();
 
-  // // Create a TCP socket file descriptor
-  int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
-  ASSERT_TRUE(socket_fd != INVALID_FD);
-
-  struct sockaddr_in addr;
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(SnoopLoggerSocket::kLocalHost);
-  addr.sin_port = htons(snoop_logger->GetSocketThread()->GetSocket()->port());
-
-  // Connect to snoop logger socket
-  RUN_NO_INTR(ret = connect(socket_fd, (struct sockaddr*)&addr, sizeof(addr)));
-  ASSERT_EQ(0, ret);
-
-  char recv_buf1[sizeof(SnoopLoggerCommon::FileHeaderType)];
-  char recv_buf2[sizeof(SnoopLoggerFile::PacketHeaderType)];
-  char recv_buf3[99];
-  int bytes_read = -1;
-
-  auto a = std::async(std::launch::async, [&] {
-    recv(socket_fd, recv_buf1, sizeof(recv_buf1), 0);
-    recv(socket_fd, recv_buf2, sizeof(recv_buf2), 0);
-    return recv(socket_fd, recv_buf3, sizeof(recv_buf3), 0);
-  });
-
-  snoop_logger->GetSocketThread()->GetSocket()->WaitForClientSocketConnected();
-
-  snoop_logger->Capture(kHfpAtNrec0, SnoopLogger::Direction::OUTGOING,
-                        SnoopLogger::PacketType::ACL);
-
-  a.wait();
-  bytes_read = a.get();
-
-  ASSERT_EQ(0, std::memcmp(recv_buf1, &SnoopLoggerCommon::kBtSnoopFileHeader, sizeof(recv_buf1)));
-  ASSERT_EQ(bytes_read, static_cast<int>(kHfpAtNrec0.size()));
-  ASSERT_EQ(0, std::memcmp(recv_buf3, kHfpAtNrec0.data(), kHfpAtNrec0.size()));
-
-  snoop_logger.reset();
-  close(socket_fd);
-}
-
-TEST_F(SnoopLoggerTest, custom_socket_register_enabled_capture_recv_test) {
-  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFull, true, false);
-
-  int new_port = 8873;
-  SyscallWrapperImpl syscall_if;
-  auto sls =
-          std::make_unique<SnoopLoggerSocket>(&syscall_if, SnoopLoggerSocket::kLocalHost, new_port);
-  SnoopLoggerSocketThread slsThread(std::move(sls));
-  auto thread_start_future = slsThread.Start();
-  thread_start_future.wait();
-  ASSERT_TRUE(thread_start_future.get());
-
-  snoop_logger->RegisterSocket(&slsThread);
-
-  // // Create a TCP socket file descriptor
-  int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
-  ASSERT_TRUE(socket_fd != INVALID_FD);
-
-  struct sockaddr_in addr;
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(SnoopLoggerSocket::kLocalHost);
-  addr.sin_port = htons(new_port);
-
-  int ret = 0;
-  // Connect to snoop logger socket
-  RUN_NO_INTR(ret = connect(socket_fd, (struct sockaddr*)&addr, sizeof(addr)));
-  ASSERT_EQ(0, ret);
-
-  char recv_buf1[sizeof(SnoopLoggerCommon::FileHeaderType)];
-  char recv_buf2[sizeof(SnoopLoggerFile::PacketHeaderType)];
-  char recv_buf3[99];
-  int bytes_read = -1;
-
-  auto a = std::async(std::launch::async, [socket_fd, &recv_buf1, &recv_buf2, &recv_buf3] {
-    recv(socket_fd, recv_buf1, sizeof(recv_buf1), 0);
-    recv(socket_fd, recv_buf2, sizeof(recv_buf2), 0);
-    return recv(socket_fd, recv_buf3, sizeof(recv_buf3), 0);
-  });
-
-  slsThread.GetSocket()->WaitForClientSocketConnected();
-
-  snoop_logger->Capture(kHfpAtNrec0, SnoopLogger::Direction::OUTGOING,
-                        SnoopLogger::PacketType::ACL);
-
-  a.wait();
-  bytes_read = a.get();
-
-  ASSERT_EQ(0, std::memcmp(recv_buf1, &SnoopLoggerCommon::kBtSnoopFileHeader, sizeof(recv_buf1)));
-  ASSERT_EQ(bytes_read, static_cast<int>(kHfpAtNrec0.size()));
-  ASSERT_EQ(0, std::memcmp(recv_buf3, kHfpAtNrec0.data(), kHfpAtNrec0.size()));
-
-  snoop_logger.reset();
-  close(socket_fd);
-}
-
-TEST_F(SnoopLoggerTest, custom_socket_interface_register_logging_disabled_test) {
-  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeDisabled, true, false);
-
-  class SnoopLoggerSocketMock : public SnoopLoggerSocketInterface {
-  public:
-    bool write_called;
-    SnoopLoggerSocketMock() { write_called = false; }
-    virtual void Write(const void* /* data */, size_t /* length */) { write_called = true; }
+  // The packet header has fields with variable value.
+  // Match the first two fields and the total header length.
+  const SnoopLoggerFile::PacketHeaderType packet_header{
+          .length_original = htonl(static_cast<uint32_t>(1 + kHfpAtNrec0.size())),
+          .length_captured = htonl(static_cast<uint32_t>(1 + kHfpAtNrec0.size())),
   };
 
-  SnoopLoggerSocketMock mock;
+  EXPECT_CALL(*socket, Write(MemEq(&packet_header, 8), sizeof(packet_header)));
+  EXPECT_CALL(*socket, Write(MemEq(kHfpAtNrec0.data(), kHfpAtNrec0.size()), kHfpAtNrec0.size()));
 
-  snoop_logger->RegisterSocket(&mock);
-  snoop_logger->Capture(kQualcommConnectionRequest, SnoopLogger::Direction::OUTGOING,
+  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFull, true, false,
+                                     std::unique_ptr<SnoopLoggerSocketInterface>(socket));
+  snoop_logger->Capture(kHfpAtNrec0, SnoopLogger::Direction::OUTGOING,
                         SnoopLogger::PacketType::ACL);
-
-  ASSERT_FALSE(mock.write_called);
-
-  snoop_logger.reset();
-}
-
-TEST_F(SnoopLoggerTest, custom_socket_interface_register_logging_enabled_test) {
-  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFull, true, false);
-
-  class SnoopLoggerSocketMock : public SnoopLoggerSocketInterface {
-  public:
-    bool write_called;
-    SnoopLoggerSocketMock() { write_called = false; }
-    virtual void Write(const void* /* data */, size_t /* length */) { write_called = true; }
-  };
-
-  SnoopLoggerSocketMock mock;
-
-  snoop_logger->RegisterSocket(&mock);
-  snoop_logger->Capture(kQualcommConnectionRequest, SnoopLogger::Direction::OUTGOING,
-                        SnoopLogger::PacketType::ACL);
-
-  ASSERT_TRUE(mock.write_called);
-
-  snoop_logger.reset();
 }
 
 TEST_F(SnoopLoggerTest, custom_socket_profiles_filtered_hfp_hf_test) {
@@ -1283,6 +1155,7 @@ TEST_F(SnoopLoggerTest, custom_socket_profiles_filtered_hfp_hf_test) {
   const std::string clcc_pattern = "\x0d\x0a+CLCC:";
   const uint16_t HEADER_SIZE = 12;
   size_t expected_data_size = HEADER_SIZE + strlen(clcc_pattern.c_str());
+
   std::vector<uint8_t> kPhoneNumber = {
           0x0b, 0x00, 0x30, 0x00,  // ACL Header (Handle: 0x000b, PB flag: 0x00, Length: 48)
           0x2c, 0x00, 0x40, 0x30,  // L2CAP Header (Length: 44, CID: 0x3040)
@@ -1318,84 +1191,50 @@ TEST_F(SnoopLoggerTest, custom_socket_profiles_filtered_hfp_hf_test) {
               (filterMapModeProperty->find(SnoopLogger::kBtSnoopLogFilterProfileModeMagic) !=
                std::string::npos));
 
-  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFiltered, false, false);
+  auto* socket = new MockSnoopLoggerSocket();
 
-  int new_port = 8873;
-  SyscallWrapperImpl syscall_if;
-  auto sls =
-          std::make_unique<SnoopLoggerSocket>(&syscall_if, SnoopLoggerSocket::kLocalHost, new_port);
-  SnoopLoggerSocketThread slsThread(std::move(sls));
-  auto thread_start_future = slsThread.Start();
-  thread_start_future.wait();
-  ASSERT_TRUE(thread_start_future.get());
+  // The packet header has fields with variable value.
+  // Match the first two fields and the total header length.
+  const SnoopLoggerFile::PacketHeaderType packet_header{
+          .length_original = htonl(static_cast<uint32_t>(1 + kPhoneNumber.size())),
+          .length_captured = htonl(static_cast<uint32_t>(1 + kExpectedPhoneNumber.size())),
+  };
 
-  snoop_logger->RegisterSocket(&slsThread);
+  EXPECT_CALL(*socket, Write(MemEq(&packet_header, 8), sizeof(packet_header)));
+  EXPECT_CALL(*socket, Write(MemEq(kExpectedPhoneNumber.data(), kExpectedPhoneNumber.size()),
+                             kExpectedPhoneNumber.size()));
+
+  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeFiltered, false, false,
+                                     std::unique_ptr<SnoopLoggerSocketInterface>(socket));
 
   snoop_logger->SetL2capChannelOpen(conn_handle, local_cid, remote_cid, psm, false);
   snoop_logger->SetRfcommPortOpen(conn_handle, local_cid, dlci, profile_uuid_hfp_hf, flow);
 
-  // // Create a TCP socket file descriptor
-  int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
-  ASSERT_TRUE(socket_fd != INVALID_FD);
-
-  struct sockaddr_in addr;
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(SnoopLoggerSocket::kLocalHost);
-  addr.sin_port = htons(new_port);
-
-  int ret = 0;
-  // Connect to snoop logger socket
-  RUN_NO_INTR(ret = connect(socket_fd, (struct sockaddr*)&addr, sizeof(addr)));
-  ASSERT_EQ(0, ret);
-
-  char recv_buf1[sizeof(SnoopLoggerCommon::FileHeaderType)];
-  char recv_buf2[sizeof(SnoopLoggerFile::PacketHeaderType)];
-  char recv_buf3[kPhoneNumber.size()];
-  int bytes_read = -1;
-
-  auto a = std::async(std::launch::async, [socket_fd, &recv_buf1, &recv_buf2, &recv_buf3] {
-    recv(socket_fd, recv_buf1, sizeof(recv_buf1), 0);
-    recv(socket_fd, recv_buf2, sizeof(recv_buf2), 0);
-    return recv(socket_fd, recv_buf3, sizeof(recv_buf3), 0);
-  });
-
-  slsThread.GetSocket()->WaitForClientSocketConnected();
-
   snoop_logger->Capture(kPhoneNumber, SnoopLogger::Direction::OUTGOING,
                         SnoopLogger::PacketType::ACL);
+
   snoop_logger->SetL2capChannelClose(conn_handle, local_cid, remote_cid);
   snoop_logger->SetRfcommPortClose(conn_handle, local_cid, dlci, profile_uuid_hfp_hf);
-
-  a.wait();
-  bytes_read = a.get();
-
-  ASSERT_EQ(0, std::memcmp(recv_buf1, &SnoopLoggerCommon::kBtSnoopFileHeader, sizeof(recv_buf1)));
-  ASSERT_EQ(bytes_read, static_cast<int>(expected_data_size));
-  ASSERT_EQ(0, std::memcmp(recv_buf3, kExpectedPhoneNumber.data(), expected_data_size));
 
   ASSERT_TRUE(bluetooth::os::SetSystemProperty(SnoopLogger::kBtSnoopLogFilterProfileMapModeProperty,
                                                SnoopLogger::kBtSnoopLogFilterProfileModeDisabled));
   ASSERT_TRUE(
           bluetooth::os::SetSystemProperty(SnoopLogger::kBtSnoopLogFilterProfilePbapModeProperty,
                                            SnoopLogger::kBtSnoopLogFilterProfileModeDisabled));
-
-  snoop_logger.reset();
-  close(socket_fd);
 }
 
 #ifdef __ANDROID__
 TEST_F(SnoopLoggerTest, recreate_log_directory_when_enabled_test) {
-  const std::filesystem::path file_path = os::ParameterProvider::SnoopLogFilePath();
-  const std::filesystem::path temp_dir_ = file_path.parent_path();
+  temp_dir_ = os::ParameterProvider::SnoopLogDirPath();
 
   // Override the paths used for the test. The feature tested here relies on the actual
   // snoop path on Android to work.
-  temp_snoop_log_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log");
-  temp_snoop_log_last_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.last");
-  temp_snooz_log_ = temp_dir_ / (test_name_ + "_btsnooz_hci.log");
-  temp_snooz_log_last_ = temp_dir_ / (test_name_ + "_btsnooz_hci.log.last");
-  temp_snoop_log_filtered_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.filtered");
-  temp_snoop_log_filtered_last_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.filtered.last");
+  temp_snoop_log_ = temp_dir_ / "btsnoop_hci.log";
+  temp_snoop_log_last_ = temp_dir_ / "btsnoop_hci.log.last";
+  temp_snooz_log_ = temp_dir_ / "btsnooz_hci.log";
+  temp_snooz_log_last_ = temp_dir_ / "btsnooz_hci.log.last";
+  temp_snoop_log_filtered_ = temp_dir_ / "btsnoop_hci.log.filtered";
+  temp_snoop_log_filtered_last_ = temp_dir_ / "btsnoop_hci.log.filtered.last";
   DeleteSnoopLogFiles();
   std::filesystem::remove_all(temp_dir_);
 
@@ -1413,17 +1252,16 @@ TEST_F(SnoopLoggerTest, recreate_log_directory_when_enabled_test) {
 }
 
 TEST_F(SnoopLoggerTest, recreate_log_directory_when_filtered_test) {
-  const std::filesystem::path file_path = os::ParameterProvider::SnoopLogFilePath();
-  const std::filesystem::path temp_dir_ = file_path.parent_path();
+  temp_dir_ = os::ParameterProvider::SnoopLogDirPath();
 
   // Override the paths used for the test. The feature tested here relies on the actual
   // snoop path on Android to work.
-  temp_snoop_log_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log");
-  temp_snoop_log_last_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.last");
-  temp_snooz_log_ = temp_dir_ / (test_name_ + "_btsnooz_hci.log");
-  temp_snooz_log_last_ = temp_dir_ / (test_name_ + "_btsnooz_hci.log.last");
-  temp_snoop_log_filtered_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.filtered");
-  temp_snoop_log_filtered_last_ = temp_dir_ / (test_name_ + "_btsnoop_hci.log.filtered.last");
+  temp_snoop_log_ = temp_dir_ / "btsnoop_hci.log";
+  temp_snoop_log_last_ = temp_dir_ / "btsnoop_hci.log.last";
+  temp_snooz_log_ = temp_dir_ / "btsnooz_hci.log";
+  temp_snooz_log_last_ = temp_dir_ / "btsnooz_hci.log.last";
+  temp_snoop_log_filtered_ = temp_dir_ / "btsnoop_hci.log.filtered";
+  temp_snoop_log_filtered_last_ = temp_dir_ / "btsnoop_hci.log.filtered.last";
   DeleteSnoopLogFiles();
   std::filesystem::remove_all(temp_dir_);
 
@@ -1437,6 +1275,30 @@ TEST_F(SnoopLoggerTest, recreate_log_directory_when_filtered_test) {
 
   // btsnoop file should exist.
   ASSERT_TRUE(std::filesystem::exists(temp_snoop_log_filtered_));
+}
+
+// Test that DumpSnoozLogToFile recreates the log directory if it has been
+// removed. This is particularly relevant for snooz (disabled mode), where the
+// directory is not created at startup but only when the snooz log is dumped.
+TEST_F(SnoopLoggerTest, recreate_log_directory_on_dump_test) {
+  // Clean up any previous logs and ensure the directory does not exist.
+  std::filesystem::remove_all(temp_dir_);
+  ASSERT_FALSE(std::filesystem::exists(temp_dir_));
+
+  auto snoop_logger = NewSnoopLogger(10, SnoopLogger::kBtSnoopLogModeDisabled, false, false);
+  snoop_logger->Capture(kInformationRequest, SnoopLogger::Direction::OUTGOING,
+                        SnoopLogger::PacketType::CMD);
+
+  // The directory should not have been created by the constructor in disabled mode
+  ASSERT_FALSE(std::filesystem::exists(temp_dir_));
+
+  snoop_logger->DumpSnoozLogToFile();
+
+  // The directory should be created by DumpSnoozLogToFile
+  ASSERT_TRUE(std::filesystem::exists(temp_dir_));
+  ASSERT_TRUE(std::filesystem::exists(temp_snooz_log_));
+
+  snoop_logger.reset();
 }
 #endif  // __ANDROID__
 

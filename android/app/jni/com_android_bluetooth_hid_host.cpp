@@ -61,7 +61,7 @@ static void connection_state_callback(RawAddress bd_addr, tBLE_ADDR_TYPE addr_ty
     return;
   }
 
-  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
+  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv, bd_addr);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onConnectStateChanged, addr.get(),
                                (jint)addr_type, (jint)transport, (jint)state, (jint)hh_status);
 }
@@ -83,7 +83,7 @@ static void get_protocol_mode_callback(RawAddress bd_addr, tBLE_ADDR_TYPE addr_t
     return;
   }
 
-  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
+  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv, bd_addr);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onGetProtocolMode, addr.get(), (jint)addr_type,
                                (jint)transport, (jint)mode);
 }
@@ -105,7 +105,7 @@ static void get_report_callback(RawAddress bd_addr, tBLE_ADDR_TYPE addr_type,
     return;
   }
 
-  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
+  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv, bd_addr);
 
   ScopedLocalRef<jbyteArray> data(sCallbackEnv.get(), sCallbackEnv->NewByteArray(rpt_size));
   if (!data.get()) {
@@ -131,7 +131,7 @@ static void virtual_unplug_callback(RawAddress bd_addr, tBLE_ADDR_TYPE addr_type
     return;
   }
 
-  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
+  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv, bd_addr);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onVirtualUnplug, addr.get(), (jint)addr_type,
                                (jint)transport, (jint)hh_status);
 }
@@ -148,7 +148,7 @@ static void handshake_callback(RawAddress bd_addr, tBLE_ADDR_TYPE addr_type,
     return;
   }
 
-  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
+  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv, bd_addr);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onHandshake, addr.get(), (jint)addr_type,
                                (jint)transport, (jint)hh_status);
 }
@@ -162,7 +162,7 @@ static void get_idle_time_callback(RawAddress bd_addr, tBLE_ADDR_TYPE addr_type,
     return;
   }
 
-  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
+  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv, bd_addr);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onGetIdleTime, addr.get(), (jint)addr_type,
                                (jint)transport, (jint)idle_time);
 }
@@ -235,7 +235,7 @@ static void cleanupNative(JNIEnv* env, jobject /* object */) {
 }
 
 static jboolean connectHidNative(JNIEnv* env, jobject /* object */, jbyteArray address,
-                                 jint address_type, jint transport) {
+                                 jint address_type, jint transport, jboolean direct) {
   if (!sBluetoothHidInterface) {
     return JNI_FALSE;
   }
@@ -243,7 +243,7 @@ static jboolean connectHidNative(JNIEnv* env, jobject /* object */, jbyteArray a
   RawAddress bd_addr = addressFromJByteArray(env, address);
   jboolean ret = JNI_TRUE;
   BtStatus status = sBluetoothHidInterface->connect(bd_addr, (tBLE_ADDR_TYPE)address_type,
-                                                    (tBT_TRANSPORT)transport);
+                                                    (tBT_TRANSPORT)transport, direct);
   if (!status && status != BtifStatus(BUSY)) {
     log::error("Failed HID channel connection, status: {}", status);
     ret = JNI_FALSE;
@@ -253,15 +253,16 @@ static jboolean connectHidNative(JNIEnv* env, jobject /* object */, jbyteArray a
 }
 
 static jboolean disconnectHidNative(JNIEnv* env, jobject /* object */, jbyteArray address,
-                                    jint address_type, jint transport, jboolean reconnect_allowed) {
+                                    jint address_type, jint transport, jint reconnect_policy) {
   jboolean ret = JNI_TRUE;
   if (!sBluetoothHidInterface) {
     return JNI_FALSE;
   }
 
   RawAddress bd_addr = addressFromJByteArray(env, address);
-  BtStatus status = sBluetoothHidInterface->disconnect(bd_addr, (tBLE_ADDR_TYPE)address_type,
-                                                       (tBT_TRANSPORT)transport, reconnect_allowed);
+  BtStatus status = sBluetoothHidInterface->disconnect(
+          bd_addr, (tBLE_ADDR_TYPE)address_type, (tBT_TRANSPORT)transport,
+          static_cast<bthh_reconnect_policy_t>(reconnect_policy));
   if (!status) {
     log::error("Failed disconnect hid channel, status: {}", status);
     ret = JNI_FALSE;
@@ -450,8 +451,8 @@ int register_com_android_bluetooth_hid_host(JNIEnv* env) {
   const JNINativeMethod methods[] = {
           {"initializeNative", "()V", (void*)initializeNative},
           {"cleanupNative", "()V", (void*)cleanupNative},
-          {"connectHidNative", "([BII)Z", (void*)connectHidNative},
-          {"disconnectHidNative", "([BIIZ)Z", (void*)disconnectHidNative},
+          {"connectHidNative", "([BIIZ)Z", (void*)connectHidNative},
+          {"disconnectHidNative", "([BIII)Z", (void*)disconnectHidNative},
           {"getProtocolModeNative", "([BII)Z", (void*)getProtocolModeNative},
           {"virtualUnPlugNative", "([BII)Z", (void*)virtualUnPlugNative},
           {"setProtocolModeNative", "([BIIB)Z", (void*)setProtocolModeNative},

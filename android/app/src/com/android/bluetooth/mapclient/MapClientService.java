@@ -41,7 +41,6 @@ import android.sysprop.BluetoothProperties;
 import android.util.Log;
 
 import com.android.bluetooth.btservice.AdapterService;
-import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.profile.ConnectableProfile;
 import com.android.internal.annotations.VisibleForTesting;
 
@@ -109,10 +108,7 @@ public class MapClientService extends ConnectableProfile {
             throw new IllegalArgumentException("Null device");
         }
         Log.d(TAG, "connect(device= " + device + "): devices=" + mMapInstanceMap.keySet());
-        if (getConnectionPolicy(device) == CONNECTION_POLICY_FORBIDDEN
-                || (Flags.mapClientCheckAccessPermission()
-                        && getAdapterService().getMessageAccessPermission(device)
-                                != BluetoothDevice.ACCESS_ALLOWED)) {
+        if (getConnectionPolicy(device) == CONNECTION_POLICY_FORBIDDEN) {
             Log.w(
                     TAG,
                     "Connection not allowed: <"
@@ -203,9 +199,8 @@ public class MapClientService extends ConnectableProfile {
     public synchronized List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states) {
         Log.d(TAG, "getDevicesMatchingConnectionStates" + Arrays.toString(states));
         List<BluetoothDevice> deviceList = new ArrayList<>();
-        BluetoothDevice[] bondedDevices = getAdapterService().getBondedDevices();
         int connectionState;
-        for (BluetoothDevice device : bondedDevices) {
+        for (BluetoothDevice device : getAdapterService().getBondedDevices()) {
             connectionState = getConnectionState(device);
             Log.d(TAG, "Device: " + device + "State: " + connectionState);
             for (int i = 0; i < states.length; i++) {
@@ -243,10 +238,7 @@ public class MapClientService extends ConnectableProfile {
     public boolean setConnectionPolicy(BluetoothDevice device, int connectionPolicy) {
         Log.v(TAG, "Saved connectionPolicy " + device + " = " + connectionPolicy);
 
-        if (!getAdapterService()
-                .setProfileConnectionPolicy(device, getProfileId(), connectionPolicy)) {
-            return false;
-        }
+        getAdapterService().setProfileConnectionPolicy(device, getProfileId(), connectionPolicy);
         if (connectionPolicy == CONNECTION_POLICY_ALLOWED) {
             connect(device);
         } else if (connectionPolicy == CONNECTION_POLICY_FORBIDDEN) {

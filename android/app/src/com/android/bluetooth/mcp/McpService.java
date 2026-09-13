@@ -86,7 +86,7 @@ public class McpService extends ProfileService {
             } else {
                 accessString = "ACCESS_UNKNOWN";
             }
-            sb.append("\n\t\tDevice: ")
+            sb.append("\n    Device: ")
                     .append(entry.getKey())
                     .append(", access: ")
                     .append(accessString);
@@ -114,9 +114,7 @@ public class McpService extends ProfileService {
     }
 
     public void setDeviceAuthorized(BluetoothDevice device, boolean isAuthorized) {
-        Log.i(
-                TAG,
-                "\tsetDeviceAuthorized(): device: " + device + ", isAuthorized: " + isAuthorized);
+        Log.i(TAG, "setDeviceAuthorized(): device: " + device + ", isAuthorized: " + isAuthorized);
         int authorization =
                 isAuthorized ? BluetoothDevice.ACCESS_ALLOWED : BluetoothDevice.ACCESS_REJECTED;
         mDeviceAuthorizations.put(device, authorization);
@@ -163,5 +161,9 @@ public class McpService extends ProfileService {
     void setNotificationSubscription(
             int ccid, BluetoothDevice device, ParcelUuid charUuid, boolean doNotify) {
         mGmcs.setNotificationSubscription(ccid, device, charUuid, doNotify);
+    }
+
+    public void playRequest() {
+        mGmcs.onMediaControlRequest(new Request(Request.Opcodes.PLAY, 0));
     }
 }

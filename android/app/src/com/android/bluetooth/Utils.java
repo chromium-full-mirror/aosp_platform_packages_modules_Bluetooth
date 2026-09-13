@@ -20,14 +20,11 @@ import static android.Manifest.permission.BLUETOOTH_PRIVILEGED;
 import static android.bluetooth.BluetoothUtils.RemoteExceptionIgnoringRunnable;
 import static android.bluetooth.BluetoothUtils.USER_HANDLE_NULL;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
-import static android.os.PowerExemptionManager.TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_ALLOWED;
 
 import static java.util.Objects.requireNonNull;
 
 import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
-import android.app.BroadcastOptions;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.companion.AssociationInfo;
@@ -35,19 +32,12 @@ import android.companion.CompanionDeviceManager;
 import android.content.AttributionSource;
 import android.content.ContentValues;
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Binder;
-import android.os.Bundle;
 import android.os.Looper;
 import android.os.ParcelUuid;
-import android.os.PowerExemptionManager;
-import android.os.Process;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.os.UserHandle;
-import android.os.UserManager;
-import android.provider.DeviceConfig;
 import android.provider.Telephony;
 import android.util.Log;
 
@@ -63,7 +53,6 @@ import java.nio.charset.CharsetDecoder;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -86,18 +75,23 @@ public final class Utils {
 
     private static final String ENABLE_DUAL_MODE_AUDIO = "persist.bluetooth.enable_dual_mode_audio";
 
+    private static final String MAX_TX_POWER_DBM_PROPERTY = "bluetooth.ble.max_tx_power_dbm.config";
+    private static final int DEFAULT_MAX_TX_POWER_DBM = 10;
+    private static final int MAX_SUPPORTED_TX_POWER_DBM = 10;
+
     // See https://en.wikipedia.org/wiki/Initialization-on-demand_holder_idiom
     private static class DualModeAudioSetting {
         private static boolean sEnabled =
                 SystemProperties.getBoolean(ENABLE_DUAL_MODE_AUDIO, false);
     }
 
-    private static final String KEY_TEMP_ALLOW_LIST_DURATION_MS = "temp_allow_list_duration_ms";
-    private static final long DEFAULT_TEMP_ALLOW_LIST_DURATION_MS = 20_000;
-
     private static int sSystemUiUid = USER_HANDLE_NULL.getIdentifier();
 
     private Utils() {}
+
+    static int getSystemUiUid() {
+        return sSystemUiUid;
+    }
 
     public static void setSystemUiUid(int uid) {
         sSystemUiUid = uid;
@@ -135,14 +129,6 @@ public final class Utils {
         DualModeAudioSetting.sEnabled = enabled;
     }
 
-    public static String getLoggableAddress(@Nullable BluetoothDevice device) {
-        if (device == null) {
-            return "00:00:00:00:00:00";
-        } else {
-            return "xx:xx:xx:xx:" + device.toString().substring(12);
-        }
-    }
-
     public static String getAddressStringFromByte(byte[] address) {
         if (address == null || address.length != BD_ADDR_LEN) {
             return null;
@@ -151,33 +137,6 @@ public final class Utils {
         return String.format(
                 "%02X:%02X:%02X:%02X:%02X:%02X",
                 address[0], address[1], address[2], address[3], address[4], address[5]);
-    }
-
-    public static String getRedactedAddressStringFromByte(byte[] address) {
-        if (address == null || address.length != BD_ADDR_LEN) {
-            return null;
-        }
-
-        return String.format("XX:XX:XX:XX:%02X:%02X", address[4], address[5]);
-    }
-
-    public static byte[] getByteAddress(BluetoothDevice device) {
-        return getBytesFromAddress(device.getAddress());
-    }
-
-    public static byte[] getBytesFromAddress(String address) {
-        int i, j = 0;
-        byte[] output = new byte[BD_ADDR_LEN];
-
-        for (i = 0; i < address.length(); i++) {
-            if (address.charAt(i) != ':') {
-                output[j] = (byte) Integer.parseInt(address.substring(i, i + 2), BD_UUID_LEN);
-                j++;
-                i++;
-            }
-        }
-
-        return output;
     }
 
     public static int byteArrayToInt(byte[] valueBuf) {
@@ -289,7 +248,7 @@ public final class Utils {
             String callingPackage,
             BluetoothDevice device) {
         int callingUid = Binder.getCallingUid();
-        if (!isPackageNameAccurate(context, callingPackage, callingUid)) {
+        if (!Util.isPackageNameAccurate(context, callingPackage, callingUid)) {
             throw new SecurityException(
                     "hasCdmAssociation: Package name "
                             + callingPackage
@@ -324,168 +283,9 @@ public final class Utils {
         }
     }
 
-    /**
-     * Verifies whether the calling package name matches the calling app uid
-     *
-     * @param context the Bluetooth AdapterService context
-     * @param callingPackage the calling application package name
-     * @param callingUid the calling application uid
-     * @return {@code true} if the package name matches the calling app uid, {@code false} otherwise
-     */
-    public static boolean isPackageNameAccurate(
-            Context context, String callingPackage, int callingUid) {
-        UserHandle callingUser = UserHandle.getUserHandleForUid(callingUid);
-
-        // Verifies the integrity of the calling package name
-        try {
-            int packageUid =
-                    context.createContextAsUser(callingUser, 0)
-                            .getPackageManager()
-                            .getPackageUid(callingPackage, 0);
-            if (packageUid != callingUid) {
-                Log.e(
-                        TAG,
-                        "isPackageNameAccurate: App with package name "
-                                + callingPackage
-                                + " is UID "
-                                + packageUid
-                                + " but caller is "
-                                + callingUid);
-                return false;
-            }
-        } catch (PackageManager.NameNotFoundException e) {
-            Log.e(
-                    TAG,
-                    "isPackageNameAccurate: App with package name "
-                            + callingPackage
-                            + " does not exist");
-            return false;
-        }
-        return true;
-    }
-
-    private static boolean checkCallerIsSystem() {
-        int callingUid = Binder.getCallingUid();
-        return UserHandle.getAppId(Process.SYSTEM_UID) == UserHandle.getAppId(callingUid);
-    }
-
-    private static boolean checkCallerIsSystemOrActiveUser() {
-        int callingUid = Binder.getCallingUid();
-        UserHandle callingUser = UserHandle.getUserHandleForUid(callingUid);
-
-        return Process.myUserHandle().equals(callingUser)
-                || (UserHandle.getAppId(sSystemUiUid) == UserHandle.getAppId(callingUid))
-                || (UserHandle.getAppId(Process.SYSTEM_UID) == UserHandle.getAppId(callingUid));
-    }
-
-    /**
-     * Checks if the caller to the method is system server.
-     *
-     * @param tag the log tag to use in case the caller is not system server
-     * @param method the API method name
-     * @return {@code true} if the caller is system server, {@code false} otherwise
-     */
-    public static boolean callerIsSystem(String tag, String method) {
-        if (isInstrumentationTestMode()) {
-            return true;
-        }
-        final boolean res = checkCallerIsSystem();
-        if (!res) {
-            Log.w(TAG, tag + "." + method + "() - Not allowed outside system server");
-        }
-        return res;
-    }
-
-    private static boolean checkCallerIsSystemOrActiveOrManagedUser(Context context) {
-        if (context == null) {
-            return checkCallerIsSystemOrActiveUser();
-        }
-        int callingUid = Binder.getCallingUid();
-        UserHandle callingUser = UserHandle.getUserHandleForUid(callingUid);
-
-        // Use the Bluetooth process identity when making call to get parent user
-        final long ident = Binder.clearCallingIdentity();
-        try {
-            UserManager um = context.getSystemService(UserManager.class);
-            UserHandle uh = um.getProfileParent(callingUser);
-
-            // In HSUM mode, UserHandle.SYSTEM is only for System and the human users will use other
-            // ids
-            boolean isSystemUserInHsumMode =
-                    um.isHeadlessSystemUserMode() && callingUser.equals(UserHandle.SYSTEM);
-
-            // Always allow SystemUI/System access.
-            return Process.myUserHandle().equals(callingUser)
-                    || Process.myUserHandle().equals(uh)
-                    || (UserHandle.getAppId(sSystemUiUid) == UserHandle.getAppId(callingUid))
-                    || (UserHandle.getAppId(Process.SYSTEM_UID) == UserHandle.getAppId(callingUid))
-                    || (isSystemUserInHsumMode);
-        } catch (Exception ex) {
-            Log.e(TAG, "checkCallerAllowManagedProfiles: Exception ex=" + ex);
-            return false;
-        } finally {
-            Binder.restoreCallingIdentity(ident);
-        }
-    }
-
-    public static boolean checkCallerIsSystemOrActiveOrManagedUser(Context context, String tag) {
-        if (isInstrumentationTestMode()) {
-            return true;
-        }
-        final boolean res = checkCallerIsSystemOrActiveOrManagedUser(context);
-        if (!res) {
-            Log.w(
-                    TAG,
-                    tag
-                            + " - Not allowed for"
-                            + " non-active user and non-system and non-managed user");
-        }
-        return res;
-    }
-
-    public static boolean callerIsSystemOrActiveOrManagedUser(
-            Context context, String tag, String method) {
-        return checkCallerIsSystemOrActiveOrManagedUser(context, tag + "." + method + "()");
-    }
-
     /** Converts {@code milliseconds} to unit. Each unit is 0.625 millisecond. */
     public static int millsToUnit(int milliseconds) {
         return (int) (TimeUnit.MILLISECONDS.toMicros(milliseconds) / MICROS_PER_UNIT);
-    }
-
-    private static boolean sIsInstrumentationTestModeCacheSet = false;
-    private static boolean sInstrumentationTestModeCache = false;
-
-    /**
-     * Check if we are running in BluetoothInstrumentationTest context by trying to load
-     * com.android.bluetooth.FileSystemWriteTest. If we are not in Instrumentation test mode, this
-     * class should not be found. Thus, the assumption is that FileSystemWriteTest must exist. If
-     * FileSystemWriteTest is removed in the future, another test class in
-     * BluetoothInstrumentationTest should be used instead
-     *
-     * @return true if in BluetoothInstrumentationTest, false otherwise
-     */
-    public static boolean isInstrumentationTestMode() {
-        if (!sIsInstrumentationTestModeCacheSet) {
-            try {
-                sInstrumentationTestModeCache =
-                        Class.forName("com.android.bluetooth.TestUtils") != null;
-            } catch (ClassNotFoundException exception) {
-                sInstrumentationTestModeCache = false;
-            }
-            sIsInstrumentationTestModeCacheSet = true;
-        }
-        return sInstrumentationTestModeCache;
-    }
-
-    /**
-     * Throws {@link IllegalStateException} if we are not in BluetoothInstrumentationTest. Useful
-     * for ensuring certain methods only get called in BluetoothInstrumentationTest
-     */
-    public static void enforceInstrumentationTestMode() {
-        if (!isInstrumentationTestMode()) {
-            throw new IllegalStateException("Not in BluetoothInstrumentationTest");
-        }
     }
 
     /**
@@ -596,47 +396,6 @@ public final class Utils {
                                 context.getContentResolver(), uri, values, null, null);
     }
 
-    /** Returns broadcast options. */
-    public static @NonNull BroadcastOptions getTempBroadcastOptions() {
-        final BroadcastOptions bOptions = BroadcastOptions.makeBasic();
-        // Use the Bluetooth process identity to pass permission check when reading DeviceConfig
-        final long ident = Binder.clearCallingIdentity();
-        try {
-            final long durationMs =
-                    DeviceConfig.getLong(
-                            DeviceConfig.NAMESPACE_BLUETOOTH,
-                            KEY_TEMP_ALLOW_LIST_DURATION_MS,
-                            DEFAULT_TEMP_ALLOW_LIST_DURATION_MS);
-            bOptions.setTemporaryAppAllowlist(
-                    durationMs,
-                    TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_ALLOWED,
-                    PowerExemptionManager.REASON_BLUETOOTH_BROADCAST,
-                    "");
-        } finally {
-            Binder.restoreCallingIdentity(ident);
-        }
-        return bOptions;
-    }
-
-    public static @NonNull Bundle getTempBroadcastBundle() {
-        return getTempBroadcastOptions().toBundle();
-    }
-
-    /**
-     * Checks that value is present as at least one of the elements of the array.
-     *
-     * @param array the array to check in
-     * @param value the value to check for
-     * @return true if the value is present in the array
-     */
-    public static <T> boolean arrayContains(@Nullable T[] array, T value) {
-        if (array == null) return false;
-        for (T element : array) {
-            if (Objects.equals(element, value)) return true;
-        }
-        return false;
-    }
-
     /**
      * CCC descriptor short integer value to string.
      *
@@ -707,7 +466,7 @@ public final class Utils {
     }
 
     public static void enforceMainLooperIsUsed() {
-        if (Utils.isInstrumentationTestMode()) {
+        if (Util.isInstrumentationTestMode()) {
             return;
         }
         if (!Looper.getMainLooper().isCurrentThread()) {
@@ -716,7 +475,7 @@ public final class Utils {
     }
 
     public static void enforceMainLooperIsNotUsed() {
-        if (Utils.isInstrumentationTestMode()) {
+        if (Util.isInstrumentationTestMode()) {
             return;
         }
         if (Looper.getMainLooper().isCurrentThread()) {
@@ -726,6 +485,22 @@ public final class Utils {
 
     public static boolean isAutonomousRepairingSupported() {
         // TODO (b/440298497): Change this to flag and android check once the SDK check CL is in.
-        return false;
+        return com.android.bluetooth.flags.Flags.autonomousRepairingInitiation()
+                && android.bluetooth.platform.flags.Flags.autonomousRepairingInitiation();
+    }
+
+    public static boolean isBluetoothPairingHardeningSupported() {
+        return com.android.bluetooth.flags.Flags.apairing26q2PermissionImprovements()
+                && android.bluetooth.platform.flags.Flags.bluetoothPairingHardening();
+    }
+
+    /** Determines the maximum TX power (in dBm) that's allowed for the system. */
+    public static int getMaxTxPowerDbm() {
+        if (!com.android.bluetooth.flags.Flags.allowMoreTxPower()) {
+            return 1;
+        }
+        return Math.min(
+                SystemProperties.getInt(MAX_TX_POWER_DBM_PROPERTY, DEFAULT_MAX_TX_POWER_DBM),
+                MAX_SUPPORTED_TX_POWER_DBM);
     }
 }

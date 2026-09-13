@@ -30,7 +30,6 @@ import com.android.bluetooth.avrcpcontroller.AvrcpControllerService;
 import com.android.bluetooth.bas.BatteryService;
 import com.android.bluetooth.bass_client.BassClientService;
 import com.android.bluetooth.csip.CsipSetCoordinatorService;
-import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.gatt.GattService;
 import com.android.bluetooth.hap.HapClientService;
 import com.android.bluetooth.hearingaid.HearingAidService;
@@ -39,9 +38,12 @@ import com.android.bluetooth.hfpclient.HeadsetClientService;
 import com.android.bluetooth.hid.HidDeviceService;
 import com.android.bluetooth.hid.HidHostService;
 import com.android.bluetooth.le_audio.LeAudioBroadcast;
+import com.android.bluetooth.le_audio.LeAudioPeripheralService;
 import com.android.bluetooth.le_audio.LeAudioService;
+import com.android.bluetooth.le_audio.LeAudioTmapService;
 import com.android.bluetooth.map.BluetoothMapService;
 import com.android.bluetooth.mapclient.MapClientService;
+import com.android.bluetooth.mcp.McpClientService;
 import com.android.bluetooth.mcp.McpService;
 import com.android.bluetooth.opp.BluetoothOppService;
 import com.android.bluetooth.pan.PanService;
@@ -49,8 +51,9 @@ import com.android.bluetooth.pbap.BluetoothPbapService;
 import com.android.bluetooth.pbapclient.PbapClientService;
 import com.android.bluetooth.sap.SapService;
 import com.android.bluetooth.tbs.TbsService;
-import com.android.bluetooth.vaps.VapsServerService;
+import com.android.bluetooth.vap.VapServerService;
 import com.android.bluetooth.vc.VolumeControlService;
+import com.android.bluetooth.vcp.VcpRendererService;
 
 import java.util.Arrays;
 
@@ -85,6 +88,13 @@ public class Config {
         BluetoothProfile.CSIP_SET_COORDINATOR,
         BluetoothProfile.MCP_SERVER,
         BluetoothProfile.LE_CALL_CONTROL,
+    };
+
+    /** List of profile services related to LE audio peripheral role */
+    private static final int[] LE_AUDIO_UNICAST_PERIPHERAL_PROFILES = {
+        BluetoothProfile.LE_AUDIO_PERIPHERAL,
+        BluetoothProfile.MCP_CLIENT,
+        BluetoothProfile.VCP_RENDERER
     };
 
     /**
@@ -139,7 +149,12 @@ public class Config {
                 new ProfileConfig(LeAudioService.isEnabled(), BluetoothProfile.LE_AUDIO),
                 new ProfileConfig(
                         LeAudioBroadcast.isEnabled(), BluetoothProfile.LE_AUDIO_BROADCAST),
-                new ProfileConfig(VapsServerService.isEnabled(), BluetoothProfile.VAPS_SERVER),
+                new ProfileConfig(VapServerService.isEnabled(), BluetoothProfile.VAP_SERVER),
+                new ProfileConfig(
+                        LeAudioPeripheralService.isEnabled(), BluetoothProfile.LE_AUDIO_PERIPHERAL),
+                new ProfileConfig(LeAudioTmapService.isEnabled(), BluetoothProfile.TMAP_SERVER),
+                new ProfileConfig(McpClientService.isEnabled(), BluetoothProfile.MCP_CLIENT),
+                new ProfileConfig(VcpRendererService.isEnabled(), BluetoothProfile.VCP_RENDERER),
             };
 
     private Config() {}
@@ -228,9 +243,7 @@ public class Config {
         setProfileEnabled(BluetoothProfile.LE_CALL_CONTROL, enable);
         setProfileEnabled(BluetoothProfile.MCP_SERVER, enable);
         setProfileEnabled(BluetoothProfile.VOLUME_CONTROL, enable);
-        if (Flags.addProfileAsIntentExtra()) {
-            setProfileEnabled(BluetoothProfile.VAPS_SERVER, enable);
-        }
+        setProfileEnabled(BluetoothProfile.VAP_SERVER, enable);
     }
 
     private static void setLeAudioBroadcastProfileStatus(Boolean enable) {
@@ -240,6 +253,15 @@ public class Config {
 
     static int[] getLeAudioUnicastProfiles() {
         return LE_AUDIO_UNICAST_PROFILES;
+    }
+
+    /**
+     * Get a list of profile services related to LE audio peripheral role.
+     *
+     * @return a list of profile services related to LE audio peripheral role.
+     */
+    static int[] getLeAudioUnicastPeripheralProfiles() {
+        return LE_AUDIO_UNICAST_PERIPHERAL_PROFILES;
     }
 
     static int[] getSupportedProfiles() {

@@ -39,10 +39,10 @@
 
 /** Bluetooth profile interface IDs */
 #define BT_BQR_ID "bqr"
-#define BT_KEYSTORE_ID "bluetooth_keystore"
 #define BT_PROFILE_ADVANCED_AUDIO_ID "a2dp"
 #define BT_PROFILE_ADVANCED_AUDIO_SINK_ID "a2dp_sink"
 #define BT_PROFILE_AV_RC_CTRL_ID "avrcp_ctrl"
+#define BT_PROFILE_LE_AUDIO_PERIPHERAL_ID "le_audio_peripheral"
 #define BT_PROFILE_CSIS_CLIENT_ID "csis_client"
 #define BT_PROFILE_GATT_ID "gatt"
 #define BT_PROFILE_HANDSFREE_CLIENT_ID "handsfree_client"
@@ -54,11 +54,13 @@
 #define BT_PROFILE_LE_AUDIO_BROADCASTER_ID "le_audio_broadcaster"
 #define BT_PROFILE_LE_AUDIO_ID "le_audio"
 #define BT_PROFILE_MAP_CLIENT_ID "map_client"
+#define BT_PROFILE_MCP_CLIENT_ID "mcp_client"
 #define BT_PROFILE_PAN_ID "pan"
 #define BT_PROFILE_SDP_CLIENT_ID "sdp"
 #define BT_PROFILE_SOCKETS_ID "socket"
-#define BT_PROFILE_VAPS_SERVER_ID "vaps_server"
-#define BT_PROFILE_VC_ID "volume_control"
+#define BT_PROFILE_VAP_SERVER_ID "vap_server"
+#define BT_PROFILE_VCP_CONTROLLER_ID "volume_control"
+#define BT_PROFILE_VCP_RENDERER_ID "vcp_renderer"
 
 /** Bluetooth Device Name */
 typedef struct {
@@ -258,6 +260,8 @@ typedef struct {
   uint16_t adv_filter_extended_features_mask;
   bool le_channel_sounding_supported;
   bool le_high_data_rate_throughput_supported;
+  bool le_connected_isochronous_stream_peripheral_supported;
+  bool le_big_set_channel_map_classification_support;
 } __attribute__((packed)) bt_local_le_features_t;
 
 typedef struct {
@@ -430,13 +434,7 @@ typedef enum {
    */
   BT_PROPERTY_REMOTE_ADDR_TYPE,
 
-  /**
-   * Description - Whether remote device supports Secure Connections mode on
-   * host
-   * Access mode - GET and SET.
-   * Data Type - uint8_t.
-   */
-  BT_PROPERTY_REMOTE_HOST_SECURE_CONNECTIONS_SUPPORTED,
+  BT_PROPERTY_RESERVED_0x19,
 
   /**
    * Description - Maximum observed session key for remote device
@@ -489,13 +487,23 @@ typedef enum {
    */
   BT_PROPERTY_UUIDS_FROM_LE_ADVERTISING_DATA,
 
+  BT_PROPERTY_RESERVED_0x20,
+
   /**
-   * Description - Whether remote device supports Secure Connections mode on
-   * controller
-   * Access mode - GET and SET.
-   * Data Type - uint8_t.
+   * Description - Pairing type of the remote device on BREDR transport. This includes the pairing
+   * algorithm and the variant.
+   * Access mode - GET.
+   * Data Type - PairingType.
    */
-  BT_PROPERTY_REMOTE_CONTROLLER_SECURE_CONNECTIONS_SUPPORTED,
+  BT_PROPERTY_BREDR_PAIRING_TYPE,
+
+  /**
+   * Description - Pairing type of the remote device on LE transport. This includes the pairing
+   * algorithm and the variant.
+   * Access mode - GET.
+   * Data Type - PairingType.
+   */
+  BT_PROPERTY_LE_PAIRING_TYPE,
 
   BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP = 0xFF,
 } bt_property_type_t;
@@ -551,14 +559,36 @@ typedef enum {
 /** Bluetooth Bond state */
 typedef enum { BT_BOND_STATE_NONE, BT_BOND_STATE_BONDING, BT_BOND_STATE_BONDED } bt_bond_state_t;
 
-/** Bluetooth SSP Bonding Variant */
-typedef enum {
-  BT_SSP_VARIANT_PASSKEY_CONFIRMATION,
-  BT_SSP_VARIANT_PASSKEY_ENTRY,
-  BT_SSP_VARIANT_CONSENT,
-  BT_SSP_VARIANT_PASSKEY_NOTIFICATION,
-  BT_SSP_VARIANT_PARTICIPATION  // Incoming LE pairing request
-} bt_ssp_variant_t;
+static inline std::string bt_bond_state_text(const bt_bond_state_t& state) {
+  switch (state) {
+    CASE_RETURN_STRING(BT_BOND_STATE_NONE);
+    CASE_RETURN_STRING(BT_BOND_STATE_BONDING);
+    CASE_RETURN_STRING(BT_BOND_STATE_BONDED);
+    default:
+      RETURN_UNKNOWN_TYPE_STRING(bt_bond_state_t, state);
+  }
+}
+
+/** Bluetooth Pairing Variant */
+enum class PairingVariant : uint8_t {
+  PASSKEY_CONFIRMATION,
+  PASSKEY_ENTRY,
+  CONSENT,
+  PASSKEY_NOTIFICATION,
+  PARTICIPATION  // Incoming LE pairing request
+};
+
+static inline std::string pairing_variant_text(const PairingVariant& variant) {
+  switch (variant) {
+    CASE_RETURN_STRING(PairingVariant::PASSKEY_CONFIRMATION);
+    CASE_RETURN_STRING(PairingVariant::PASSKEY_ENTRY);
+    CASE_RETURN_STRING(PairingVariant::CONSENT);
+    CASE_RETURN_STRING(PairingVariant::PASSKEY_NOTIFICATION);
+    CASE_RETURN_STRING(PairingVariant::PARTICIPATION);
+    default:
+      RETURN_UNKNOWN_TYPE_STRING(PairingVariant, variant);
+  }
+}
 
 // This is inline with BluetoothDevice.EncryptionAlgorithm.
 enum class EncryptionAlgorithm : uint8_t {
@@ -593,7 +623,8 @@ typedef struct {
 
 enum class PairingAlgorithm : uint8_t {
   NONE, /* Indicates pairing information is not available */
-  LEGACY, /* Used by both BR/EDR and LE */
+  LE_LEGACY,
+  BREDR_LEGACY,
   SSP, /* Secure Simple Pairing (only used for BR/EDR) */
   SC,  /* Secure Connections (for both BR/EDR and LE) */
 };
@@ -601,7 +632,8 @@ enum class PairingAlgorithm : uint8_t {
 static inline std::string pairing_algorithm_text(const PairingAlgorithm& pairing_algorithm) {
   switch (pairing_algorithm) {
     CASE_RETURN_STRING(PairingAlgorithm::NONE);
-    CASE_RETURN_STRING(PairingAlgorithm::LEGACY);
+    CASE_RETURN_STRING(PairingAlgorithm::BREDR_LEGACY);
+    CASE_RETURN_STRING(PairingAlgorithm::LE_LEGACY);
     CASE_RETURN_STRING(PairingAlgorithm::SC);
     CASE_RETURN_STRING(PairingAlgorithm::SSP);
     default:
@@ -614,7 +646,7 @@ enum LegacyPairingVariant : uint8_t {
   PIN_16,
 };
 
-static inline std::string bredr_legacy_pairing_variant_text(const LegacyPairingVariant& variant) {
+static inline std::string legacy_pairing_variant_text(const LegacyPairingVariant& variant) {
   switch (variant) {
     CASE_RETURN_STRING(LegacyPairingVariant::PIN);
     CASE_RETURN_STRING(LegacyPairingVariant::PIN_16);
@@ -623,13 +655,28 @@ static inline std::string bredr_legacy_pairing_variant_text(const LegacyPairingV
   }
 }
 
+enum class PairingInitiator : uint8_t {
+  APP,
+  REMOTE_DEVICE,
+  SERVICE_ACCESS_REQ,
+  CTKD,
+  REPAIRING,
+};
+
 struct PairingType {
   PairingAlgorithm algorithm;
   union {
-    bt_ssp_variant_t variant;
+    PairingVariant variant;
     LegacyPairingVariant legacy_variant;
   };
 };
+
+static inline std::string pairing_type_text(const PairingType& pairing_type) {
+  return pairing_algorithm_text(pairing_type.algorithm) + "-" +
+         (pairing_type.algorithm == PairingAlgorithm::BREDR_LEGACY
+                  ? legacy_pairing_variant_text(pairing_type.legacy_variant)
+                  : pairing_variant_text(pairing_type.variant));
+}
 
 constexpr PairingType kPairingTypeNone = {.algorithm = PairingAlgorithm::NONE,
                                           .legacy_variant = LegacyPairingVariant::PIN};
@@ -669,21 +716,23 @@ typedef void (*discovery_state_changed_callback)(bt_discovery_state_t state);
 
 /** Bluetooth Legacy PinKey Request callback */
 typedef void (*pin_request_callback)(RawAddress remote_bd_addr, bt_bdname_t* bd_name, uint32_t cod,
-                                     bool min_16_digit, PairingAlgorithm pairing_algorithm);
+                                     bool min_16_digit, int pairing_algorithm);
 
 /** Bluetooth SSP Request callback - Just Works & Numeric Comparison*/
 /** pass_key - Shall be 0 for BT_SSP_PAIRING_VARIANT_CONSENT &
  *  BT_SSP_PAIRING_PASSKEY_ENTRY */
 /* TODO: Passkey request callback shall not be needed for devices with display
  * capability. We still need support this in the stack for completeness */
-typedef void (*ssp_request_callback)(RawAddress remote_bd_addr, bt_ssp_variant_t pairing_variant,
-                                     uint32_t pass_key, PairingAlgorithm pairing_algorithm);
+typedef void (*ssp_request_callback)(RawAddress remote_bd_addr, int transport,
+                                     PairingVariant pairing_variant, uint32_t pass_key,
+                                     int pairing_algorithm);
 
 /** Bluetooth Bond state changed callback */
 /* Invoked in response to create_bond, cancel_bond or remove_bond */
 typedef void (*bond_state_changed_callback)(bt_status_t status, RawAddress remote_bd_addr,
                                             tBT_TRANSPORT transport, bt_bond_state_t state,
-                                            PairingType pairing_type, int fail_reason);
+                                            PairingType pairing_type, int fail_reason,
+                                            PairingInitiator pairing_initiator);
 
 /** Bluetooth Address consolidate callback */
 /* Callback to inform upper layer that these two addresses come from same
@@ -816,6 +865,30 @@ typedef struct {
  *   The reverse shall occur whenever the profile 'cleanup' APIs are invoked
  */
 
+/**
+ * Opens the interface and provides the callback routines to the implementation of this interface.
+ * The |start_restricted| flag inits the adapter in restricted mode. In restricted mode, bonds that
+ * are created are marked as restricted in the config file. These devices are deleted upon leaving
+ * restricted mode.
+ * The |is_common_criteria_mode| flag inits the adapter in common criteria mode.
+ * The |config_compare_result| flag show the config checksum check result if is in common criteria
+ * mode.
+ * The |is_atv| flag indicates whether the local device is an Android TV.
+ * The |callouts| sets the OS callbacks functions that the stack needs for alarms and wake locks.
+ */
+void bluetooth_init(bt_callbacks_t* callbacks, bool guest_mode, bool is_common_criteria_mode,
+                    int config_compare_result, bool is_atv, const std::string hci_instance_name,
+                    bt_os_callouts_t* callouts, bool autonomous_repairing_initiation);
+
+/** Enable Bluetooth. */
+void bluetooth_enable(const std::string local_name);
+
+/** Disable Bluetooth. */
+void bluetooth_disable();
+
+/** Closes the interface. */
+void bluetooth_cleanup();
+
 /** Represents the standard Bluetooth DM interface. */
 typedef struct {
   /** set to sizeof(bt_interface_t) */
@@ -824,32 +897,6 @@ typedef struct {
   /** set index of the adapter to use */
   void (*set_adapter_index)(int adapter_index);
 #endif
-
-  /**
-   * Opens the interface and provides the callback routines
-   * to the implementation of this interface.
-   * The |start_restricted| flag inits the adapter in restricted mode. In
-   * restricted mode, bonds that are created are marked as restricted in the
-   * config file. These devices are deleted upon leaving restricted mode.
-   * The |is_common_criteria_mode| flag inits the adapter in common criteria
-   * mode. The |config_compare_result| flag show the config checksum check
-   * result if is in common criteria mode. The |is_atv| flag indicates whether
-   * the local device is an Android TV
-   */
-  int (*init)(bt_callbacks_t* callbacks, bool guest_mode, bool is_common_criteria_mode,
-              int config_compare_result, bool is_atv, const char* hci_instance_name);
-
-  /** Enable Bluetooth. */
-  int (*enable)(const std::string local_name);
-
-  /** Disable Bluetooth. */
-  int (*disable)(void);
-
-  /** Closes the interface. */
-  void (*cleanup)(void);
-
-  /** Get all Bluetooth Adapter properties at init */
-  int (*get_adapter_properties)(void);
 
   /** Get Bluetooth Adapter property of 'type' */
   int (*get_adapter_property)(bt_property_type_t type);
@@ -870,9 +917,6 @@ typedef struct {
 
   /** Set Remote Device property of 'type' */
   int (*set_remote_device_property)(RawAddress remote_addr, const bt_property_t* property);
-
-  /** Get Remote Device's service record  for the given UUID */
-  int (*get_remote_service_record)(RawAddress remote_addr, const bluetooth::Uuid& uuid);
 
   /** Start service discovery with transport to get remote services */
   int (*get_remote_services)(RawAddress remote_addr, int transport);
@@ -901,23 +945,25 @@ typedef struct {
 
   bool (*pairing_is_busy)();
 
+#ifdef TARGET_FLOSS
   /**
    * Get the connection status for a given remote device.
    * return value of 0 means the device is not connected,
    * non-zero return status indicates an active connection.
    */
   int (*get_connection_state)(RawAddress bd_addr);
+#endif
 
   /** BT Legacy PinKey Reply */
   /** If accept==FALSE, then pin_len and pin_code shall be 0x0 */
   int (*pin_reply)(RawAddress bd_addr, uint8_t accept, uint8_t pin_len, bt_pin_code_t* pin_code);
 
   /** BT SSP Reply - Just Works, Numeric Comparison and Passkey
-   * passkey shall be zero for BT_SSP_VARIANT_PASSKEY_COMPARISON &
-   * BT_SSP_VARIANT_CONSENT
-   * For BT_SSP_VARIANT_PASSKEY_ENTRY, if accept==FALSE, then passkey
+   * passkey shall be zero for PairingVariant::PASSKEY_COMPARISON &
+   * PairingVariant::CONSENT
+   * For PairingVariant::PASSKEY_ENTRY, if accept==FALSE, then passkey
    * shall be zero */
-  int (*ssp_reply)(RawAddress bd_addr, bt_ssp_variant_t variant, uint8_t accept, uint32_t passkey);
+  int (*ssp_reply)(RawAddress bd_addr, PairingVariant variant, uint8_t accept, uint32_t passkey);
 
   /** Get Bluetooth profile interface */
   const void* (*get_profile_interface)(const char* profile_id);
@@ -926,11 +972,6 @@ typedef struct {
   /* opcode MUST be one of: LE_Receiver_Test, LE_Transmitter_Test, LE_Test_End
    */
   int (*le_test_mode)(uint16_t opcode, uint8_t* buf, uint8_t len);
-
-  /** Sets the OS call-out functions that bluedroid needs for alarms and wake
-   * locks. This should be called immediately after a successful |init|.
-   */
-  int (*set_os_callouts)(bt_os_callouts_t* callouts);
 
   /** Read Energy info details - return value indicates BT_STATUS_SUCCESS or
    * BT_STATUS_NOT_READY Success indicates that the VSC command was sent to
@@ -1067,6 +1108,14 @@ typedef struct {
 
   /**
    *
+   * Set the suspend state. This information can be used to determine a few things,
+   * e.g. the parameter used for scanning.
+   *
+   */
+  int (*set_suspend_state)(bool suspend);
+
+  /**
+   *
    * Is wbs supported by the controller
    *
    */
@@ -1129,11 +1178,11 @@ struct formatter<bt_status_t> : enum_formatter<bt_status_t> {};
 template <>
 struct formatter<bt_scan_mode_t> : enum_formatter<bt_scan_mode_t> {};
 template <>
-struct formatter<bt_bond_state_t> : enum_formatter<bt_bond_state_t> {};
+struct formatter<bt_bond_state_t> : string_formatter<bt_bond_state_t, &bt_bond_state_text> {};
 template <>
 struct formatter<bt_property_type_t> : enum_formatter<bt_property_type_t> {};
 template <>
-struct formatter<bt_ssp_variant_t> : enum_formatter<bt_ssp_variant_t> {};
+struct formatter<PairingVariant> : string_formatter<PairingVariant, &pairing_variant_text> {};
 template <>
 struct formatter<BtIoCap> : formatter<std::string> {
   template <class Context>
@@ -1147,7 +1196,10 @@ struct formatter<EncryptionAlgorithm>
 template <>
 struct formatter<PairingAlgorithm> : string_formatter<PairingAlgorithm, &pairing_algorithm_text> {};
 template <>
-struct formatter<LegacyPairingVariant> : enum_formatter<LegacyPairingVariant> {};
+struct formatter<LegacyPairingVariant>
+    : string_formatter<LegacyPairingVariant, &legacy_pairing_variant_text> {};
+template <>
+struct formatter<PairingType> : string_formatter<PairingType, &pairing_type_text> {};
 }  // namespace std
 
 #endif  // __has_include(<bluetooth/log.h>)

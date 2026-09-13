@@ -263,7 +263,6 @@ inline std::string btm_oob_data_text(const tBTM_OOB_DATA& data) {
 /* data type for BTM_SP_IO_REQ_EVT */
 typedef struct {
   RawAddress bd_addr;     /* peer address */
-  BtIoCap io_cap;         /* local IO capabilities */
   tBTM_OOB_DATA oob_data; /* OOB data present (locally) for the peer device */
   tBTM_AUTH_REQ auth_req; /* Authentication required (for local device) */
   bool is_orig;           /* true, if local device initiated the SP process */
@@ -334,13 +333,6 @@ typedef union {
   tBTM_SP_RMT_OOB rmt_oob;     /* BTM_SP_RMT_OOB_EVT     */
 } tBTM_SP_EVT_DATA;
 
-/* Simple Pairing Events.  Called by the stack when Simple Pairing related
- * events occur.
- */
-typedef tBTM_STATUS(tBTM_SP_CALLBACK)(tBTM_SP_EVT event, tBTM_SP_EVT_DATA* p_data);
-
-typedef void(tBTM_MKEY_CALLBACK)(const RawAddress& bd_addr, uint8_t status, uint8_t key_flag);
-
 /* Encryption enabled/disabled complete: Optionally passed with
  * BTM_SetEncryption.
  * Parameters are
@@ -351,12 +343,6 @@ typedef void(tBTM_MKEY_CALLBACK)(const RawAddress& bd_addr, uint8_t status, uint
 typedef void(tBTM_SEC_CALLBACK)(RawAddress bd_addr, tBT_TRANSPORT transport, void* p_ref_data,
                                 tBTM_STATUS result);
 typedef tBTM_SEC_CALLBACK tBTM_SEC_CALLBACK;
-
-/* Bond Cancel complete. Parameters are
- *              Result of the cancel operation
- *
- */
-typedef void(tBTM_BOND_CANCEL_CMPL_CALLBACK)(tBTM_STATUS result);
 
 typedef enum : uint8_t {
   /* LE related event and data structure */

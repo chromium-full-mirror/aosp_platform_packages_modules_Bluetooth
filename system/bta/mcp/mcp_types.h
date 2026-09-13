@@ -18,35 +18,34 @@
 
 #include <bluetooth/types/uuid.h>
 
-#include <optional>
-#include <string>
-#include <vector>
-
 namespace bluetooth {
 namespace mcp {
 
 // Service UUID for the Media Control Service
-static const bluetooth::Uuid kMediaControlServiceUuid = bluetooth::Uuid::From16Bit(0x1848);
-static const bluetooth::Uuid kGenericMediaControlServiceUuid = bluetooth::Uuid::From16Bit(0x1849);
+static constexpr bluetooth::Uuid kMediaControlServiceUuid = bluetooth::Uuid::From16Bit(0x1848);
+static constexpr bluetooth::Uuid kGenericMediaControlServiceUuid =
+        bluetooth::Uuid::From16Bit(0x1849);
 
 /* Media Control Service Characteristics */
-static const bluetooth::Uuid kMediaPlayerNameUuid = bluetooth::Uuid::From16Bit(0x2B93);
-static const bluetooth::Uuid kMediaPlayerIconObjIdUuid = bluetooth::Uuid::From16Bit(0x2B94);
-static const bluetooth::Uuid kMediaPlayerIconUrlUuid = bluetooth::Uuid::From16Bit(0x2B95);
-static const bluetooth::Uuid kTrackChangedUuid = bluetooth::Uuid::From16Bit(0x2B96);
-static const bluetooth::Uuid kTrackTitleUuid = bluetooth::Uuid::From16Bit(0x2B97);
-static const bluetooth::Uuid kTrackDurationUuid = bluetooth::Uuid::From16Bit(0x2B98);
-static const bluetooth::Uuid kTrackPositionUuid = bluetooth::Uuid::From16Bit(0x2B99);
-static const bluetooth::Uuid kPlaybackSpeedUuid = bluetooth::Uuid::From16Bit(0x2B9A);
-static const bluetooth::Uuid kSeekingSpeedUuid = bluetooth::Uuid::From16Bit(0x2B9B);
-static const bluetooth::Uuid kPlayingOrderUuid = bluetooth::Uuid::From16Bit(0x2BA1);
-static const bluetooth::Uuid kPlayingOrderSupportedUuid = bluetooth::Uuid::From16Bit(0x2BA2);
-static const bluetooth::Uuid kMediaStateUuid = bluetooth::Uuid::From16Bit(0x2BA3);
-static const bluetooth::Uuid kMediaControlPointUuid = bluetooth::Uuid::From16Bit(0x2BA4);
-static const bluetooth::Uuid kMediaControlPointOpcodesSupportedUuid =
+static constexpr bluetooth::Uuid kMediaPlayerNameUuid = bluetooth::Uuid::From16Bit(0x2B93);
+static constexpr bluetooth::Uuid kMediaPlayerIconObjIdUuid = bluetooth::Uuid::From16Bit(0x2B94);
+static constexpr bluetooth::Uuid kMediaPlayerIconUrlUuid = bluetooth::Uuid::From16Bit(0x2B95);
+static constexpr bluetooth::Uuid kTrackChangedUuid = bluetooth::Uuid::From16Bit(0x2B96);
+static constexpr bluetooth::Uuid kTrackTitleUuid = bluetooth::Uuid::From16Bit(0x2B97);
+static constexpr bluetooth::Uuid kTrackDurationUuid = bluetooth::Uuid::From16Bit(0x2B98);
+static constexpr bluetooth::Uuid kTrackPositionUuid = bluetooth::Uuid::From16Bit(0x2B99);
+static constexpr bluetooth::Uuid kPlaybackSpeedUuid = bluetooth::Uuid::From16Bit(0x2B9A);
+static constexpr bluetooth::Uuid kSeekingSpeedUuid = bluetooth::Uuid::From16Bit(0x2B9B);
+static constexpr bluetooth::Uuid kPlayingOrderUuid = bluetooth::Uuid::From16Bit(0x2BA1);
+static constexpr bluetooth::Uuid kPlayingOrderSupportedUuid = bluetooth::Uuid::From16Bit(0x2BA2);
+static constexpr bluetooth::Uuid kMediaStateUuid = bluetooth::Uuid::From16Bit(0x2BA3);
+static constexpr bluetooth::Uuid kMediaControlPointUuid = bluetooth::Uuid::From16Bit(0x2BA4);
+static constexpr bluetooth::Uuid kMediaControlPointOpcodesSupportedUuid =
         bluetooth::Uuid::From16Bit(0x2BA5);
-static const bluetooth::Uuid kSearchResultsObjIdUuid = bluetooth::Uuid::From16Bit(0x2BA6);
-static const bluetooth::Uuid kContentControlIdUuid = bluetooth::Uuid::From16Bit(0x2BBA);
+static constexpr bluetooth::Uuid kSearchResultsObjIdUuid = bluetooth::Uuid::From16Bit(0x2BA6);
+static constexpr bluetooth::Uuid kContentControlIdUuid = bluetooth::Uuid::From16Bit(0x2BBA);
+
+static const uint16_t kInvalidGattHandle = 0x0000;
 
 // Opcodes for the Media Control Point characteristic
 static constexpr uint8_t kMcpOpcodePlay = 0x01;
@@ -64,7 +63,7 @@ static constexpr uint8_t kMcpOpcodePreviousTrack = 0x30;
 static constexpr uint8_t kMcpOpcodeNextTrack = 0x31;
 static constexpr uint8_t kMcpOpcodeFirstTrack = 0x32;
 static constexpr uint8_t kMcpOpcodeLastTrack = 0x33;
-static constexpr uint8_t kMcpOpcodeGotoTrack = 0x33;
+static constexpr uint8_t kMcpOpcodeGotoTrack = 0x34;
 static constexpr uint8_t kMcpOpcodePreviousGroup = 0x40;
 static constexpr uint8_t kMcpOpcodeNextGroup = 0x41;
 static constexpr uint8_t kMcpOpcodeFirstGroup = 0x42;
@@ -74,6 +73,12 @@ static constexpr uint8_t kMcpOpcodeGotoGroup = 0x44;
 // Special values for Track Position and Track Duration
 static constexpr uint32_t kTrackPositionUnavailable = 0xFFFFFFFF;
 static constexpr uint32_t kTrackDurationUnknown = 0xFFFFFFFF;
+
+// Media State values
+static constexpr uint8_t kMediaStateInactive = 0x00;
+static constexpr uint8_t kMediaStatePlaying = 0x01;
+static constexpr uint8_t kMediaStatePaused = 0x02;
+static constexpr uint8_t kMediaStateSeeking = 0x03;
 
 // Playing Order values
 static constexpr uint8_t kPlayingOrderSingleOnce = 0x01;
@@ -87,13 +92,26 @@ static constexpr uint8_t kPlayingOrderNewestRepeat = 0x08;
 static constexpr uint8_t kPlayingOrderShuffleOnce = 0x09;
 static constexpr uint8_t kPlayingOrderShuffleRepeat = 0x0A;
 
-// Result codes for Media Control Point operations.
-enum class MediaControlResultCode : uint8_t {
-  SUCCESS = 0x01,
-  OPCODE_NOT_SUPPORTED = 0x02,
-  MEDIA_PLAYER_INACTIVE = 0x03,
-  COMMAND_CANNOT_BE_COMPLETED = 0x04,
-};
+// Characteristic value lengths
+static constexpr uint8_t kMediaStateLen = 1;
+static constexpr uint8_t kPlaybackSpeedLen = 1;
+static constexpr uint8_t kPlayingOrderLen = 1;
+static constexpr uint8_t kSeekingSpeedLen = 1;
+static constexpr uint8_t kPlayingOrdersSupportedLen = 2;
+static constexpr uint8_t kOpcodesSupportedLen = 4;
+static constexpr uint8_t kTrackDurationLen = 4;
+static constexpr uint8_t kTrackPositionLen = 4;
+static constexpr uint8_t kMcpNotificationLen = 2;
+
+// Characteristic value indices
+static constexpr uint8_t kMediaStateIndex = 0;
+static constexpr uint8_t kPlaybackSpeedIndex = 0;
+static constexpr uint8_t kPlayingOrderIndex = 0;
+static constexpr uint8_t kSeekingSpeedIndex = 0;
+
+// Media Control Point Notification indices
+static constexpr uint8_t kMcpNotificationOpcodeIndex = 0;
+static constexpr uint8_t kMcpNotificationResultIndex = 1;
 
 }  // namespace mcp
 }  // namespace bluetooth

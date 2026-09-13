@@ -29,7 +29,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.ParcelUuid
-import android.platform.test.annotations.RequiresFlagsEnabled
 import android.platform.test.flag.junit.DeviceFlagsValueProvider
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
@@ -48,10 +47,10 @@ import org.mockito.Mockito.after
 import org.mockito.Mockito.any
 import org.mockito.Mockito.anyInt
 import org.mockito.Mockito.eq
-import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.timeout
 import org.mockito.Mockito.verify
+import org.mockito.kotlin.mock
 import pandora.HostProto
 import pandora.HostProto.AdvertiseRequest
 import pandora.HostProto.AdvertiseResponse
@@ -118,7 +117,7 @@ class LeScanningTest {
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .setCallbackType(ScanSettings.CALLBACK_TYPE_FIRST_MATCH)
                 .build()
-        val mockScanCallback = mock(ScanCallback::class.java)
+        val mockScanCallback = mock<ScanCallback>()
 
         leScanner.startScan(listOf(scanFilter), scanSettings, mockScanCallback)
         verify(mockScanCallback, after(TIMEOUT_SCANNING_MS).never()).onScanFailed(anyInt())
@@ -136,7 +135,7 @@ class LeScanningTest {
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .setCallbackType(ScanSettings.CALLBACK_TYPE_MATCH_LOST)
                 .build()
-        val mockScanCallback = mock(ScanCallback::class.java)
+        val mockScanCallback = mock<ScanCallback>()
 
         leScanner.startScan(listOf(scanFilter), scanSettings, mockScanCallback)
         verify(mockScanCallback, after(TIMEOUT_SCANNING_MS).never()).onScanFailed(anyInt())
@@ -145,7 +144,7 @@ class LeScanningTest {
 
     @Test
     fun startBleScan_withPendingIntentAndDynamicReceiverAndCallbackTypeAllMatches() {
-        val mockReceiver = mock(BroadcastReceiver::class.java)
+        val mockReceiver = mock<BroadcastReceiver>()
         val intentFilter = IntentFilter(ACTION_DYNAMIC_RECEIVER_SCAN_RESULT)
         context.registerReceiver(mockReceiver, intentFilter, Context.RECEIVER_EXPORTED)
 
@@ -237,13 +236,13 @@ class LeScanningTest {
                 .build()
         val scanCallbacks =
             (1..maxNumScans).map {
-                val mockScanCallback = mock(ScanCallback::class.java)
+                val mockScanCallback = mock<ScanCallback>()
                 leScanner.startScan(scanFilters, scanSettings, mockScanCallback)
                 mockScanCallback
             }
 
         // This last scan should fail
-        val lastMockScanCallback = mock(ScanCallback::class.java)
+        val lastMockScanCallback = mock<ScanCallback>()
         leScanner.startScan(scanFilters, scanSettings, lastMockScanCallback)
 
         // We expect an error only for the last scan, which was over the maximum active scans limit.
@@ -301,7 +300,6 @@ class LeScanningTest {
     }
 
     @Test
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.use_filter_for_each_manufacturer_data_block")
     fun startBleScan_scanFilterOnManufacturerDataInScanResponse() {
         val payloadInAdvData = byteArrayOf(0x01, 0x02)
         // first 2 bytes are the manufacturer ID 0x00E0 (Google) in little endian
@@ -337,7 +335,6 @@ class LeScanningTest {
     }
 
     @Test
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.use_filter_for_each_manufacturer_data_block")
     fun startBleScan_scanFilterOnManufacturerDataInAdvertisingData() {
         val payloadInAdvData = byteArrayOf(0x01, 0x02)
         // first 2 bytes are the manufacturer ID 0x00E0 (Google) in little endian
@@ -373,7 +370,6 @@ class LeScanningTest {
     }
 
     @Test
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.use_filter_for_each_manufacturer_data_block")
     fun startBleScan_scanFilterOnConcatenatedManufacturerData() {
         val payloadInAdvData = byteArrayOf(0x01, 0x02)
         // first 2 bytes are the manufacturer ID 0x00E0 (Google) in little endian
@@ -477,7 +473,6 @@ class LeScanningTest {
     }
 
     @Test
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.support_passive_scanning")
     fun startScan_scanType(@TestParameter isActive: Boolean) {
         val requestBuilder = AdvertiseRequest.newBuilder()
 

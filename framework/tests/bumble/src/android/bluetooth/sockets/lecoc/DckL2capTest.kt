@@ -119,7 +119,6 @@ class DckL2capTest() : Closeable {
 
     @Before
     fun setUp() {
-
         host = Host(context)
 
         bumble
@@ -503,7 +502,6 @@ class DckL2capTest() : Closeable {
     }
 
     @Test
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.donot_mandate_auth_along_with_encryption")
     /**
      * Test:
      * - Create Bond between Phone and Bumble (Just works)
@@ -660,7 +658,6 @@ class DckL2capTest() : Closeable {
     }
 
     @Test
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.donot_mandate_auth_along_with_encryption")
     /**
      * Test:
      * - Create Bond between Phone and Bumble (Just works)
@@ -699,7 +696,6 @@ class DckL2capTest() : Closeable {
 
     @Test
     @VirtualOnly
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.fix_lecoc_socket_available")
     fun testBluetoothSocketAvailable() {
         Log.d(TAG, "testBluetoothSocketAvailable: Connect L2CAP")
         val (l2capServer, bluetoothSocket, channel) =
@@ -774,7 +770,6 @@ class DckL2capTest() : Closeable {
 
     @Test
     @VirtualOnly
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.fix_lecoc_socket_available")
     fun testBluetoothSocketReadOoB() {
         Log.d(TAG, "testBluetoothSockeReadtOoB: Connect L2CAP")
         val (l2capServer, bluetoothSocket, channel) =
@@ -858,13 +853,12 @@ class DckL2capTest() : Closeable {
         val bluetoothSocket = createSocket(dckSpsm, remoteDevice, isSecure)
         runBlocking {
             val waitFlow = flow { emit(waitConnection(dckSpsm, remoteDevice)) }
-            val connectJob =
-                scope.launch {
-                    // give some time for Bumble to host the socket server
-                    Thread.sleep(200)
-                    bluetoothSocket.connect()
-                    Log.d(TAG, "clientConnect: Bluetooth socket connected")
-                }
+            val connectJob = scope.launch {
+                // give some time for Bumble to host the socket server
+                Thread.sleep(200)
+                bluetoothSocket.connect()
+                Log.d(TAG, "clientConnect: Bluetooth socket connected")
+            }
             connectionResponse = waitFlow.first()
             // Wait for the connection to complete
             connectJob.join()
@@ -896,13 +890,12 @@ class DckL2capTest() : Closeable {
             )
         runBlocking {
             val waitFlow = flow { emit(waitConnection(dckSpsm, remoteDevice)) }
-            val connectJob =
-                scope.launch {
-                    // give some time for Bumble to host the socket server
-                    Thread.sleep(200)
-                    bluetoothSocket.connect()
-                    Log.d(TAG, "clientConnect: Bluetooth socket connected")
-                }
+            val connectJob = scope.launch {
+                // give some time for Bumble to host the socket server
+                Thread.sleep(200)
+                bluetoothSocket.connect()
+                Log.d(TAG, "clientConnect: Bluetooth socket connected")
+            }
             connectionResponse = waitFlow.first()
             // Wait for the connection to complete
             connectJob.join()
@@ -1205,7 +1198,6 @@ class DckL2capTest() : Closeable {
                 }
 
                 override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-
                     Log.i(TAG, "Discovering services status=$status")
                     if (status == BluetoothGatt.GATT_SUCCESS) {
                         Log.i(TAG, "Services have been discovered")

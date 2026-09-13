@@ -34,7 +34,7 @@
 #include "main/shim/entry.h"
 #include "main/shim/shim.h"
 #include "main/shim/stack.h"
-#include "stack/btm/btm_sec_cb.h"
+#include "stack/btm/btm_security.h"
 #include "stack/include/bt_dev_class.h"
 #include "stack/include/btm_ble_api_types.h"
 #include "stack/include/hci_error_code.h"
@@ -43,11 +43,13 @@
 #include "test/fake/fake_osi.h"
 #include "test/mock/mock_osi_properties.h"
 
+#define TEST_BT com::android::bluetooth::flags
+
 using bluetooth::core::testing::MockCoreInterface;
 using ::testing::ElementsAre;
 
 namespace {
-const RawAddress kRawAddress = {{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}};
+const RawAddress kRawAddress("11:22:33:44:55:66");
 constexpr char kBdName[] = {'k', 'B', 'd', 'N', 'a', 'm', 'e', '\0'};
 }  // namespace
 
@@ -165,7 +167,7 @@ protected:
   bluetooth::storage::StorageModule* storage_module_;
 };
 
-TEST_F_WITH_FLAGS(BtifDmWithStackTest, btif_dm_search_services_evt__BTA_DM_NAME_READ_EVT) {
+TEST_F(BtifDmWithStackTest, btif_dm_search_services_evt__BTA_DM_NAME_READ_EVT) {
   static struct {
     bt_status_t status;
     RawAddress bd_addr;
@@ -246,9 +248,8 @@ TEST_F(BtifDmWithStackTest, auth_cmpl_evt_fails_when_bonding) {
   // Mock the bond state changed callback to capture the latest state.
   latest_bond_state = BT_BOND_STATE_NONE;
   bluetooth::core::testing::mock_event_callbacks.invoke_bond_state_changed_cb =
-          [](bt_status_t, RawAddress, tBT_TRANSPORT, bt_bond_state_t state, PairingType, int) {
-            latest_bond_state = state;
-          };
+          [](bt_status_t, RawAddress, tBT_TRANSPORT, bt_bond_state_t state, PairingType, int,
+             PairingInitiator) { latest_bond_state = state; };
 
   // Simulate a PIN request to transition the internal state to BONDING.
   tBTA_DM_SEC sec_event_pin_req{};
@@ -275,9 +276,8 @@ TEST_F(BtifDmWithStackTest, auth_cmpl_evt_fails_when_not_bonding) {
   // Mock the bond state changed callback to count invocations.
   bond_state_changed_cb_count = 0;
   bluetooth::core::testing::mock_event_callbacks.invoke_bond_state_changed_cb =
-          [](bt_status_t, RawAddress, tBT_TRANSPORT, bt_bond_state_t, PairingType, int) {
-            bond_state_changed_cb_count++;
-          };
+          [](bt_status_t, RawAddress, tBT_TRANSPORT, bt_bond_state_t, PairingType, int,
+             PairingInitiator) { bond_state_changed_cb_count++; };
 
   // The initial state is BT_BOND_STATE_NONE (not bonding).
   // Simulate an authentication complete event with a failure status.
@@ -293,7 +293,10 @@ TEST_F(BtifDmWithStackTest, auth_cmpl_evt_fails_when_not_bonding) {
 
 TEST_F(BtifDmWithStackTest, test_btif_dm_reset_irk) {
   if (com_android_bluetooth_flags_btsec_cycle_irks()) {
-    btif_storage_add_bonded_device(kRawAddress, SAMPLE_LTK, 0, 0);
+    btif_storage_add_bredr_keys(kRawAddress,
+                                PairingType{.algorithm = PairingAlgorithm::BREDR_LEGACY,
+                                            .legacy_variant = LegacyPairingVariant::PIN},
+                                SAMPLE_LTK, 0, 0);
 
     bt_status_t status = btif_storage_remove_bonded_device(kRawAddress);
 
@@ -303,4 +306,18 @@ TEST_F(BtifDmWithStackTest, test_btif_dm_reset_irk) {
 
     ASSERT_TRUE(paired_devices.empty());
   }
+  thread_->GetReactor()->WaitForIdle(std::chrono::seconds(2));
+}
+
+TEST_F_WITH_FLAGS(BtifDmWithStackTest, btif_is_interesting_le_service_gmcs,
+                  REQUIRES_FLAGS_ENABLED(
+                          ACONFIG_FLAG(TEST_BT, leaudio_peripheral_mcp_link_abstraction_layer))) {
+  auto uuid_gmcs = bluetooth::Uuid::From16Bit(0x1849);
+  EXPECT_TRUE(btif_is_interesting_le_service(uuid_gmcs));
+
+  auto uuid_le_audio = bluetooth::Uuid::From16Bit(0x184E);
+  EXPECT_TRUE(btif_is_interesting_le_service(uuid_le_audio));
+
+  auto uuid_random = bluetooth::Uuid::From16Bit(0x9999);
+  EXPECT_FALSE(btif_is_interesting_le_service(uuid_random));
 }

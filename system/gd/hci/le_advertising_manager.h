@@ -15,11 +15,11 @@
  */
 #pragma once
 
+#include <base/functional/callback.h>
 #include <bluetooth/log.h>
 
 #include <vector>
 
-#include "common/callback.h"
 #include "hci/hci_packets.h"
 #include "os/handler.h"
 
@@ -107,8 +107,6 @@ public:
 class LeAdvertisingManager {
 public:
   virtual ~LeAdvertisingManager() = default;
-
-  virtual size_t GetNumberOfAdvertisingInstances() const = 0;
 
   virtual size_t GetNumberOfAdvertisingInstancesInUse() const = 0;
 

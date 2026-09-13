@@ -16,8 +16,6 @@
 
 package android.bluetooth.le;
 
-import static android.Manifest.permission.BLUETOOTH_PRIVILEGED;
-import static android.Manifest.permission.BLUETOOTH_SCAN;
 
 import static java.util.Objects.requireNonNull;
 
@@ -25,19 +23,15 @@ import android.annotation.Hide;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresNoPermission;
-import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothDevice.AddressType;
 import android.bluetooth.BluetoothStatusCodes;
-import android.bluetooth.annotations.RequiresBluetoothScanPermission;
 import android.bluetooth.le.ScanRecord.AdvertisingDataType;
 import android.os.Parcel;
 import android.os.ParcelUuid;
 import android.os.Parcelable;
-
-import com.android.bluetooth.flags.Flags;
 
 import java.util.Arrays;
 import java.util.List;
@@ -228,7 +222,6 @@ public final class ScanFilter implements Parcelable {
                 }
 
                 @Override
-                @RequiresPermission(allOf = {BLUETOOTH_SCAN, BLUETOOTH_PRIVILEGED})
                 public ScanFilter createFromParcel(Parcel in) {
                     Builder builder = new Builder();
                     if (in.readInt() == 1) {
@@ -519,30 +512,10 @@ public final class ScanFilter implements Parcelable {
 
     // Check whether the data pattern matches the parsed data.
     static boolean matchesPartialData(byte[] data, byte[] dataMask, byte[] parsedData) {
-        if (Flags.useFilterForEachManufacturerDataBlock()) {
-            if (parsedData == null) {
-                return false;
-            }
-            return matchesPartialDataSubArray(data, dataMask, parsedData, 0, parsedData.length);
-        }
-
-        if (parsedData == null || parsedData.length < data.length) {
+        if (parsedData == null) {
             return false;
         }
-        if (dataMask == null) {
-            for (int i = 0; i < data.length; ++i) {
-                if (parsedData[i] != data[i]) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        for (int i = 0; i < data.length; ++i) {
-            if ((dataMask[i] & parsedData[i]) != (dataMask[i] & data[i])) {
-                return false;
-            }
-        }
-        return true;
+        return matchesPartialDataSubArray(data, dataMask, parsedData, 0, parsedData.length);
     }
 
     // Check whether the data pattern matches the subarray of given parsed data.
@@ -643,45 +616,36 @@ public final class ScanFilter implements Parcelable {
 
         // Manufacturer data match.
         if (mManufacturerId >= 0 && mManufacturerData != null) {
-            if (Flags.useFilterForEachManufacturerDataBlock()) {
-                // Try matching each manufacturer data block in concatenated array.
-                byte[] manufacturerData = scanRecord.getManufacturerSpecificData(mManufacturerId);
-                List<Integer> dataBlockStartIndices =
-                        scanRecord.getManufacturerDataBlockStartIndices(mManufacturerId);
+            // Try matching each manufacturer data block in concatenated array.
+            byte[] manufacturerData = scanRecord.getManufacturerSpecificData(mManufacturerId);
+            List<Integer> dataBlockStartIndices =
+                    scanRecord.getManufacturerDataBlockStartIndices(mManufacturerId);
 
-                boolean matchesAnyOfManufacturerDataBlocks = false;
-                if (manufacturerData != null && dataBlockStartIndices != null) {
-                    for (int i = 0; i < dataBlockStartIndices.size(); i++) {
-                        int startIndex = dataBlockStartIndices.get(i);
-                        int endIndex =
-                                (i == dataBlockStartIndices.size() - 1)
-                                        ? manufacturerData.length
-                                        : dataBlockStartIndices.get(i + 1);
+            boolean matchesAnyOfManufacturerDataBlocks = false;
+            if (manufacturerData != null && dataBlockStartIndices != null) {
+                for (int i = 0; i < dataBlockStartIndices.size(); i++) {
+                    int startIndex = dataBlockStartIndices.get(i);
+                    int endIndex =
+                            (i == dataBlockStartIndices.size() - 1)
+                                    ? manufacturerData.length
+                                    : dataBlockStartIndices.get(i + 1);
 
-                        if (matchesPartialDataSubArray(
-                                mManufacturerData,
-                                mManufacturerDataMask,
-                                manufacturerData,
-                                startIndex,
-                                endIndex)) {
-                            matchesAnyOfManufacturerDataBlocks = true;
-                            break;
-                        }
+                    if (matchesPartialDataSubArray(
+                            mManufacturerData,
+                            mManufacturerDataMask,
+                            manufacturerData,
+                            startIndex,
+                            endIndex)) {
+                        matchesAnyOfManufacturerDataBlocks = true;
+                        break;
                     }
                 }
+            }
 
-                if (!matchesAnyOfManufacturerDataBlocks) {
-                    // If nothing matched, try matching the concatenated manufacturer data
-                    if (!matchesPartialData(
-                            mManufacturerData, mManufacturerDataMask, manufacturerData)) {
-                        return false;
-                    }
-                }
-            } else {
+            if (!matchesAnyOfManufacturerDataBlocks) {
+                // If nothing matched, try matching the concatenated manufacturer data
                 if (!matchesPartialData(
-                        mManufacturerData,
-                        mManufacturerDataMask,
-                        scanRecord.getManufacturerSpecificData(mManufacturerId))) {
+                        mManufacturerData, mManufacturerDataMask, manufacturerData)) {
                     return false;
                 }
             }
@@ -708,7 +672,7 @@ public final class ScanFilter implements Parcelable {
 
     @Override
     public String toString() {
-        return ("BluetoothLeScanFilter [mDeviceName=" + mDeviceName)
+        return ("BluetoothLeScanFilter[mDeviceName=" + mDeviceName)
                 + (", mDeviceAddress=" + mDeviceAddress)
                 + (", mUuid=" + mServiceUuid)
                 + (", mUuidMask=" + mServiceUuidMask)
@@ -926,7 +890,6 @@ public final class ScanFilter implements Parcelable {
          */
         private @NonNull Builder setDeviceAddressInternal(
                 @NonNull String deviceAddress, @AddressType int addressType, @Nullable byte[] irk) {
-
             // Make sure our deviceAddress is valid!
             requireNonNull(deviceAddress);
             if (!BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
@@ -1127,32 +1090,22 @@ public final class ScanFilter implements Parcelable {
         /**
          * Set filter information for a transport block in Transport Discovery Service advertisement
          *
-         * <p>Use {@link BluetoothAdapter#getOffloadedTransportDiscoveryDataScanSupported()} to
-         * check whether transport discovery data filtering is supported on this device before
-         * calling this method.
+         * <p><b>Note:</b> This builder method does not check if the feature is supported on the
+         * current device. The caller is responsible for calling {@link
+         * BluetoothAdapter#getOffloadedTransportDiscoveryDataScanSupported()} and ensuring it
+         * returns {@link BluetoothStatusCodes#FEATURE_SUPPORTED} before using this filter. Passing
+         * a filter with this field populated to the scanner on an unsupported device will result in
+         * an {@link IllegalArgumentException} when starting the scan.
          *
          * @param transportBlockFilter filter data for a transport block in Transport Discovery
          *     Service advertisement
-         * @throws IllegalArgumentException if Transport Discovery Data filter is not supported.
          * @return this builder
          */
         @Hide
         @SystemApi
-        @RequiresBluetoothScanPermission
-        @RequiresPermission(allOf = {BLUETOOTH_SCAN, BLUETOOTH_PRIVILEGED})
+        @RequiresNoPermission
         public @NonNull Builder setTransportBlockFilter(
                 @NonNull TransportBlockFilter transportBlockFilter) {
-            BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-
-            if (bluetoothAdapter == null) {
-                throw new IllegalArgumentException("BluetoothAdapter is null");
-            }
-            if (bluetoothAdapter.getOffloadedTransportDiscoveryDataScanSupported()
-                    != BluetoothStatusCodes.FEATURE_SUPPORTED) {
-                throw new IllegalArgumentException(
-                        "Transport Discovery Data filter is not supported");
-            }
-
             mTransportBlockFilter = transportBlockFilter;
             return this;
         }

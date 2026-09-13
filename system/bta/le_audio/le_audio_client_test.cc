@@ -1,4 +1,4 @@
-/*
+/*le_audio_client_
  * Copyright 2021 HIMSA II K/S - www.himsa.com.
  * Represented by EHIMA - www.ehima.com
  *
@@ -25,7 +25,7 @@
 #include <chrono>
 
 #include "bta/csis/csis_types.h"
-#include "bta_gatt_api_mock.h"
+#include "bta/mock/bta_gatt_api_mock.h"
 #include "bta_gatt_queue_mock.h"
 #include "bta_groups.h"
 #include "bta_le_audio_api.h"
@@ -35,7 +35,6 @@
 #include "btif_status.h"
 #include "btif_storage_mock.h"
 #include "btm_api_mock.h"
-#include "btm_iso_api.h"
 #include "common/le_conn_params.h"
 #include "common/message_loop_thread.h"
 #include "fake_osi.h"
@@ -57,14 +56,18 @@
 #include "mock_state_machine.h"
 #include "osi/include/properties.h"
 #include "stack/include/acl_api.h"
+#include "stack/include/btm_iso_api.h"
 #include "stack/include/btm_status.h"
 #include "stack/include/main_thread.h"
+#include "stack/mock/mock_stack_btm_interface.h"
+#include "stack/mock/mock_stack_btm_iso.h"
+#include "stack/mock/mock_stack_gatt_api.h"
+#include "stack/mock/mock_stack_l2cap_interface.h"
+#include "stack/mock/mock_stack_le_connection.h"
+#include "stack/mock/mock_stack_security_client_interface.h"
 #include "storage_helper.h"
 #include "test/common/mock_functions.h"
 #include "test/mock/mock_main_shim_entry.h"
-#include "test/mock/mock_stack_btm_iso.h"
-#include "test/mock/mock_stack_gatt_api.h"
-#include "test/mock/mock_stack_l2cap_interface.h"
 
 #define TEST_BT com::android::bluetooth::flags
 
@@ -127,6 +130,9 @@ bluetooth::common::MessageLoopThread* get_main_thread() { return &message_loop_t
 std::vector<base::OnceClosure> pending_tasks_;
 std::vector<base::OnceClosure> pending_delayed_tasks_;
 bool hold_delayed_tasks = false;
+testing::MockFunction<void(const RawAddress& bd_addr, uint8_t tx_phys, uint8_t rx_phys,
+                           uint16_t phy_options)>
+        leConnectionSetPhyMock;
 
 void init_message_loop_thread();
 void cleanup_message_loop_thread();
@@ -225,7 +231,6 @@ static bool get_pts_unencrypt_broadcast(void) { return false; }
 static bool get_pts_eatt_peripheral_collision_support(void) { return false; }
 static bool get_pts_force_le_audio_multiple_contexts_metadata(void) { return false; }
 static bool get_pts_le_audio_disable_ases_before_stopping(void) { return false; }
-static config_t* get_all(void) { return nullptr; }
 
 stack_config_t mock_stack_config{
         .get_pts_avrcp_test = get_pts_avrcp_test,
@@ -243,7 +248,6 @@ stack_config_t mock_stack_config{
                 get_pts_force_le_audio_multiple_contexts_metadata,
         .get_pts_le_audio_disable_ases_before_stopping =
                 get_pts_le_audio_disable_ases_before_stopping,
-        .get_all = get_all,
 };
 const stack_config_t* stack_config_get_interface(void) { return &mock_stack_config; }
 
@@ -282,8 +286,8 @@ void LeAudioSinkAudioHalClient::DebugDump(int /*fd*/) {}
 
 static RawAddress GetTestAddress(uint8_t index) {
   EXPECT_LT(index, UINT8_MAX);
-  RawAddress result = {{0xC0, 0xDE, 0xC0, 0xDE, 0x00, index}};
-  return result;
+  std::array<uint8_t, 6> bytes{0xC0, 0xDE, 0xC0, 0xDE, 0x00, index};
+  return RawAddress(bytes);
 }
 
 class MockAudioHalClientCallbacks : public bluetooth::le_audio::LeAudioClientCallbacks {
@@ -341,6 +345,15 @@ public:
   MOCK_METHOD((void), UpdateRemoteDelay, (uint16_t delay), (override));
   MOCK_METHOD((void), UpdateAudioConfigToHal, (const ::bluetooth::le_audio::stream_config&),
               (override));
+  MOCK_METHOD((std::optional<broadcaster::BroadcastConfiguration>), GetBroadcastConfig,
+              ((const std::vector<std::pair<types::LeAudioContextType, uint8_t>>&),
+               (const std::optional<std::vector<::bluetooth::le_audio::types::acs_ac_record>>&)),
+              (const override));
+  MOCK_METHOD((std::optional<::bluetooth::le_audio::types::AudioSetConfiguration>),
+              GetUnicastConfig, (const CodecManager::UnicastConfigurationRequirements&),
+              (const override));
+  MOCK_METHOD((void), UpdateBroadcastAudioConfigToHal,
+              (const ::bluetooth::le_audio::broadcast_offload_config&), (override));
   MOCK_METHOD((void), SuspendedForReconfiguration, (), (override));
   MOCK_METHOD((void), ReconfigurationComplete, (), (override));
 
@@ -422,6 +435,15 @@ protected:
       mock_le_audio_sink_hal_client_ = nullptr;
       is_audio_unicast_sink_acquired = false;
     });
+  }
+
+  void SetUpMockSecurity() {
+    set_security_client_interface(mock_btm_security_);
+
+    ON_CALL(mock_btm_security_, BTM_IsBonded(_, _)).WillByDefault(Return(true));
+    ON_CALL(mock_btm_security_, BTM_IsEncrypted(_, _)).WillByDefault(Return(true));
+    ON_CALL(mock_btm_security_, BTM_SetEncryption(_, _, _, _, _))
+            .WillByDefault(Return(tBTM_STATUS::BTM_SUCCESS));
   }
 
   void SetUpMockAudioHal() {
@@ -689,7 +711,7 @@ protected:
             }));
 
     // default action for ServiceSearchRequest function call
-    ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_, _))
+    ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_))
             .WillByDefault(WithArg<0>(
                     Invoke([&](uint16_t conn_id) { InjectSearchCompleteEvent(conn_id); })));
 
@@ -742,16 +764,27 @@ protected:
             }));
 
     global_conn_id = 1;
-    ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _))
-            .WillByDefault(Invoke([&](tGATT_IF /*client_if*/, const RawAddress& remote_bda,
-                                      bool /*is_direct*/, bool /*opportunistic*/) {
-              InjectConnectedEvent(remote_bda, global_conn_id++);
-            }));
+    ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
+            .WillByDefault(Invoke(
+                    [&](tGATT_IF /*client_if*/, const RawAddress& remote_bda, bool /*is_direct*/) {
+                      InjectConnectedEvent(remote_bda, global_conn_id++);
+                    }));
 
     ON_CALL(mock_gatt_interface_, Close(_)).WillByDefault(Invoke([&](uint16_t conn_id) {
       ASSERT_NE(conn_id, GATT_INVALID_CONN_ID);
       InjectDisconnectedEvent(conn_id);
     }));
+
+    set_mock_btm_client_interface(&mock_btm_client_interface_);
+    ON_CALL(mock_btm_client_interface_, BTM_GetHCIConnHandle(_, _))
+            .WillByDefault([this](const RawAddress& address, tBT_TRANSPORT /*transport*/) {
+              for (auto const& it : peer_devices) {
+                if (it.second->addr == address) {
+                  return it.first;
+                }
+              }
+              return (uint16_t)HCI_INVALID_HANDLE;
+            });
 
     // default Characteristic read handler dispatches requests to service mocks
     ON_CALL(mock_gatt_queue_, ReadCharacteristic(_, _, _, _))
@@ -1014,6 +1047,7 @@ protected:
                 leAudioDevice = group->GetNextDevice(leAudioDevice);
               }
               group->ClearAllCises();
+              group->cig.ClearCisIds();
               /* end */
 
               if (!group->Configure(context_type, metadata_context_types, ccid_lists)) {
@@ -1236,6 +1270,7 @@ protected:
                   leAudioDevice = group->GetNextDevice(leAudioDevice);
                 }
                 group->ClearAllCises();
+                group->cig.ClearCisIds();
                 /* end */
 
                 group->Deactivate();
@@ -1250,7 +1285,7 @@ protected:
                   group->cig.GenerateCisIds(context_type);
 
                   std::vector<uint16_t> conn_handles;
-                  for (uint8_t i = 0; i < (uint8_t)(group->cig.cises.size()); i++) {
+                  for (uint8_t i = 0; i < (uint8_t)(group->cig.GetCises().size()); i++) {
                     conn_handles.push_back(iso_con_counter_++);
                   }
                   group->cig.AssignCisConnHandles(conn_handles);
@@ -1494,17 +1529,31 @@ protected:
       SyncOnMainLoop();
     });
 
+    ON_CALL(mock_state_machine_, ProcessHciNotifOnCigRemove(_, _))
+            .WillByDefault([](uint8_t /*status*/, LeAudioDeviceGroup* group) {
+              if (!group) {
+                log::warn("ProcessHciNotifOnCigRemove group empty");
+                return;
+              }
+              log::info("ProcessHciNotifOnCigRemove group: {}", group->group_id_);
+              group->cig.UnassignAllCises();
+              group->cig.ClearCisIds();
+            });
+
     ON_CALL(mock_state_machine_, ProcessHciNotifAclDisconnected(_, _))
             .WillByDefault([this](LeAudioDeviceGroup* group, LeAudioDevice* leAudioDevice) {
               if (!group) {
+                log::warn("ProcessHciNotifAclDisconnected group empty");
                 return;
               }
+
+              log::info("ProcessHciNotifAclDisconnected group: {}", group->group_id_);
 
               for (auto& ase : leAudioDevice->ases_) {
                 group->RemoveCisFromStreamIfNeeded(leAudioDevice, ase.cis_conn_hdl);
               }
 
-              if (group->IsEmpty()) {
+              if (!group->IsAnyDeviceConnected()) {
                 group->cig.SetState(bluetooth::le_audio::types::CigState::NONE);
                 InjectCigRemoved(group->group_id_);
               }
@@ -1646,27 +1695,17 @@ protected:
 
   void SetUp() override {
     __android_log_set_minimum_priority(ANDROID_LOG_VERBOSE);
-    com::android::bluetooth::flags::provider_->reset_flags();
-    com::android::bluetooth::flags::provider_->leaudio_use_context_type_manager(true);
-    com::android::bluetooth::flags::provider_->leaudio_fix_stop_reconfiguration_timeout(true);
-    com::android::bluetooth::flags::provider_->leaudio_use_aggressive_params(true);
-    com::android::bluetooth::flags::provider_->le_audio_update_config_preference_to_hal(true);
-    com::android::bluetooth::flags::provider_->leaudio_add_opus_hi_res_codec_type(true);
-    com::android::bluetooth::flags::provider_->leaudio_dynamic_data_path_change(true);
-    com::android::bluetooth::flags::provider_->leaudio_dynamic_direction_opening(true);
-    com::android::bluetooth::flags::provider_
-            ->leaudio_use_game_sonification_as_regular_sonification(true);
-    com::android::bluetooth::flags::provider_->leaudio_improve_switching_le_audio_devices(true);
-    com::android::bluetooth::flags::provider_->dsa_use_codec_extensibility(true);
-    com::android::bluetooth::flags::provider_->leaudio_connection_subrating(true);
-    com::android::bluetooth::flags::provider_->start_leaudio_subrate_for_active_set_only(true);
-    com::android::bluetooth::flags::provider_->leaudio_improve_unicast_monitor(true);
-    com::android::bluetooth::flags::provider_->leaudio_improve_state_machine_invalid_status(true);
-    com::android::bluetooth::flags::provider_->leaudio_fix_allocation_in_codec_config(true);
-    com::android::bluetooth::flags::provider_->leaudio_fix_stop_stream_race(true);
-    com::android::bluetooth::flags::provider_->csis_quirk_for_single_device_with_sirk_all_zeros(
-            true);
-    com::android::bluetooth::flags::provider_->leaudio_game_detector(true);
+    com_android_bluetooth_flags_reset_flags();
+    set_com_android_bluetooth_flags_leaudio_use_game_sonification_as_regular_sonification(true);
+    set_com_android_bluetooth_flags_leaudio_improve_switching_le_audio_devices(true);
+    set_com_android_bluetooth_flags_leaudio_improve_state_machine_invalid_status(true);
+    set_com_android_bluetooth_flags_leaudio_fix_allocation_in_codec_config(true);
+    set_com_android_bluetooth_flags_leaudio_fix_stop_stream_race(true);
+    set_com_android_bluetooth_flags_csis_quirk_for_single_device_with_sirk_all_zeros(true);
+    set_com_android_bluetooth_flags_leaudio_game_detector(true);
+    set_com_android_bluetooth_flags_leaudio_fix_clear_cises_in_the_cig(true);
+    set_com_android_bluetooth_flags_leaudio_codec_id_support(true);
+    set_com_android_bluetooth_flags_leaudio_improve_configuration_caching(true);
 
     init_message_loop_thread();
     init_delayed_message_loop_thread();
@@ -1682,10 +1721,16 @@ protected:
     ON_CALL(*hci::testing::mock_controller_, SupportsBleConnectionSubrating)
             .WillByDefault(Return(true));
     bluetooth::manager::SetMockBtmInterface(&mock_btm_interface_);
+    set_mock_btm_client_interface(&mock_btm_client_interface_);
     gatt::SetMockBtaGattInterface(&mock_gatt_interface_);
     gatt::SetMockBtaGattQueue(&mock_gatt_queue_);
     bluetooth::storage::SetMockBtifStorageInterface(&mock_btif_storage_);
     bluetooth::testing::stack::l2cap::set_interface(&mock_stack_l2cap_interface_);
+
+    test::mock::stack_le_connection::leConnectionSetPhy.body =
+            [](const RawAddress& bd_addr, uint8_t tx_phys, uint8_t rx_phys, uint16_t phy_options) {
+              leConnectionSetPhyMock.Call(bd_addr, tx_phys, rx_phys, phy_options);
+            };
 
     iso_manager_ = bluetooth::hci::IsoManager::GetInstance();
     ASSERT_NE(iso_manager_, nullptr);
@@ -1699,7 +1744,7 @@ protected:
               return kIsoClientHandle;
             });
 
-    ON_CALL(mock_btm_interface_, IsDeviceBonded(_, _)).WillByDefault(DoAll(Return(true)));
+    SetUpMockSecurity();
 
     // Required since we call OnAudioDataReady()
     const auto codec_location = ::bluetooth::le_audio::types::CodecLocation::HOST;
@@ -1791,11 +1836,16 @@ protected:
     // verify them all.
     Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
 
+    Mock::VerifyAndClearExpectations(&leConnectionSetPhyMock);
+    test::mock::stack_le_connection::leConnectionSetPhy.body = {};
+
     if (LeAudioClient::IsLeAudioClientRunning()) {
       EXPECT_CALL(mock_gatt_interface_, AppDeregister(gatt_if)).Times(1);
       LeAudioClient::Cleanup();
       ASSERT_FALSE(LeAudioClient::IsLeAudioClientRunning());
     }
+
+    reset_mock_btm_client_interface();
 
     owned_mock_le_audio_sink_hal_client_.reset();
     owned_mock_le_audio_source_hal_client_.reset();
@@ -1972,20 +2022,18 @@ protected:
   void ConnectLeAudio(const RawAddress& address, bool isEncrypted = true,
                       bool expect_connected_event = true) {
     // by default indicate link as encrypted
-    ON_CALL(mock_btm_interface_, BTM_IsEncrypted(address, _))
+    ON_CALL(mock_btm_security_, BTM_IsEncrypted(address, _))
             .WillByDefault(DoAll(Return(isEncrypted)));
+    ON_CALL(mock_btm_security_, BTM_IsBonded(address, _)).WillByDefault(DoAll(Return(true)));
 
-    ON_CALL(mock_btm_interface_, IsDeviceBonded(address, _)).WillByDefault(DoAll(Return(true)));
-
-    EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, address, BTM_BLE_DIRECT_CONNECTION, _))
-            .Times(1);
+    EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, address, BTM_BLE_DIRECT_CONNECTION)).Times(1);
 
     /* If connected event is not expected to arrive, don't test those two below
      */
     if (expect_connected_event) {
       EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, address, false));
       EXPECT_CALL(mock_gatt_interface_,
-                  Open(gatt_if, address, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+                  Open(gatt_if, address, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
               .Times(1);
     }
 
@@ -2006,7 +2054,7 @@ protected:
             .Times(1);
 
     // For test purpose use the acl handle same as conn_id
-    ON_CALL(mock_btm_interface_, GetHCIConnHandle(address, _))
+    ON_CALL(mock_btm_client_interface_, BTM_GetHCIConnHandle(address, _))
             .WillByDefault([conn_id](RawAddress const& /*bd_addr*/, tBT_TRANSPORT /*transport*/) {
               return conn_id;
             });
@@ -2028,7 +2076,7 @@ protected:
             .Times(1);
 
     // For test purpose use the acl handle same as conn_id
-    ON_CALL(mock_btm_interface_, GetHCIConnHandle(address, _))
+    ON_CALL(mock_btm_client_interface_, BTM_GetHCIConnHandle(address, _))
             .WillByDefault([conn_id](RawAddress const& /*bd_addr*/, tBT_TRANSPORT /*transport*/) {
               return conn_id;
             });
@@ -3053,7 +3101,7 @@ protected:
     evt.cig_id = cig_id;
 
     ASSERT_NE(cig_callbacks_, nullptr);
-    cig_callbacks_->OnCisEvent(bluetooth::hci::iso_manager::kIsoEventCigOnRemoveCmpl, &evt);
+    cig_callbacks_->OnCigEvent(bluetooth::hci::iso_manager::kIsoEventCigOnRemoveCmpl, &evt);
   }
 
   NiceMock<MockAudioHalClientCallbacks> mock_audio_hal_client_callbacks_;
@@ -3073,6 +3121,8 @@ protected:
   NiceMock<MockFunction<bool()>> mock_hal_2_1_verifier;
 
   NiceMock<bluetooth::manager::MockBtmInterface> mock_btm_interface_;
+  NiceMock<MockBtmClientInterface> mock_btm_client_interface_;
+  NiceMock<MockSecurityClientInterface> mock_btm_security_;
   NiceMock<gatt::MockBtaGattInterface> mock_gatt_interface_;
   NiceMock<gatt::MockBtaGattQueue> mock_gatt_queue_;
   tBTA_GATTC_CBACK* gatt_callback = nullptr;
@@ -3140,13 +3190,13 @@ protected:
     EXPECT_CALL(mock_hal_2_1_verifier, Call()).Times(1);
     EXPECT_CALL(mock_storage_load, Call()).Times(1);
 
-    ON_CALL(mock_btm_interface_, BTM_GetRole(_, _, _))
+    ON_CALL(mock_btm_client_interface_, BTM_GetRole(_, _, _))
             .WillByDefault([](const RawAddress&, tBT_TRANSPORT, tHCI_ROLE* role) {
               *role = HCI_ROLE_CENTRAL;
               return tBTM_STATUS::BTM_SUCCESS;
             });
 
-    ON_CALL(mock_btm_interface_, GetHCIConnHandle(_, _))
+    ON_CALL(mock_btm_client_interface_, BTM_GetHCIConnHandle(_, _))
             .WillByDefault(
                     [this](RawAddress const& bd_addr, tBT_TRANSPORT /*transport*/) -> uint16_t {
                       for (auto const& [conn_id, dev_wrapper] : peer_devices) {
@@ -3157,6 +3207,7 @@ protected:
                       log::error("GetHCIConnHandle Mock: not a valid test device!");
                       return 0x00FE;
                     });
+
     ON_CALL(mock_btm_interface_, AclDisconnectFromHandle(_, _))
             .WillByDefault([this](uint16_t handle, tHCI_STATUS /*rs*/) {
               ASSERT_NE(handle, GATT_INVALID_CONN_ID);
@@ -3223,6 +3274,8 @@ protected:
     LeAudioClient::Get()->SetCcidInformation(gtbs_ccid,
                                              static_cast<int>(LeAudioContextType::CONVERSATIONAL));
     LeAudioClient::Get()->GroupSetActive(group_id);
+    SyncOnMainLoop();
+    Mock::VerifyAndClearExpectations(&mock_btif_storage_);
   }
 
   void TestSetCodecPreference(
@@ -3399,12 +3452,10 @@ protected:
   void SetUp() override {
     UnicastTest::SetUp();
     group_ = new LeAudioDeviceGroup(group_id_);
-    com::android::bluetooth::flags::provider_->leaudio_use_aggressive_params(true);
   }
 
   void TearDown() override {
     delete group_;
-    com::android::bluetooth::flags::provider_->leaudio_use_aggressive_params(false);
     UnicastTest::TearDown();
   }
 
@@ -3415,6 +3466,69 @@ protected:
 TEST_F(UnicastTest, Initialize) {
   ASSERT_NE(LeAudioClient::Get(), nullptr);
   ASSERT_TRUE(LeAudioClient::IsLeAudioClientRunning());
+}
+
+TEST_F(UnicastTestNoInit, Initialize_test_local_capabilities) {
+  btle_audio_codec_config_t vendor_codec_preference = {
+          .codec_type = LE_AUDIO_CODEC_INDEX_SOURCE_VENDOR_SPECIFIC,
+          .sample_rate = LE_AUDIO_SAMPLE_RATE_INDEX_96000HZ,
+          .codec_priority = 1,
+          .codec_id = 0x0001c0deff,
+  };
+
+  btle_audio_codec_config_t opus_codec_preference = {
+          .codec_type = LE_AUDIO_CODEC_INDEX_SOURCE_OPUS,
+          .sample_rate = LE_AUDIO_SAMPLE_RATE_INDEX_48000HZ,
+          .codec_priority = 1,
+          .codec_id = 0x000100e5ff,
+  };
+  btle_audio_codec_config_t lc3_codec_preference = {
+          .codec_type = LE_AUDIO_CODEC_INDEX_SOURCE_OPUS,
+          .sample_rate = LE_AUDIO_SAMPLE_RATE_INDEX_48000HZ,
+          .codec_priority = 1,
+          .codec_id = 0x0001c0deff,
+  };
+
+  std::vector<btle_audio_codec_config_t> output_capa = {
+          vendor_codec_preference, opus_codec_preference, lc3_codec_preference};
+  std::vector<btle_audio_codec_config_t> input_capa = {lc3_codec_preference};
+
+  ON_CALL(*mock_codec_manager_, GetLocalAudioOutputCodecCapa()).WillByDefault([&output_capa]() {
+    return output_capa;
+  });
+
+  ON_CALL(*mock_codec_manager_, GetLocalAudioInputCodecCapa()).WillByDefault([&input_capa]() {
+    return input_capa;
+  });
+
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnAudioLocalCodecCapabilities(input_capa, output_capa));
+
+  // Report False when asked for Audio HAL 2.1 support
+  ON_CALL(mock_hal_2_1_verifier, Call()).WillByDefault([]() -> bool { return true; });
+
+  BtaAppRegisterCallback app_register_callback;
+  ON_CALL(mock_gatt_interface_, AppRegister(_, _, _, _))
+          .WillByDefault(DoAll(SaveArg<1>(&gatt_callback), WithArg<2>([&](auto arg) {
+                                 app_register_callback = std::move(arg);
+                               })));
+
+  std::vector<::bluetooth::le_audio::btle_audio_codec_config_t> framework_encode_preference;
+
+  LeAudioClient::Initialize(
+          &mock_audio_hal_client_callbacks_,
+          base::Bind([](MockFunction<void()>* foo) { foo->Call(); }, &mock_storage_load),
+          base::Bind([](MockFunction<bool()>* foo) { return foo->Call(); }, &mock_hal_2_1_verifier),
+          framework_encode_preference);
+
+  SyncOnMainLoop();
+  if (app_register_callback) {
+    std::move(app_register_callback).Run(gatt_if, GATT_SUCCESS);
+  }
+
+  ASSERT_TRUE(LeAudioClient::IsLeAudioClientRunning());
+  SyncOnMainLoop();
+  Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
 }
 
 TEST_F(UnicastTestNoInit, InitializeNoHal_2_1) {
@@ -3441,6 +3555,65 @@ TEST_F(UnicastTestNoInit, InitializeNoHal_2_1) {
           "disable LE Audio Profile, or update your HAL");
 }
 
+TEST_F(UnicastTest, FailedToConnectWhenUserInitiateConnection) {
+  const RawAddress test_address0 = GetTestAddress(0);
+
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION)).WillByDefault(Return());
+  ON_CALL(mock_btm_security_, BTM_IsBonded(test_address0, _)).WillByDefault(DoAll(Return(true)));
+
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
+          .Times(1);
+
+  do_in_main_thread(base::BindOnce(&LeAudioClient::Connect, base::Unretained(LeAudioClient::Get()),
+                                   test_address0));
+
+  SyncOnMainLoop();
+
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnConnectionState(ConnectionState::DISCONNECTED, test_address0))
+          .Times(1);
+  InjectConnectedEvent(test_address0, 1, GATT_ERROR);
+  SyncOnMainLoop();
+
+  Mock::VerifyAndClearExpectations(&mock_gatt_interface_);
+  Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
+}
+
+TEST_F(UnicastTest, DisconnectBeforeProfileConnected_WhenUserInitiateConnection) {
+  const RawAddress test_address0 = GetTestAddress(0);
+
+  SetSampleDatabaseEarbudsValid(1, test_address0, codec_spec_conf::kLeAudioLocationStereo,
+                                codec_spec_conf::kLeAudioLocationStereo, default_channel_cnt,
+                                default_src_channel_cnt, 0x0004,
+                                /* source sample freq 16khz */ true, /*add_csis*/
+                                true,                                /*add_cas*/
+                                true,                                /*add_pacs*/
+                                default_ase_cnt /*add_ascs*/);
+
+  ON_CALL(mock_btm_security_, BTM_IsBonded(test_address0, _)).WillByDefault(DoAll(Return(true)));
+
+  /* Keep device in Getting Ready state */
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _))
+          .WillByDefault(DoAll(Return(false)));
+  ON_CALL(mock_btm_security_, BTM_SetEncryption(test_address0, _, _, _, _))
+          .WillByDefault(Return(tBTM_STATUS::BTM_SUCCESS));
+
+  do_in_main_thread(base::BindOnce(&LeAudioClient::Connect, base::Unretained(LeAudioClient::Get()),
+                                   test_address0));
+
+  SyncOnMainLoop();
+
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnConnectionState(ConnectionState::DISCONNECTED, test_address0))
+          .Times(1);
+
+  InjectDisconnectedEvent(1, GATT_CONN_TERMINATE_PEER_USER);
+  SyncOnMainLoop();
+
+  Mock::VerifyAndClearExpectations(&mock_gatt_interface_);
+  Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
+}
+
 TEST_F(UnicastTest, CleanupWhenUserConnecting) {
   const RawAddress test_address0 = GetTestAddress(0);
   uint16_t conn_id = 1;
@@ -3453,7 +3626,7 @@ TEST_F(UnicastTest, CleanupWhenUserConnecting) {
                                 default_ase_cnt /*add_ascs*/);
 
   /* Remove default action on the direct connect */
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _)).WillByDefault(Return());
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION)).WillByDefault(Return());
   ConnectLeAudio(test_address0, false, false);
 
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
@@ -3482,7 +3655,7 @@ TEST_F(UnicastTest, CleanupWhenAutoConnecting) {
   ConnectLeAudio(test_address0);
 
   /* Remove default action on the autoconnect */
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .WillByDefault(Return());
 
   EXPECT_CALL(mock_audio_hal_client_callbacks_,
@@ -3491,7 +3664,7 @@ TEST_F(UnicastTest, CleanupWhenAutoConnecting) {
   /* Make sure when remote device disconnects us, TA is used */
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   InjectDisconnectedEvent(1, GATT_CONN_TERMINATE_PEER_USER);
@@ -3548,7 +3721,7 @@ TEST_F(UnicastTest, ConnectAsPeripheral) {
                                 true,                                /*add_pacs*/
                                 default_ase_cnt /*add_ascs*/);
 
-  ON_CALL(mock_btm_interface_, BTM_GetRole(_, _, _))
+  ON_CALL(mock_btm_client_interface_, BTM_GetRole(_, _, _))
           .WillByDefault([](const RawAddress&, tBT_TRANSPORT, tHCI_ROLE* role) {
             *role = HCI_ROLE_PERIPHERAL;
             return tBTM_STATUS::BTM_SUCCESS;
@@ -3572,15 +3745,14 @@ TEST_F(UnicastTest, ConnectAndSetupPhy) {
                                 true,                                /*add_pacs*/
                                 default_ase_cnt /*add_ascs*/);
 
-  EXPECT_CALL(mock_btm_interface_, BleSetPhy(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
+  EXPECT_CALL(leConnectionSetPhyMock, Call(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
   ConnectLeAudio(test_address0, false);
   Mock::VerifyAndClearExpectations(&mock_btm_interface_);
 
-  EXPECT_CALL(mock_btm_interface_, BleSetPhy(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
+  EXPECT_CALL(leConnectionSetPhyMock, Call(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
   InjectPhyChangedEvent(conn_id, 0, 0, GATT_REQ_NOT_SUPPORTED);
   SyncOnMainLoop();
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
   InjectEncryptionChangedEvent(test_address0);
   SyncOnMainLoop();
   Mock::VerifyAndClearExpectations(&mock_btm_interface_);
@@ -3591,19 +3763,18 @@ TEST_F(UnicastTest, ConnectAndSetupPhy) {
   InjectDisconnectedEvent(conn_id);
   SyncOnMainLoop();
 
-  EXPECT_CALL(mock_btm_interface_, BleSetPhy(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
+  EXPECT_CALL(leConnectionSetPhyMock, Call(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
 
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _))
           .WillByDefault(DoAll(Return(false)));
   InjectConnectedEvent(test_address0, 1);
   SyncOnMainLoop();
   Mock::VerifyAndClearExpectations(&mock_btm_interface_);
 
-  EXPECT_CALL(mock_btm_interface_, BleSetPhy(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
+  EXPECT_CALL(leConnectionSetPhyMock, Call(test_address0, PHY_LE_2M, PHY_LE_2M, 0)).Times(1);
   InjectPhyChangedEvent(conn_id, 0, 0, GATT_REQ_NOT_SUPPORTED);
   SyncOnMainLoop();
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
   InjectEncryptionChangedEvent(test_address0);
   SyncOnMainLoop();
   Mock::VerifyAndClearExpectations(&mock_btm_interface_);
@@ -3993,8 +4164,7 @@ TEST_F(UnicastTest, ConnectRemoteServiceDiscoveryCompleteBeforeEncryption) {
   EXPECT_CALL(mock_audio_hal_client_callbacks_,
               OnConnectionState(ConnectionState::CONNECTED, test_address0))
           .Times(1);
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
   InjectEncryptionChangedEvent(test_address0);
   SyncOnMainLoop();
   Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
@@ -4009,10 +4179,10 @@ TEST_F(UnicastTest, DisconnectWhenLinkKeyIsGone) {
               OnConnectionState(ConnectionState::DISCONNECTED, test_address0))
           .Times(1);
 
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _))
           .WillByDefault(DoAll(Return(false)));
 
-  ON_CALL(mock_btm_interface_, SetEncryption(test_address0, _, _, _, _))
+  ON_CALL(mock_btm_security_, BTM_SetEncryption(test_address0, _, _, _, _))
           .WillByDefault(Return(tBTM_STATUS::BTM_ERR_KEY_MISSING));
 
   EXPECT_CALL(mock_gatt_interface_, Close(conn_id)).Times(1);
@@ -4041,7 +4211,7 @@ TEST_F(UnicastTest, ConnectRemoteDisconnectOneEarbud) {
   /* Make sure when remote device disconnects us, TA is used */
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   InjectDisconnectedEvent(1, GATT_CONN_TERMINATE_PEER_USER);
@@ -4058,7 +4228,7 @@ TEST_F(UnicastTest, ConnectRemoteDisconnectOneEarbud) {
    */
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   /* For background connect, test needs to Inject Connected Event */
@@ -4081,10 +4251,10 @@ TEST_F(UnicastTest, ConnectRemoteDisconnectOnTimeoutOneEarbud) {
           .Times(1);
 
   /* Remove default action on the direct connect */
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _)).WillByDefault(Return());
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION)).WillByDefault(Return());
 
   /* For remote disconnection, expect stack to try background re-connect */
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
   InjectDisconnectedEvent(1, GATT_CONN_TIMEOUT);
@@ -4136,8 +4306,6 @@ TEST_F(UnicastTestCsis, ConnectDeviceWithCsisButNotUsedForGrouping) {
 }
 
 TEST_F(UnicastTestCsis, AutoconnectTwoEarbudsOneEarlyConnected) {
-  com::android::bluetooth::flags::provider_->leaudio_do_not_set_autoconnecting_on_connected_device(
-          true);
   // First earbud
   const RawAddress test_address0 = GetTestAddress(0);
   EXPECT_CALL(mock_btif_storage_, AddLeaudioAutoconnect(test_address0, true)).Times(1);
@@ -4170,7 +4338,7 @@ TEST_F(UnicastTestCsis, AutoconnectTwoEarbudsOneEarlyConnected) {
   hold_delayed_tasks = false;
 
   /* Remove default action on the direct connect */
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _)).WillByDefault(Return());
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION)).WillByDefault(Return());
   InjectConnectedEvent(test_address0, 1);
   SyncOnMainLoop();
   ASSERT_EQ(device1->connection_state_, DeviceConnectState::CONNECTED);
@@ -4258,7 +4426,7 @@ TEST_F(UnicastTestNoInit, ConnectFailedDueToInvalidParameters) {
 
   /* Prepare  mock to not inject connect event so the device can stay in
    * CONNECTING state*/
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, false))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
 
   const RawAddress test_address0 = GetTestAddress(0);
@@ -4314,22 +4482,17 @@ TEST_F(UnicastTestNoInit, ConnectFailedDueToInvalidParameters) {
   });
 
   // Expect stored device0 to connect automatically (first directed connection )
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
   // Expect stored device1 to connect automatically (first direct connection)
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address1, _))
-          .WillByDefault(DoAll(Return(true)));
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address1, _)).WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
 
   ON_CALL(mock_groups_module_, GetGroupId(_, _)).WillByDefault(DoAll(Return(group_id)));
-
-  ON_CALL(mock_btm_interface_, GetSecurityFlagsByTransport(test_address0, NotNull(), _))
-          .WillByDefault(DoAll(SetArgPointee<1>(BTM_SEC_FLAG_ENCRYPTED), Return(true)));
 
   std::vector<::bluetooth::le_audio::btle_audio_codec_config_t> framework_encode_preference;
 
@@ -4356,11 +4519,18 @@ TEST_F(UnicastTestNoInit, ConnectFailedDueToInvalidParameters) {
   // Simulate connect parameters are invalid and phone does not fallback
   // to background connect.
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(0);
 
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
+          .Times(0);
+
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnConnectionState(ConnectionState::DISCONNECTED, test_address0))
+          .Times(0);
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnConnectionState(ConnectionState::DISCONNECTED, test_address1))
           .Times(0);
 
   // Devices not found
@@ -4381,7 +4551,7 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsBroakenStorage) {
 
   /* Prepare  mock to not inject connect event so the device can stay in
    * CONNECTING state*/
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, false))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
 
   const RawAddress test_address0 = GetTestAddress(0);
@@ -4424,22 +4594,17 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsBroakenStorage) {
   });
 
   // Expect stored device0 to connect automatically (first directed connection )
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
   // Expect stored device1 to connect automatically (first direct connection)
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address1, _))
-          .WillByDefault(DoAll(Return(true)));
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address1, _)).WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
 
   ON_CALL(mock_groups_module_, GetGroupId(_, _)).WillByDefault(DoAll(Return(group_id)));
-
-  ON_CALL(mock_btm_interface_, GetSecurityFlagsByTransport(test_address0, NotNull(), _))
-          .WillByDefault(DoAll(SetArgPointee<1>(BTM_SEC_FLAG_ENCRYPTED), Return(true)));
 
   std::vector<::bluetooth::le_audio::btle_audio_codec_config_t> framework_encode_preference;
 
@@ -4466,11 +4631,11 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsBroakenStorage) {
   // Simulate devices are not there and phone fallbacks to targeted
   // announcements
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   // Devices not found
@@ -4481,8 +4646,8 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsBroakenStorage) {
   Mock::VerifyAndClearExpectations(&mock_gatt_interface_);
 
   /* Stack should rediscover services as storage is broken */
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(2, _)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(1, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(2)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(1)).Times(1);
 
   EXPECT_CALL(mock_audio_hal_client_callbacks_,
               OnConnectionState(ConnectionState::CONNECTED, test_address0))
@@ -4513,7 +4678,7 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsCsisGrouped) {
 
   /* Prepare  mock to not inject connect event so the device can stay in
    * CONNECTING state*/
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, false))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
 
   const RawAddress test_address0 = GetTestAddress(0);
@@ -4570,22 +4735,17 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsCsisGrouped) {
   });
 
   // Expect stored device0 to connect automatically (first directed connection )
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
   // Expect stored device1 to connect automatically (first direct connection)
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address1, _))
-          .WillByDefault(DoAll(Return(true)));
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address1, _)).WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
 
   ON_CALL(mock_groups_module_, GetGroupId(_, _)).WillByDefault(DoAll(Return(group_id)));
-
-  ON_CALL(mock_btm_interface_, GetSecurityFlagsByTransport(test_address0, NotNull(), _))
-          .WillByDefault(DoAll(SetArgPointee<1>(BTM_SEC_FLAG_ENCRYPTED), Return(true)));
 
   std::vector<::bluetooth::le_audio::btle_audio_codec_config_t> framework_encode_preference;
 
@@ -4612,11 +4772,11 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsCsisGrouped) {
   // Simulate devices are not there and phone fallbacks to targeted
   // announcements
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   // Devices not found
@@ -4707,7 +4867,7 @@ TEST_F(UnicastTest, LoadStoredBandedHeadphones) {
 
   /* Prepare  mock to not inject connect event so the device can stay in
    * CONNECTING state*/
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, false))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
 
   // Re-Initialize & load from storage
@@ -4769,7 +4929,7 @@ TEST_F(UnicastTestNoInit, ServiceChangedBeforeServiceIsConnected) {
 
   /* Prepare  mock to not inject connect event so the device can stay in
    * CONNECTING state*/
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, false))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
 
   const RawAddress test_address0 = GetTestAddress(0);
@@ -4826,22 +4986,17 @@ TEST_F(UnicastTestNoInit, ServiceChangedBeforeServiceIsConnected) {
   });
 
   // Expect stored device0 to connect automatically (first directed connection )
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
   // Expect stored device1 to connect automatically (first direct connection)
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address1, _))
-          .WillByDefault(DoAll(Return(true)));
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address1, _)).WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
 
   ON_CALL(mock_groups_module_, GetGroupId(_, _)).WillByDefault(DoAll(Return(group_id)));
-
-  ON_CALL(mock_btm_interface_, GetSecurityFlagsByTransport(test_address0, NotNull(), _))
-          .WillByDefault(DoAll(SetArgPointee<1>(BTM_SEC_FLAG_ENCRYPTED), Return(true)));
 
   std::vector<::bluetooth::le_audio::btle_audio_codec_config_t> framework_encode_preference;
 
@@ -4871,8 +5026,8 @@ TEST_F(UnicastTestNoInit, ServiceChangedBeforeServiceIsConnected) {
   InjectServiceChangedEvent(test_address0, 0xffff);
   SyncOnMainLoop();
   /* Stack should rediscover services as storage is broken */
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(2, _)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(1, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(2)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(1)).Times(1);
 
   EXPECT_CALL(mock_audio_hal_client_callbacks_,
               OnConnectionState(ConnectionState::CONNECTED, test_address0))
@@ -4960,25 +5115,23 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsCsisGroupedDifferently) {
   EXPECT_CALL(mock_audio_hal_client_callbacks_,
               OnConnectionState(ConnectionState::CONNECTED, test_address0))
           .Times(1);
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
 
   // First device will got connected
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   // Expect stored device1 to NOT connect automatically
   EXPECT_CALL(mock_audio_hal_client_callbacks_,
               OnConnectionState(ConnectionState::CONNECTED, test_address1))
           .Times(0);
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address1, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address1, _)).WillByDefault(DoAll(Return(true)));
 
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address1, BTM_BLE_DIRECT_CONNECTION))
           .Times(0);
 
   // Initialize
@@ -5005,7 +5158,7 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsCsisGroupedDifferently) {
 
   // Simulate device is not there and phone fallbacks to targeted announcements
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   // Devices 0 is connected. Disconnect it
@@ -5016,13 +5169,13 @@ TEST_F(UnicastTestNoInit, LoadStoredEarbudsCsisGroupedDifferently) {
 
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   /* Keep device in Getting Ready state */
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _))
           .WillByDefault(DoAll(Return(false)));
-  ON_CALL(mock_btm_interface_, SetEncryption(test_address0, _, _, _, _))
+  ON_CALL(mock_btm_security_, BTM_SetEncryption(test_address0, _, _, _, _))
           .WillByDefault(Return(tBTM_STATUS::BTM_SUCCESS));
 
   /* For background connect, test needs to Inject Connected Event */
@@ -6010,7 +6163,7 @@ TEST_F(UnicastTest, HandleDeviceReconfiguredToSinkOnlyAseRemoved) {
   Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
 
   /* Device will disconnect, and do not reconnect automatically */
-  ON_CALL(mock_gatt_interface_, Open(_, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(Return());
 
   /* Disconnect device */
@@ -6041,7 +6194,7 @@ TEST_F(UnicastTest, HandleDeviceReconfiguredToSinkOnlyAseRemoved) {
           default_ase_cnt /*add_ascs_cnt*/, 1 /*set_size*/, 0 /*rank*/);
   peer_devices.at(1)->connected = true;
 
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(_, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(_)).Times(1);
   expected_direction = bluetooth::le_audio::types::kLeAudioDirectionSink;
   std::optional<std::bitset<32>> expected_src_location = std::nullopt;
   EXPECT_CALL(mock_audio_hal_client_callbacks_, OnAudioConf(0, _, _, _, _));
@@ -6576,7 +6729,7 @@ TEST_F(UnicastTest, ConnectAfterRemove) {
           LeAudioClient::Get(), test_address0));
   SyncOnMainLoop();
 
-  ON_CALL(mock_btm_interface_, IsDeviceBonded(_, _)).WillByDefault(DoAll(Return(false)));
+  ON_CALL(mock_btm_security_, BTM_IsBonded(_, _)).WillByDefault(DoAll(Return(false)));
 
   do_in_main_thread(base::BindOnce(&LeAudioClient::Connect, base::Unretained(LeAudioClient::Get()),
                                    test_address0));
@@ -6637,7 +6790,7 @@ TEST_F(UnicastTest, RemoveDeviceWhenUserConnecting) {
 
   /* Prepare  mock to not inject connect event so the device can stay in
    * CONNECTING state*/
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
 
   SetSampleDatabaseEarbudsValid(
@@ -6654,7 +6807,7 @@ TEST_F(UnicastTest, RemoveDeviceWhenUserConnecting) {
 
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, true)).Times(1);
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _, _)).Times(0);
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _)).Times(0);
 
   /*
    * StopStream will put calls on main_loop so to keep the correct order
@@ -6696,7 +6849,7 @@ TEST_F(UnicastTest, RemoveDeviceWhenAutoConnectingWithTargetedAnnouncements) {
   Mock::VerifyAndClearExpectations(&mock_gatt_interface_);
 
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   // Inject disconnected event, Reconnect with TA shall start
@@ -6707,7 +6860,7 @@ TEST_F(UnicastTest, RemoveDeviceWhenAutoConnectingWithTargetedAnnouncements) {
   // Remove device when being in auto connect state.
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, true)).Times(1);
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _, _)).Times(0);
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _)).Times(0);
 
   do_in_main_thread(base::BindOnce(
           [](LeAudioClient* client, const RawAddress& test_address0) {
@@ -6744,9 +6897,9 @@ TEST_F(UnicastTest, RemoveDeviceWhenAutoConnectingAfterConnectionTimeout) {
   Mock::VerifyAndClearExpectations(&mock_gatt_interface_);
 
   // Prepare mock for direct connect and inject connection timeout
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
   InjectDisconnectedEvent(conn_id, GATT_CONN_TIMEOUT);
@@ -6756,7 +6909,7 @@ TEST_F(UnicastTest, RemoveDeviceWhenAutoConnectingAfterConnectionTimeout) {
   // Remove device when being in auto connect state after connection timeout
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, true)).Times(1);
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _, _)).Times(0);
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _)).Times(0);
 
   do_in_main_thread(base::BindOnce(
           [](LeAudioClient* client, const RawAddress& test_address0) {
@@ -6774,7 +6927,7 @@ TEST_F(UnicastTest, RemoveDeviceWhenGettingConnectionReady) {
   uint16_t conn_id = 1;
 
   /* Prepare  mock to not inject Service Search Complete*/
-  ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_, _)).WillByDefault(DoAll(Return()));
+  ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_)).WillByDefault(DoAll(Return()));
 
   SetSampleDatabaseEarbudsValid(
           conn_id, test_address0, codec_spec_conf::kLeAudioLocationStereo,
@@ -6795,7 +6948,7 @@ TEST_F(UnicastTest, RemoveDeviceWhenGettingConnectionReady) {
 
   /* Cancel should be called in RemoveDevice */
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _, _)).Times(0);
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _)).Times(0);
 
   /*
    * StopStream will put calls on main_loop so to keep the correct order
@@ -6858,7 +7011,7 @@ TEST_F(UnicastTest, DisconnectDeviceWhenConnecting) {
 
   /* Prepare  mock to not inject connect event so the device can stay in
    * CONNECTING state*/
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(DoAll(Return()));
 
   SetSampleDatabaseEarbudsValid(
@@ -6878,7 +7031,7 @@ TEST_F(UnicastTest, DisconnectDeviceWhenConnecting) {
    */
   ON_CALL(mock_gatt_interface_, Close(_)).WillByDefault(DoAll(Return()));
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, true)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _, _)).Times(0);
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _)).Times(0);
 
   LeAudioClient::Get()->Disconnect(test_address0);
   SyncOnMainLoop();
@@ -6891,7 +7044,7 @@ TEST_F(UnicastTest, DisconnectDeviceWhenGettingConnectionReady) {
   uint16_t conn_id = global_conn_id;
 
   /* Prepare  mock to not inject Service Search Complete*/
-  ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_, _)).WillByDefault(DoAll(Return()));
+  ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_)).WillByDefault(DoAll(Return()));
 
   SetSampleDatabaseEarbudsValid(
           conn_id, test_address0, codec_spec_conf::kLeAudioLocationStereo,
@@ -6910,7 +7063,7 @@ TEST_F(UnicastTest, DisconnectDeviceWhenGettingConnectionReady) {
   EXPECT_CALL(mock_gatt_queue_, Clean(conn_id)).Times(AtLeast(1));
   EXPECT_CALL(mock_gatt_interface_, Close(conn_id)).Times(1);
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(0);
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _, _)).Times(0);
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, _)).Times(0);
 
   LeAudioClient::Get()->Disconnect(test_address0);
   SyncOnMainLoop();
@@ -10560,7 +10713,7 @@ TEST_F(UnicastTestCsis, ReconnectedDeviceAndAttachedToStreamBecauseOfAvailableCo
   TestAudioDataTransfer(group_id_1_, cis_count_out, cis_count_in, 1920);
 
   /* Device A will disconnect, and do not reconnect automatically */
-  ON_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(Return());
 
   /* Disconnect first device */
@@ -10650,7 +10803,7 @@ TEST_F(UnicastTestCsis, ReconnectedDeviceNotAttachedToStreamBecauseOfNotAvailabl
   TestAudioDataTransfer(group_id_1_, cis_count_out, cis_count_in, 1920);
 
   /* Device A will disconnect, and do not reconnect automatically */
-  ON_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(Return());
 
   /* Disconnect first device */
@@ -10861,7 +11014,7 @@ TEST_F(UnicastTestCsis, ModifyContextTypeOnDeviceA_WhileDeviceB_IsDisconnected) 
   Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
 
   // Device B got disconnected and will not reconnect.
-  ON_CALL(mock_gatt_interface_, Open(_, test_address1, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, test_address1, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(Return());
   InjectDisconnectedEvent(2, GATT_CONN_TERMINATE_PEER_USER);
   SyncOnMainLoop();
@@ -11043,75 +11196,6 @@ TEST_F(UnicastTestCsis, ChangeConfigurationContextType_cigConfigurationChanges) 
 
   Mock::VerifyAndClearExpectations(&mock_state_machine_);
   Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
-}
-
-TEST_F(UnicastTestCsis, ChangeConfigurationContextType_cigConfigurationChangesToLive) {
-  com::android::bluetooth::flags::provider_->leaudio_use_context_type_manager(false);
-  com::android::bluetooth::flags::provider_->leaudio_dynamic_direction_opening(false);
-  /* Scenario (Device A and B called Remote)
-   * 1. Remote set does supports all the context types and make them available
-   * 2. Android start stream with SoundeEffect
-   * 3. Android updates context type and moves to LIVE
-   * 4. STREAMING state is achieved and test verifies there is  RECONFIGURATION is triggered
-   */
-
-  const RawAddress test_address0 = GetTestAddress(0);
-  const RawAddress test_address1 = GetTestAddress(1);
-
-  // First earbud connects
-  ConnectCsisDevice(test_address0, 1 /*conn_id*/, codec_spec_conf::kLeAudioLocationFrontLeft,
-                    codec_spec_conf::kLeAudioLocationFrontLeft, group_id_1_size_, group_id_1_,
-                    1 /* rank*/);
-
-  // Second earbud connects
-  ConnectCsisDevice(test_address1, 2 /*conn_id*/, codec_spec_conf::kLeAudioLocationFrontRight,
-                    codec_spec_conf::kLeAudioLocationFrontRight, group_id_1_size_, group_id_1_,
-                    2 /* rank*/, true /*connect_through_csis*/);
-
-  log::debug("Start streaming");
-
-  EXPECT_CALL(*mock_le_audio_source_hal_client_, Start(_, _, _)).Times(1);
-  EXPECT_CALL(*mock_le_audio_sink_hal_client_, Start(_, _, _)).Times(1);
-  LeAudioClient::Get()->GroupSetActive(group_id_1_);
-  SyncOnMainLoop();
-
-  BidirectionalPair<AudioContexts> contexts = {
-          .sink = types::AudioContexts(types::LeAudioContextType::SOUNDEFFECTS),
-          .source = types::AudioContexts()};
-
-  EXPECT_CALL(
-          mock_state_machine_,
-          StartStream(_, bluetooth::le_audio::types::LeAudioContextType::SOUNDEFFECTS, contexts, _))
-          .Times(1);
-
-  StartStreaming(AUDIO_USAGE_ASSISTANCE_SONIFICATION, AUDIO_CONTENT_TYPE_UNKNOWN, group_id_1_,
-                 AUDIO_SOURCE_INVALID, false, false);
-
-  SyncOnMainLoop();
-  Mock::VerifyAndClearExpectations(&mock_state_machine_);
-  Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
-  Mock::VerifyAndClearExpectations(mock_le_audio_source_hal_client_);
-
-  ASSERT_NE(0lu, streaming_groups.count(group_id_1_));
-  auto group = streaming_groups.at(group_id_1_);
-
-  log::debug("Suspend but do not drop the stream");
-  LocalAudioSourceSuspend();
-
-  /* Simulate metadata update, expect upadate , metadata */
-  UpdateLocalSinkMetadata(AUDIO_SOURCE_MIC);
-  SyncOnMainLoop();
-
-  log::debug("Resume, and expect LIVE configuration");
-
-  EXPECT_CALL(mock_state_machine_, StopStream(_)).Times(1);
-  LocalAudioSourceResume(false, false);
-  SyncOnMainLoop();
-  LocalAudioSinkResume();
-
-  Mock::VerifyAndClearExpectations(&mock_state_machine_);
-  auto [sink_enabled, source_enabled] = group->GetConfiguredDirections();
-  ASSERT_TRUE(sink_enabled && source_enabled);
 }
 
 TEST_F(UnicastTestCsis, StartStreamToUnsupportedContextTypeUsingUnspecified) {
@@ -11402,10 +11486,9 @@ TEST_F(UnicastTestCsis, TwoEarbuds2ndDisconnected) {
   }
 
   /* Disconnect ACL and do not reconnect. */
-  ON_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(Return());
-  EXPECT_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION, false))
-          .Times(1);
+  EXPECT_CALL(mock_gatt_interface_, Open(_, device->address_, BTM_BLE_DIRECT_CONNECTION)).Times(1);
 
   // Record NumOfConnected when groupStateMachine_ gets notified about the
   // disconnection
@@ -11473,14 +11556,14 @@ TEST_F(UnicastTestCsis, TwoEarbudsStreamingProfileDisconnect) {
   EXPECT_CALL(mock_state_machine_, StopStream(_)).Times(1);
 
   /* Do not inject OPEN_EVENT by default */
-  ON_CALL(mock_gatt_interface_, Open(_, _, _, _)).WillByDefault(DoAll(Return()));
+  ON_CALL(mock_gatt_interface_, Open(_, _, _)).WillByDefault(DoAll(Return()));
   ON_CALL(mock_gatt_interface_, Close(_)).WillByDefault(DoAll(Return()));
   ON_CALL(mock_btm_interface_, AclDisconnectFromHandle(_, _)).WillByDefault(DoAll(Return()));
 
   DisconnectLeAudioNoDisconnectedEvtExpected(test_address0, 1);
   DisconnectLeAudioNoDisconnectedEvtExpected(test_address1, 2);
 
-  EXPECT_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(2);
 
   InjectDisconnectedEvent(1);
@@ -11616,7 +11699,7 @@ TEST_F(UnicastTestCsis, TwoEarbudsStreamingProfileDisconnectForSingleEarbudStrea
           });
 
   // Do not accept direct connect, but expect it to arrive.
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _)).WillByDefault(Return());
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION)).WillByDefault(Return());
 
   EXPECT_CALL(mock_btm_interface_, AclDisconnectFromHandle(_, _)).Times(1);
   EXPECT_CALL(mock_audio_hal_client_callbacks_, OnGroupStatus(group_id_1_, GroupStatus::INACTIVE))
@@ -12324,7 +12407,7 @@ TEST_F(UnicastTest, UpdateMultipleBidirContextTypes_SpeedUpReconfigFlagEnabled) 
   EXPECT_CALL(mock_state_machine_, StartStream(_, _, contexts, _)).Times(1);
 
   /* Make sure GAME is bidirectional */
-  char test_tag[] = "TEST_TAG2;VX_AOSP_bidirectional;TEST_TAG1";
+  char test_tag[] = "TEST_TAG2;VX_AOSP_BIDIRECTIONAL;TEST_TAG1";
   test_tags_ptr_ = test_tag;
 
   UpdateLocalSourceMetadata(AUDIO_USAGE_GAME, AUDIO_CONTENT_TYPE_UNKNOWN, false);
@@ -12399,7 +12482,7 @@ TEST_F(UnicastTest, UpdateDisableLocalAudioSinkOnGame) {
 
   // 1) Start the recording. Sink resume will trigger the reconfiguration
   // ---------------------------------------------------------------------
-  char test_tag[] = "TEST_TAG2;VX_AOSP_bidirectional;TEST_TAG1";
+  char test_tag[] = "TEST_TAG2;VX_AOSP_BIDIRECTIONAL;TEST_TAG1";
   test_tags_ptr_ = test_tag;
   StartStreaming(AUDIO_USAGE_GAME, AUDIO_CONTENT_TYPE_MUSIC, group_id, AUDIO_SOURCE_MIC);
 
@@ -12971,7 +13054,7 @@ TEST_F(UnicastTestCsis, MediaContextRemovedFromAvailableContextsAfterSoundEffect
   SyncOnMainLoop();
 
   /* Remove default action on the autoconnect */
-  ON_CALL(mock_gatt_interface_, Open(_, _, _, _)).WillByDefault(Return());
+  ON_CALL(mock_gatt_interface_, Open(_, _, _)).WillByDefault(Return());
 
   log::debug("Disconnect second bud");
   InjectDisconnectedEvent(conn_id_1, GATT_CONN_TERMINATE_PEER_USER);
@@ -13362,7 +13445,7 @@ TEST_F(UnicastTest, BidirectionalGameContextRequestedFromAudioFramework) {
   SyncOnMainLoop();
 
   /* Set TAG */
-  char test_tag[] = "TEST_TAG2;VX_AOSP_bidirectional;TEST_TAG1";
+  char test_tag[] = "TEST_TAG2;VX_AOSP_BIDIRECTIONAL;TEST_TAG1";
   test_tags_ptr_ = test_tag;
   StartStreaming(AUDIO_USAGE_GAME, AUDIO_CONTENT_TYPE_UNKNOWN, group_id, AUDIO_SOURCE_MIC);
 
@@ -13437,7 +13520,7 @@ TEST_F(UnicastTest, SwitchFromUniToBidirectionalGameContext) {
           .Times(1);
 
   /* Set TAG and expect reconfiguration */
-  char test_tag[] = "TEST_TAG2;VX_AOSP_bidirectional;TEST_TAG1";
+  char test_tag[] = "TEST_TAG2;VX_AOSP_BIDIRECTIONAL;TEST_TAG1";
   test_tags_ptr_ = test_tag;
   StartStreaming(AUDIO_USAGE_GAME, AUDIO_CONTENT_TYPE_UNKNOWN, group_id, AUDIO_SOURCE_MIC, true);
 
@@ -13663,8 +13746,8 @@ TEST_F(UnicastTest, HandleDatabaseOutOfSync) {
   gatt_read_ctp_ccc_status_ = GATT_DATABASE_OUT_OF_SYNC;
 
   EXPECT_CALL(mock_gatt_queue_, WriteDescriptor(_, _, _, _, _, _)).Times(0);
-  ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_, _)).WillByDefault(Return());
-  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(_, _));
+  ON_CALL(mock_gatt_interface_, ServiceSearchRequest(_)).WillByDefault(Return());
+  EXPECT_CALL(mock_gatt_interface_, ServiceSearchRequest(_));
 
   InjectConnectedEvent(test_address0, 1);
   SyncOnMainLoop();
@@ -13801,7 +13884,7 @@ TEST_F(UnicastTest, SpeakerStreamingTimeout) {
   auto device = group->GetFirstActiveDevice();
 
   // Do not accept direct connect, but expect it to arrive.
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _)).WillByDefault(Return());
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION)).WillByDefault(Return());
 
   EXPECT_CALL(mock_btm_interface_, AclDisconnectFromHandle(device->conn_id_, _)).Times(1);
   ON_CALL(mock_btm_interface_, AclDisconnectFromHandle(_, _))
@@ -13819,7 +13902,7 @@ TEST_F(UnicastTest, SpeakerStreamingTimeout) {
 
   /* No assigned cises should remain when transition remains in IDLE state */
   ASSERT_NE(0lu, streaming_groups.count(group_id));
-  ASSERT_EQ(0, static_cast<int>(group->cig.cises.size()));
+  ASSERT_EQ(0, static_cast<int>(group->cig.GetCises().size()));
   ASSERT_TRUE(device != nullptr);
   ASSERT_EQ(device->GetConnectionState(), DeviceConnectState::CONNECTING_AUTOCONNECT);
   Mock::VerifyAndClearExpectations(&mock_btm_interface_);
@@ -13848,7 +13931,7 @@ TEST_F(UnicastTestCsis, AddMemberToAllowListWhenOneDeviceConnected) {
 
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   InjectDisconnectedEvent(conn_id_dev_0);
@@ -13862,9 +13945,9 @@ TEST_F(UnicastTestCsis, AddMemberToAllowListWhenOneDeviceConnected) {
 
   /* Do not connect first  device but expect Open will arrive.*/
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
-  ON_CALL(mock_gatt_interface_, Open(_, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(Return());
 
   ConnectCsisDevice(test_address1, conn_id_dev_1, codec_spec_conf::kLeAudioLocationFrontRight,
@@ -13900,7 +13983,7 @@ TEST_F(UnicastTestCsis, ResetToDefaultReconnectionMode) {
 
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   InjectDisconnectedEvent(conn_id_dev_0);
@@ -13914,9 +13997,9 @@ TEST_F(UnicastTestCsis, ResetToDefaultReconnectionMode) {
 
   /* Verify first earbud will start doing direct connect first */
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
-  ON_CALL(mock_gatt_interface_, Open(_, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  ON_CALL(mock_gatt_interface_, Open(_, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .WillByDefault(Return());
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
 
   ConnectCsisDevice(test_address1, conn_id_dev_1, codec_spec_conf::kLeAudioLocationFrontRight,
@@ -13929,10 +14012,10 @@ TEST_F(UnicastTestCsis, ResetToDefaultReconnectionMode) {
   // Disconnect Device B, expect default reconnection mode for Device A.
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, false)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address1, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address1, false)).Times(1);
 
@@ -13973,15 +14056,14 @@ TEST_F(UnicastTestCsis, DisconnectAclBeforeGettingReadResponses) {
                                 group_id_1_size_, 1 /* rank */, GATT_INTERNAL_ERROR);
   groups[test_address0] = group_id_1_;
   // by default indicate link as encrypted
-  ON_CALL(mock_btm_interface_, BTM_IsEncrypted(test_address0, _))
-          .WillByDefault(DoAll(Return(true)));
+  ON_CALL(mock_btm_security_, BTM_IsEncrypted(test_address0, _)).WillByDefault(DoAll(Return(true)));
 
-  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION, _))
+  EXPECT_CALL(mock_gatt_interface_, Open(gatt_if, test_address0, BTM_BLE_DIRECT_CONNECTION))
           .Times(1);
   /* When connected it will got to TA */
   EXPECT_CALL(mock_gatt_interface_, CancelOpen(gatt_if, test_address0, _)).Times(1);
   EXPECT_CALL(mock_gatt_interface_,
-              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS, _))
+              Open(gatt_if, test_address0, BTM_BLE_BKG_CONNECT_TARGETED_ANNOUNCEMENTS))
           .Times(1);
 
   do_in_main_thread(base::BindOnce(&LeAudioClient::Connect, base::Unretained(LeAudioClient::Get()),
@@ -14018,7 +14100,7 @@ TEST_F(UnicastTestCsis, DisconnectAclBeforeGettingReadResponses) {
   ASSERT_NE(std::find(devs.begin(), devs.end(), test_address1), devs.end());
 
   /* Remove default action on the direct connect */
-  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION, _)).WillByDefault(Return());
+  ON_CALL(mock_gatt_interface_, Open(_, _, BTM_BLE_DIRECT_CONNECTION)).WillByDefault(Return());
 
   /* Initiate disconnection with timeout reason, the possible reason why GATT
    * read attribute operation may be not handled
@@ -14457,13 +14539,11 @@ TEST_F(UnicastTestHandoverModeCsis, SetSinkMonitorModeWhileUnicastIsActive) {
   uint8_t cis_count_in = 2;
   TestAudioDataTransfer(group_id_1_, cis_count_out, cis_count_in, 1920, 40);
 
-  if (com::android::bluetooth::flags::leaudio_improve_unicast_monitor()) {
-    // Stop streaming and expect Service to be informed about streaming
-    EXPECT_CALL(mock_audio_hal_client_callbacks_,
-                OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSink,
-                                           UnicastMonitorModeStatus::STREAMING))
-            .Times(1);
-  }
+  // Stop streaming and expect Service to be informed about streaming
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSink,
+                                         UnicastMonitorModeStatus::STREAMING))
+          .Times(1);
 
   // Imitate activation of monitor mode
   do_in_main_thread(base::BindOnce(
@@ -14680,21 +14760,13 @@ TEST_F(UnicastTestHandoverModeCsis,
   Mock::VerifyAndClearExpectations(mock_le_audio_source_hal_client_);
   Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
 
-  if (!com::android::bluetooth::flags::leaudio_improve_unicast_monitor()) {
-    // Expect no streaming request on stream resume when group is already active
-    EXPECT_CALL(mock_audio_hal_client_callbacks_,
-                OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSink,
-                                           UnicastMonitorModeStatus::STREAMING_REQUESTED))
-            .Times(0);
-  } else {
-    /* Expect  STREAMING state when group is moving to streaming on the Local Sink.
-     * Because when AUDIO HAL calls SinkResume, the bidirectional stream is already in place
-     */
-    EXPECT_CALL(mock_audio_hal_client_callbacks_,
-                OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSink,
-                                           UnicastMonitorModeStatus::STREAMING))
-            .Times(1);
-  }
+  /* Expect  STREAMING state when group is moving to streaming on the Local Sink.
+   * Because when AUDIO HAL calls SinkResume, the bidirectional stream is already in place
+   */
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSink,
+                                         UnicastMonitorModeStatus::STREAMING))
+          .Times(1);
 
   StartStreaming(AUDIO_USAGE_VOICE_COMMUNICATION, AUDIO_CONTENT_TYPE_SPEECH, group_id_1_);
 
@@ -14766,12 +14838,10 @@ TEST_F(UnicastTestHandoverModeCsis, ClearSinkMonitorModeWhileUnicastIsActive) {
                                          UnicastMonitorModeStatus::STREAMING_REQUESTED))
           .Times(0);
 
-  if (com::android::bluetooth::flags::leaudio_improve_unicast_monitor()) {
-    EXPECT_CALL(mock_audio_hal_client_callbacks_,
-                OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSink,
-                                           UnicastMonitorModeStatus::STREAMING))
-            .Times(1);
-  }
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSink,
+                                         UnicastMonitorModeStatus::STREAMING))
+          .Times(1);
 
   StartStreaming(AUDIO_USAGE_VOICE_COMMUNICATION, AUDIO_CONTENT_TYPE_SPEECH, group_id_1_);
   SyncOnMainLoop();
@@ -15004,12 +15074,10 @@ TEST_F(UnicastTestHandoverModeCsis, SetSourceMonitorModeWhileUnicastIsActive) {
               OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSource,
                                          UnicastMonitorModeStatus::STREAMING_REQUESTED))
           .Times(1);
-  if (com::android::bluetooth::flags::leaudio_improve_unicast_monitor()) {
-    EXPECT_CALL(mock_audio_hal_client_callbacks_,
-                OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSource,
-                                           UnicastMonitorModeStatus::STREAMING))
-            .Times(1);
-  }
+  EXPECT_CALL(mock_audio_hal_client_callbacks_,
+              OnUnicastMonitorModeStatus(bluetooth::le_audio::types::kLeAudioDirectionSource,
+                                         UnicastMonitorModeStatus::STREAMING))
+          .Times(1);
 
   EXPECT_CALL(*mock_le_audio_source_hal_client_, Start(_, _, _)).Times(1);
   EXPECT_CALL(*mock_le_audio_sink_hal_client_, Start(_, _, _)).Times(1);
@@ -15618,9 +15686,6 @@ TEST_F(UnicastTest, HandleConfigureStreamFailure) {
 }
 
 TEST_F(UnicastTest, OnLocalAudioSourceResumeWithInvalidGroupCancelsStreamRequest) {
-  // Enable the feature flag
-  com::android::bluetooth::flags::provider_->leaudio_cancel_stream_request_when_invalid_group(true);
-
   // 1. Setup device and group
   const RawAddress test_address0 = GetTestAddress(0);
   int group_id = test_address0.address[RawAddress::kLength - 1];
@@ -15646,44 +15711,13 @@ TEST_F(UnicastTest, OnLocalAudioSourceResumeWithInvalidGroupCancelsStreamRequest
   LocalAudioSourceResume(false, true);
 }
 
-TEST_F(UnicastTest, OnLocalAudioSourceResumeWithInvalidGroupFlagDisabledDoesNotCancel) {
-  // Disable the feature flag (default state)
-  com::android::bluetooth::flags::provider_->leaudio_cancel_stream_request_when_invalid_group(
-          false);
-
-  // 1. Setup device and group
-  const RawAddress test_address0 = GetTestAddress(0);
-  int group_id = test_address0.address[RawAddress::kLength - 1];
-  ConnectNonCsisDevice(test_address0, 1 /*conn_id*/, codec_spec_conf::kLeAudioLocationFrontLeft,
-                       codec_spec_conf::kLeAudioLocationFrontLeft);
-  SyncOnMainLoop();
-  Mock::VerifyAndClearExpectations(&mock_audio_hal_client_callbacks_);
-
-  // 2. Set group active, which acquires the HAL client
-  EXPECT_CALL(*mock_le_audio_source_hal_client_, Start(_, _, _)).Times(1);
-  EXPECT_CALL(*mock_le_audio_sink_hal_client_, Start(_, _, _)).Times(1);
-  LeAudioClient::Get()->GroupSetActive(group_id);
-  SyncOnMainLoop();
-  Mock::VerifyAndClearExpectations(mock_le_audio_source_hal_client_);
-  Mock::VerifyAndClearExpectations(mock_le_audio_sink_hal_client_);
-
-  // 3. Remove the group by injecting a callback, leaving active_group_id stale
-  InjectGroupDeviceRemoved(test_address0, group_id);
-  SyncOnMainLoop();
-
-  // 4. Expect CancelStreamingRequest to NOT be called when resuming with an
-  //    invalid group because the flag is off (confirmation=false, cancel=false)
-  LocalAudioSourceResume(false, false);
-}
-
 class UnicastTestGmap : public UnicastTest {
 protected:
   void SetUp() override {
     UnicastTest::SetUp();
-    com::android::bluetooth::flags::provider_->reset_flags();
-    com::android::bluetooth::flags::provider_->leaudio_use_context_type_manager(true);
-    com::android::bluetooth::flags::provider_->leaudio_dynamic_direction_opening(true);
-    com::android::bluetooth::flags::provider_->leaudio_game_detector(true);
+    com_android_bluetooth_flags_reset_flags();
+    set_com_android_bluetooth_flags_leaudio_game_detector(true);
+    set_com_android_bluetooth_flags_leaudio_fix_clear_cises_in_the_cig(true);
     GmapClient::UpdateGmapOffloaderSupport(true);
     GmapServer::UpdateGmapOffloaderSupport(true);
   }
@@ -15691,7 +15725,7 @@ protected:
   void TearDown() override {
     UnicastTest::TearDown();
     osi_property_set_bool(kPropGmapEnabled, false);
-    com::android::bluetooth::flags::provider_->reset_flags();
+    com_android_bluetooth_flags_reset_flags();
   }
 };
 
@@ -15699,10 +15733,9 @@ class UnicastTestGmapCsis : public UnicastTestCsis {
 protected:
   void SetUp() override {
     UnicastTestCsis::SetUp();
-    com::android::bluetooth::flags::provider_->reset_flags();
-    com::android::bluetooth::flags::provider_->leaudio_use_context_type_manager(true);
-    com::android::bluetooth::flags::provider_->leaudio_dynamic_direction_opening(true);
-    com::android::bluetooth::flags::provider_->leaudio_game_detector(true);
+    com_android_bluetooth_flags_reset_flags();
+    set_com_android_bluetooth_flags_leaudio_game_detector(true);
+    set_com_android_bluetooth_flags_leaudio_fix_clear_cises_in_the_cig(true);
     GmapClient::UpdateGmapOffloaderSupport(true);
     GmapServer::UpdateGmapOffloaderSupport(true);
   }
@@ -15710,7 +15743,7 @@ protected:
   void TearDown() override {
     UnicastTestCsis::TearDown();
     osi_property_set_bool(kPropGmapEnabled, false);
-    com::android::bluetooth::flags::provider_->reset_flags();
+    com_android_bluetooth_flags_reset_flags();
   }
 };
 
@@ -18426,6 +18459,62 @@ TEST_F(UnicastTest, testGameSonificationHandling) {
   SyncOnMainLoop();
 
   Mock::VerifyAndClearExpectations(&mock_state_machine_);
+}
+
+TEST_F(UnicastTest, testSetEnableStateFalseDuringStreaming) {
+  /* Scenario
+   * 1. Enter streaming
+   * 2. Disable LeAudio
+   * 3. Make sure GATT Client is not called
+   */
+  int group_id = 1;
+  TestSetupRemoteDevices(group_id);
+
+  auto scenario = types::LeAudioContextType::MEDIA;
+  types::BidirectionalPair<types::AudioContexts> metadata_contexts = {
+          .sink = AudioContexts(types::LeAudioContextType::MEDIA), .source = AudioContexts()};
+
+  EXPECT_CALL(mock_state_machine_, StartStream(_, scenario, metadata_contexts, _)).Times(1);
+  StartStreaming(AUDIO_USAGE_MEDIA, AUDIO_CONTENT_TYPE_MUSIC, group_id);
+  SyncOnMainLoop();
+
+  Mock::VerifyAndClearExpectations(&mock_state_machine_);
+
+  const RawAddress test_address0 = GetTestAddress(0);
+
+  EXPECT_CALL(mock_gatt_interface_, CancelOpen(_, _, _)).Times(0);
+  LeAudioClient::Get()->SetEnableState(test_address0, false);
+  Mock::VerifyAndClearExpectations(&mock_gatt_interface_);
+}
+
+TEST_F(UnicastTest, testSetEnableStateFalseDuringAutoConnect) {
+  /* Scenario
+   * 1. Enter streaming
+   * 2. Disable LeAudio
+   * 3. Make sure GATT Client is not called
+   */
+  int group_id = 1;
+  TestSetupRemoteDevices(group_id);
+
+  /* Remove default action on the direct connect */
+  ON_CALL(mock_gatt_interface_, Open(_, _, _)).WillByDefault(Return());
+
+  /* Initiate disconnection with timeout reason, the possible reason why GATT
+   * read attribute operation may be not handled
+   */
+  InjectDisconnectedEvent(1, GATT_CONN_TIMEOUT);
+  InjectDisconnectedEvent(2, GATT_CONN_TIMEOUT);
+  SyncOnMainLoop();
+
+  const RawAddress test_address0 = GetTestAddress(0);
+  const RawAddress test_address1 = GetTestAddress(1);
+
+  EXPECT_CALL(mock_gatt_interface_, CancelOpen(_, test_address0, _)).Times(1);
+  EXPECT_CALL(mock_gatt_interface_, CancelOpen(_, test_address1, _)).Times(1);
+  LeAudioClient::Get()->SetEnableState(test_address0, false);
+  LeAudioClient::Get()->SetEnableState(test_address1, false);
+
+  Mock::VerifyAndClearExpectations(&mock_gatt_interface_);
 }
 
 class UnicastDsaTest : public UnicastTest,

@@ -44,8 +44,8 @@ class DistanceMeasurementNativeCallback(
         altitudeAngle: Int,
         errorAltitudeAngle: Int,
         elapsedRealtimeNanos: Long,
-        remoteTxPower: Int,
-        reflectorRssi: Int,
+        remoteTxPowerDbm: Int,
+        rssiDbm: Int,
         confidenceLevel: Int,
         delayedSpreadMeters: Double,
         detectedAttackLevel: Int,
@@ -61,8 +61,8 @@ class DistanceMeasurementNativeCallback(
             altitudeAngle,
             errorAltitudeAngle,
             elapsedRealtimeNanos,
-            remoteTxPower,
-            reflectorRssi,
+            remoteTxPowerDbm,
+            rssiDbm,
             confidenceLevel,
             delayedSpreadMeters,
             detectedAttackLevel,
@@ -86,7 +86,9 @@ class DistanceMeasurementNativeCallback(
         }
 
     private fun postOnDistanceMeasurementThread(block: DistanceMeasurementManager.() -> Unit) =
-        manager.postOnDistanceMeasurementThread { manager.block() }
+        manager.postOnDistanceMeasurementThread {
+            manager.block()
+        }
 
     companion object {
         /**

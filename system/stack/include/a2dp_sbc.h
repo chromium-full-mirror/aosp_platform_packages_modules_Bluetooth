@@ -24,10 +24,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "a2dp_codec_api.h"
-#include "a2dp_sbc_constants.h"
-#include "avdt_api.h"
 #include "internal_include/bt_target.h"
+#include "stack/include/a2dp_codec_api.h"
+#include "stack/include/a2dp_sbc_constants.h"
+#include "stack/include/avdt_api.h"
 #include "stack/include/bt_hdr.h"
 
 class A2dpCodecConfigSbcBase : public A2dpCodecConfig {
@@ -39,6 +39,7 @@ protected:
   tA2DP_STATUS setCodecConfig(const uint8_t* p_peer_codec_info, bool is_capability,
                               uint8_t* p_result_codec_config) override;
   bool setPeerCodecCapabilities(const uint8_t* p_peer_codec_capabilities) override;
+  int getTrackBitRate() const override;
 
 private:
   bool is_source_;  // True if local is Source
@@ -214,9 +215,5 @@ bool A2DP_InitCodecConfigSbc(AvdtpSepConfig* p_cfg);
 // Initializes A2DP SBC Sink codec information into |AvdtpSepConfig|
 // configuration entry pointed by |p_cfg|.
 bool A2DP_InitCodecConfigSbcSink(AvdtpSepConfig* p_cfg);
-
-// Get SBC bitrate
-// Returns |uint32_t| bitrate value in bits per second
-uint32_t A2DP_GetBitrateSbc();
 
 #endif  // A2DP_SBC_H

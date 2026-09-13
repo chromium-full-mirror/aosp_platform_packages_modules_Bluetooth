@@ -44,7 +44,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
-import org.mockito.MockitoAnnotations
+import org.mockito.junit.MockitoJUnit
 import pandora.GattProto
 import pandora.HostProto.AdvertiseRequest
 import pandora.HostProto.OwnAddressType
@@ -53,12 +53,10 @@ import pandora.SecurityProto.PairingEventAnswer
 
 @RunWith(AndroidJUnit4::class)
 class EncryptionChangeTest {
+    @get:Rule val mockitoRule = MockitoJUnit.rule()
     @get:Rule(order = 0) val checkFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()
-
     @get:Rule(order = 1) val permissionRule = AdoptShellPermissionsRule()
-
     @get:Rule(order = 2) val bumble = PandoraDevice()
-
     @get:Rule(order = 3) val enableBluetoothRule = EnableBluetoothRule(false, true)
 
     @Mock private lateinit var profileServiceListener: BluetoothProfile.ServiceListener
@@ -69,21 +67,19 @@ class EncryptionChangeTest {
     private lateinit var util: TestUtil
     private lateinit var bumbleDevice: BluetoothDevice
 
-    private val intentListener =
-        IntentReceiver.IntentListener { intent ->
-            val action = intent.action
-            if (BluetoothDevice.ACTION_UUID == action) {
-                val uuids = intent.getParcelUuidArray(BluetoothDevice.EXTRA_UUID)
-                Log.d(TAG, "onReceive(): UUID=${uuids.contentToString()}")
-            } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED == action) {
-                val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)
-                Log.d(TAG, "onReceive(): bondState=$bondState")
-            }
+    private val intentListener = IntentReceiver.IntentListener { intent ->
+        val action = intent.action
+        if (BluetoothDevice.ACTION_UUID == action) {
+            val uuids = intent.getParcelUuidArray(BluetoothDevice.EXTRA_UUID)
+            Log.d(TAG, "onReceive(): UUID=${uuids.contentToString()}")
+        } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED == action) {
+            val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)
+            Log.d(TAG, "onReceive(): bondState=$bondState")
         }
+    }
 
     @Before
     fun setUp() {
-        MockitoAnnotations.initMocks(this)
         util =
             TestUtil.Builder(context)
                 .setProfileServiceListener(profileServiceListener)

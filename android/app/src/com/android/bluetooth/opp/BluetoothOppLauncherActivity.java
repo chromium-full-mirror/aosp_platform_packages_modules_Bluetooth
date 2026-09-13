@@ -56,9 +56,9 @@ import android.widget.Toast;
 
 import com.android.bluetooth.BluetoothMethodProxy;
 import com.android.bluetooth.R;
-import com.android.bluetooth.Utils;
-import com.android.bluetooth.btservice.MetricsLogger;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.flags.Flags;
+import com.android.bluetooth.metrics.MetricsLogger;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.io.File;
@@ -228,12 +228,8 @@ public class BluetoothOppLauncherActivity extends Activity {
                                                             permittedUris,
                                                             false /* isHandover */,
                                                             true /* fromExternal */);
-                                            if (Flags.sendOppDevicePickerExtraIntent()) {
-                                                BluetoothOppUtility
-                                                        .grantPermissionToNearbyComponent(
-                                                                BluetoothOppLauncherActivity.this,
-                                                                uris);
-                                            }
+                                            BluetoothOppUtility.grantPermissionToNearbyComponent(
+                                                    BluetoothOppLauncherActivity.this, uris);
                                             // Done getting file info..Launch device picker
                                             // and finish this activity
                                             launchDevicePicker();
@@ -262,7 +258,7 @@ public class BluetoothOppLauncherActivity extends Activity {
         } else {
             Log.w(TAG, "Unsupported action: " + action);
             // To prevent activity to finish immediately in testing mode
-            if (!Utils.isInstrumentationTestMode()) {
+            if (!Util.isInstrumentationTestMode()) {
                 finish();
             }
         }
@@ -414,11 +410,8 @@ public class BluetoothOppLauncherActivity extends Activity {
             in1.putExtra(BluetoothDevicePicker.EXTRA_LAUNCH_PACKAGE, getPackageName());
             in1.putExtra(
                     BluetoothDevicePicker.EXTRA_LAUNCH_CLASS, BluetoothOppReceiver.class.getName());
-            if (Flags.sendOppDevicePickerExtraIntent()) {
-                in1.putExtra(
-                        BluetoothDevicePicker.EXTRA_DEVICE_PICKER_ORIGINAL_SEND_INTENT,
-                        getIntent());
-            }
+            in1.putExtra(
+                    BluetoothDevicePicker.EXTRA_DEVICE_PICKER_ORIGINAL_SEND_INTENT, getIntent());
             Log.v(TAG, "Launching " + BluetoothDevicePicker.ACTION_LAUNCH);
             startActivity(in1);
         }
@@ -631,10 +624,8 @@ public class BluetoothOppLauncherActivity extends Activity {
     void sendFileInfo(String mimeType, String uriString, boolean isHandover, boolean fromExternal) {
         BluetoothOppManager manager = BluetoothOppManager.getInstance(getApplicationContext());
         try {
-            if (Flags.sendOppDevicePickerExtraIntent()) {
-                BluetoothOppUtility.grantPermissionToNearbyComponent(
-                        this, List.of(Uri.parse(uriString)));
-            }
+            BluetoothOppUtility.grantPermissionToNearbyComponent(
+                    this, List.of(Uri.parse(uriString)));
             manager.saveSendingFileInfo(mimeType, uriString, isHandover, fromExternal);
             launchDevicePicker();
             finish();

@@ -163,6 +163,14 @@ size_t read(uint8_t* p_buf, uint32_t len) {
   return aidl::a2dp::read(p_buf, len);
 }
 
+// Clear the audio FMQ.
+void flush_source() {
+  if (HalVersionManager::GetHalTransport() == BluetoothAudioHalTransport::HIDL) {
+    return hidl::a2dp::flush_source();
+  }
+  return aidl::a2dp::flush_source();
+}
+
 // Update A2DP delay report to BluetoothAudio HAL
 void set_remote_delay(uint16_t delay_report) {
   if (HalVersionManager::GetHalTransport() == BluetoothAudioHalTransport::HIDL) {
@@ -238,7 +246,7 @@ bool codec_info(btav_a2dp_codec_index_t codec_index, bluetooth::a2dp::CodecId* c
 std::optional<a2dp_configuration> get_a2dp_configuration(
         RawAddress peer_address, std::vector<a2dp_remote_capabilities> const& remote_seps,
         btav_a2dp_codec_config_t const& user_preferences,
-        ::bluetooth::a2dp::CodecId user_preferred_codec_id, bool is_source) {
+        std::optional<::bluetooth::a2dp::CodecId> user_preferred_codec_id, bool is_source) {
   return (HalVersionManager::GetHalTransport() == BluetoothAudioHalTransport::AIDL)
                  ? aidl::a2dp::provider::get_a2dp_configuration(peer_address, remote_seps,
                                                                 user_preferences,

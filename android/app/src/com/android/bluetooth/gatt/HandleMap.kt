@@ -17,7 +17,6 @@
 package com.android.bluetooth.gatt
 
 import android.util.Log
-import com.android.bluetooth.flags.Flags
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -54,9 +53,7 @@ class HandleMap {
         val serviceHandle: Int = 0,
         val charHandle: Int = 0,
         val advertisePreferred: Boolean = false,
-    ) {
-        var started = false
-    }
+    )
 
     data class RequestData(val connId: Int, val handle: Int)
 
@@ -130,19 +127,6 @@ class HandleMap {
         )
     }
 
-    fun setStarted(serverIf: Int, handle: Int, started: Boolean) {
-        for (entry in entries) {
-            if (
-                entry.type != Type.SERVICE || entry.serverIf != serverIf || entry.handle != handle
-            ) {
-                continue
-            }
-
-            entry.started = started
-            return
-        }
-    }
-
     fun getByHandle(handle: Int): Entry? {
         val entry = entries.firstOrNull { it.handle == handle }
         if (entry == null) {
@@ -151,45 +135,13 @@ class HandleMap {
         return entry
     }
 
-    fun checkServiceExists(uuid: UUID, handle: Int) =
-        entries.any { it.type == Type.SERVICE && it.handle == handle && it.uuid == uuid }
-
-    fun deleteService(serverIf: Int, serviceHandle: Int) =
-        entries.removeIf { entry ->
-            (entry.serverIf == serverIf) &&
-                (entry.handle == serviceHandle || entry.serviceHandle == serviceHandle)
-        }
-
-    /*
-     * Please do not use. Remove when flag::gatt_multi_bearer_transactions is removed
-     */
-    fun addRequest(connId: Int, requestId: Int, handle: Int) {
-        check(!Flags.gattMultiBearerTransactions()) { "Unavailable in gattMultiBearerTransactions" }
-        requestMap[requestId] = RequestData(connId, handle)
+    fun checkServiceExists(uuid: UUID, handle: Int) = entries.any {
+        it.type == Type.SERVICE && it.handle == handle && it.uuid == uuid
     }
 
-    /*
-     * Please do not use. Remove when flag::gatt_multi_bearer_transactions is removed
-     */
-    fun deleteRequest(requestId: Int) {
-        check(!Flags.gattMultiBearerTransactions()) { "Unavailable in gattMultiBearerTransactions" }
-        requestMap.remove(requestId)
-    }
-
-    /*
-     * Please do not use. Remove when flag::gatt_multi_bearer_transactions is removed
-     */
-    fun getRequestDataByRequestId(requestId: Int): RequestData? {
-        check(!Flags.gattMultiBearerTransactions()) { "Unavailable in gattMultiBearerTransactions" }
-        val data = requestMap[requestId]
-        val header = "getRequestDataByRequestId($requestId):"
-        if (data == null) {
-            Log.e(TAG, "$header Not found!")
-        } else {
-            Log.d(TAG, "$header connId=${data.connId}, handle=${data.handle}")
-        }
-
-        return data
+    fun deleteService(serverIf: Int, serviceHandle: Int) = entries.removeIf { entry ->
+        (entry.serverIf == serverIf) &&
+            (entry.handle == serviceHandle || entry.serviceHandle == serviceHandle)
     }
 
     /*
@@ -278,25 +230,16 @@ class HandleMap {
     fun dump(sb: StringBuilder) {
         sb.appendLine("  Entries: ${entries.size}")
         for (entry in entries) {
-            sb.append("      ${entry.serverIf}: [${entry.handle}] ")
+            sb.append("    ${entry.serverIf}: [${entry.handle.toString().padStart(3, ' ')}] ")
             when (entry.type) {
-                Type.SERVICE -> sb.appendLine("Service ${entry.uuid}, started ${entry.started}")
+                Type.SERVICE -> sb.appendLine("Service ${entry.uuid}")
                 Type.CHARACTERISTIC -> sb.appendLine("  Characteristic ${entry.uuid}")
                 Type.DESCRIPTOR -> sb.appendLine("    Descriptor ${entry.uuid}")
             }
         }
         sb.appendLine("  Requests: ${requestMap.size}")
-        if (Flags.gattMultiBearerTransactions()) {
-            for (context in requestContextMap.values) {
-                sb.appendLine("      $context")
-            }
-        } else {
-            for ((key, request) in requestMap) {
-                sb.appendLine(
-                    "RequestData<request_id/transaction_id: $key, conn_id: ${request.connId}" +
-                        ", handle: ${request.handle}>"
-                )
-            }
+        for (context in requestContextMap.values) {
+            sb.appendLine("      $context")
         }
     }
 

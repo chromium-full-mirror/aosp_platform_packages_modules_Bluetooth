@@ -19,6 +19,7 @@
 #include <android_bluetooth_sysprop.h>
 #include <base/functional/bind.h>
 #include <bluetooth/log.h>
+#include <bluetooth/types/string_helpers.h>
 #include <com_android_bluetooth_flags.h>
 
 #include <list>
@@ -30,12 +31,11 @@
 #include "bta/include/bta_gatt_api.h"
 #include "bta_gatt_queue.h"
 #include "ccp/ccp_types.h"
-#include "common/strings.h"
-#include "gatt_api.h"
 #include "hardware/bt_le_audio.h"
 #include "osi/include/properties.h"
-#include "stack/btm/btm_sec.h"
 #include "stack/include/bt_types.h"
+#include "stack/include/btm_client_interface.h"
+#include "stack/include/btm_sec_api.h"
 #include "stack/include/btm_status.h"
 #include "stack/include/gatt_api.h"
 
@@ -45,7 +45,7 @@ using namespace bluetooth::ccp;
 
 namespace {
 class CcpClientImpl;
-std::unique_ptr<CcpClientImpl> instance = nullptr;
+extern std::unique_ptr<CcpClientImpl> instance;
 std::mutex instance_mutex;
 
 static constexpr std::size_t kCallEntrySize = 3;
@@ -112,12 +112,12 @@ public:
       log::warn("Connect requested for already tracked device {}", address);
       return;
     }
-    if (!BTM_IsBonded(address, BT_TRANSPORT_LE)) {
+    if (!get_security_client_interface().BTM_IsBonded(address, BT_TRANSPORT_LE)) {
       log::error("Connecting {} when not bonded", address);
       callbacks_->OnConnectionState(address, ConnectionState::DISCONNECTED);
       return;
     }
-    BTA_GATTC_Open(gatt_if_, address, BTM_BLE_DIRECT_CONNECTION, true);
+    BTA_GATTC_Open(gatt_if_, address, BTM_BLE_OPPORTUNISTIC);
   }
 
   void Disconnect(const RawAddress& address) override {
@@ -175,8 +175,6 @@ public:
     log::verbose("event: {}", gatt_client_event_text(event));
 
     switch (event) {
-      case BTA_GATTC_DEREG_EVT:
-        break;
       case BTA_GATTC_OPEN_EVT:
         OnGattConnected(p_data->open);
         break;
@@ -191,7 +189,8 @@ public:
         break;
       case BTA_GATTC_ENC_CMPL_CB_EVT:
         OnEncryptionComplete(p_data->enc_cmpl.remote_bda,
-                             BTM_IsEncrypted(p_data->enc_cmpl.remote_bda, BT_TRANSPORT_LE));
+                             get_security_client_interface().BTM_IsEncrypted(
+                                     p_data->enc_cmpl.remote_bda, BT_TRANSPORT_LE));
         break;
       case BTA_GATTC_SRVC_CHG_EVT:
         OnServiceChangeEvent(p_data->service_changed.remote_bda);
@@ -235,11 +234,11 @@ private:
     }
     callbacks_->OnConnectionState(evt.remote_bda, ConnectionState::CONNECTED);
 
-    if (BTM_IsEncrypted(device->addr, BT_TRANSPORT_LE)) {
+    if (get_security_client_interface().BTM_IsEncrypted(device->addr, BT_TRANSPORT_LE)) {
       OnEncryptionComplete(device->addr, true);
     } else {
-      tBTM_STATUS result = BTM_SetEncryption(device->addr, BT_TRANSPORT_LE, nullptr, nullptr,
-                                             BTM_BLE_SEC_ENCRYPT);
+      tBTM_STATUS result = get_security_client_interface().BTM_SetEncryption(
+              device->addr, BT_TRANSPORT_LE, nullptr, nullptr, BTM_BLE_SEC_ENCRYPT);
 
       log::info("Encryption required for {}. Request result: 0x{:02x}", device->addr, result);
 
@@ -282,7 +281,7 @@ private:
       RegisterForNotifications(device);
     } else {
       log::debug("Initiating service search for {}", device->addr);
-      BTA_GATTC_ServiceSearchRequest(device->conn_id, kGenericTelephonyBearerServiceUuid);
+      BTA_GATTC_ServiceSearchRequest(device->conn_id);
     }
   }
 
@@ -294,7 +293,7 @@ private:
 
     log::info("Service changed for {}", device->addr);
     device->ClearHandles();
-    BTA_GATTC_ServiceSearchRequest(device->conn_id, kGenericTelephonyBearerServiceUuid);
+    BTA_GATTC_ServiceSearchRequest(device->conn_id);
   }
 
   void OnServiceDiscoveryDoneEvent(const RawAddress& bda) {
@@ -306,7 +305,7 @@ private:
     log::info("Service discovery done for {}", device->addr);
 
     if (!device->service_found) {
-      BTA_GATTC_ServiceSearchRequest(device->conn_id, kGenericTelephonyBearerServiceUuid);
+      BTA_GATTC_ServiceSearchRequest(device->conn_id);
     }
   }
 
@@ -829,6 +828,8 @@ private:
   tGATT_IF gatt_if_ = 0;
   std::list<std::shared_ptr<CcpDevice>> devices_;
 };
+
+std::unique_ptr<CcpClientImpl> instance = nullptr;
 
 }  // namespace
 

@@ -39,17 +39,15 @@
 #include "main/shim/entry.h"
 #include "p_256_ecc_pp.h"
 #include "smp_int.h"
-#include "stack/btm/btm_ble_sec.h"
 #include "stack/btm/btm_dev.h"
 #include "stack/btm/btm_sec.h"
 #include "stack/include/acl_api.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/btm_ble_api.h"
-#include "stack/include/btm_ble_sec_api.h"
+#include "stack/include/btm_sec_api.h"
 #include "stack/include/main_thread.h"
 
-using bluetooth::common::BindOnce;
-using bluetooth::common::OnceCallback;
+using base::BindOnce;
 using crypto_toolbox::aes_128;
 using namespace bluetooth;
 
@@ -61,7 +59,7 @@ static void smp_process_stk(tSMP_CB* p_cb, Octet16* p);
 static Octet16 smp_calculate_legacy_short_term_key(tSMP_CB* p_cb);
 static void smp_process_private_key(tSMP_CB* p_cb);
 
-static void send_ble_rand(OnceCallback<void(uint64_t)> callback);
+static void send_ble_rand(base::OnceCallback<void(uint64_t)> callback);
 
 #define SMP_PASSKEY_MASK 0x000fffff
 
@@ -180,7 +178,7 @@ static void smp_compute_csrk(uint16_t div, tSMP_CB* p_cb) {
   p_cb->div = div;
 
   log::verbose("div=0x{:x}", p_cb->div);
-  const Octet16& er = BTM_GetDeviceEncRoot();
+  const Octet16& er = get_security_client_interface().BTM_GetDeviceEncRoot();
   /* CSRK = d1(ER, DIV, 1) */
   UINT16_TO_STREAM(p, p_cb->div);
   UINT16_TO_STREAM(p, r);
@@ -197,7 +195,7 @@ void smp_generate_csrk(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
 
   log::verbose("addr:{}", p_cb->pairing_bda);
 
-  div_status = btm_get_local_div(p_cb->pairing_bda, &p_cb->div);
+  div_status = get_security_client_interface().BTM_GetLocalDiv(p_cb->pairing_bda, &p_cb->div);
   if (div_status) {
     smp_compute_csrk(p_cb->div, p_cb);
   } else {
@@ -445,9 +443,8 @@ void smp_generate_compare(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
 static void smp_process_stk(tSMP_CB* p_cb, Octet16* p) {
   smp_mask_enc_key(p_cb->loc_enc_size, p);
 
-  if (com_android_bluetooth_flags_passkey_entry_pairing_approval() &&
-      (p_cb->selected_association_model == SMP_MODEL_SEC_CONN_PASSKEY_DISP ||
-       p_cb->selected_association_model == SMP_MODEL_KEY_NOTIF)) {
+  if (p_cb->selected_association_model == SMP_MODEL_SEC_CONN_PASSKEY_DISP ||
+      p_cb->selected_association_model == SMP_MODEL_KEY_NOTIF) {
     p_cb->passkey_display_state.confirmed = true;
     p_cb->tk = *p;
     if (!p_cb->passkey_display_state.approved) {
@@ -488,7 +485,7 @@ static void smp_process_ediv(tSMP_CB* p_cb, Octet16& p) {
 static void smp_generate_y(tSMP_CB* p_cb, uint64_t rand) {
   log::verbose("addr:{}", p_cb->pairing_bda);
 
-  const Octet16& dhk = BTM_GetDeviceDHK();
+  const Octet16& dhk = get_security_client_interface().BTM_GetDeviceDHK();
 
   memcpy(p_cb->enc_rand.data(), (uint8_t*)&rand, sizeof(uint64_t));
   Octet16 rand16{};
@@ -504,7 +501,7 @@ static void smp_generate_ltk_cont(uint16_t div, tSMP_CB* p_cb) {
   p_cb->div = div;
 
   log::verbose("addr:{}", p_cb->pairing_bda);
-  const Octet16& er = BTM_GetDeviceEncRoot();
+  const Octet16& er = get_security_client_interface().BTM_GetDeviceEncRoot();
 
   /* LTK = d1(ER, DIV, 0)= e(ER, DIV)*/
   Octet16 div16{};
@@ -545,7 +542,8 @@ void smp_generate_ltk(tSMP_CB* p_cb, tSMP_INT_DATA* /* p_data */) {
     return;
   }
 
-  bool div_status = btm_get_local_div(p_cb->pairing_bda, &p_cb->div);
+  bool div_status =
+          get_security_client_interface().BTM_GetLocalDiv(p_cb->pairing_bda, &p_cb->div);
 
   if (div_status) {
     smp_generate_ltk_cont(p_cb->div, p_cb);
@@ -1009,7 +1007,8 @@ bool smp_calculate_long_term_key_from_link_key(tSMP_CB* p_cb) {
   }
 
   uint8_t br_link_key_type;
-  br_link_key_type = BTM_SecGetDeviceLinkKeyType(p_cb->pairing_bda);
+  br_link_key_type =
+          get_security_client_interface().BTM_SecGetDeviceLinkKeyType(p_cb->pairing_bda);
   if (br_link_key_type == BTM_LKEY_TYPE_IGNORE) {
     log::error("failed to retrieve BR link type");
     return false;
@@ -1052,6 +1051,6 @@ void smp_start_nonce_generation(tSMP_CB* p_cb) {
           p_cb));
 }
 
-static void send_ble_rand(OnceCallback<void(uint64_t)> callback) {
+static void send_ble_rand(base::OnceCallback<void(uint64_t)> callback) {
   bluetooth::shim::GetController()->LeRand(get_main_thread()->BindOnce(std::move(callback)));
 }

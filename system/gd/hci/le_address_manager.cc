@@ -80,11 +80,11 @@ LeAddressManager::~LeAddressManager() {
     address_rotation_non_wake_alarm_->Cancel();
     address_rotation_non_wake_alarm_.reset();
   }
-  if (address_rotation_interval_min.has_value()) {
-    address_rotation_interval_min.reset();
+  if (expected_address_rotation_interval_min.has_value()) {
+    expected_address_rotation_interval_min.reset();
   }
-  if (address_rotation_interval_max.has_value()) {
-    address_rotation_interval_max.reset();
+  if (expected_address_rotation_interval_max.has_value()) {
+    expected_address_rotation_interval_max.reset();
   }
 }
 
@@ -114,12 +114,10 @@ void LeAddressManager::SetPrivacyPolicyForInitiatorAddress(
   supports_ble_privacy_ = supports_ble_privacy;
   log::info("New policy: {}", AddressPolicyText(address_policy));
 
-  if (com_android_bluetooth_flags_nrpa_for_non_connectable_adv()) {
-    minimum_rotation_time_ = minimum_rotation_time;
-    maximum_rotation_time_ = maximum_rotation_time;
-    log::info("minimum_rotation_time_={}ms, maximum_rotation_time_={}ms",
-              minimum_rotation_time_.count(), maximum_rotation_time_.count());
-  }
+  minimum_rotation_time_ = minimum_rotation_time;
+  maximum_rotation_time_ = maximum_rotation_time;
+  log::info("minimum_rotation_time_={}ms, maximum_rotation_time_={}ms",
+            minimum_rotation_time_.count(), maximum_rotation_time_.count());
 
   switch (address_policy_) {
     case AddressPolicy::USE_PUBLIC_ADDRESS:
@@ -147,12 +145,6 @@ void LeAddressManager::SetPrivacyPolicyForInitiatorAddress(
     case AddressPolicy::USE_RESOLVABLE_ADDRESS:
       le_address_ = fixed_address;
       rotation_irk_ = rotation_irk;
-      if (!com_android_bluetooth_flags_nrpa_for_non_connectable_adv()) {
-        minimum_rotation_time_ = minimum_rotation_time;
-        maximum_rotation_time_ = maximum_rotation_time;
-        log::info("minimum_rotation_time_={}ms, maximum_rotation_time_={}ms",
-                  minimum_rotation_time_.count(), maximum_rotation_time_.count());
-      }
       if (controller_->IsRpaGenerationSupported()) {
         auto min_seconds = std::chrono::duration_cast<std::chrono::seconds>(minimum_rotation_time_);
         auto max_seconds = std::chrono::duration_cast<std::chrono::seconds>(maximum_rotation_time_);
@@ -166,8 +158,8 @@ void LeAddressManager::SetPrivacyPolicyForInitiatorAddress(
       } else {
         address_rotation_wake_alarm_ = std::make_unique<os::Alarm>(&handler_->thread(), true);
         address_rotation_non_wake_alarm_ = std::make_unique<os::Alarm>(&handler_->thread(), false);
-        set_random_address();
       }
+      set_random_address();
       break;
     case AddressPolicy::POLICY_NOT_SET:
       log::fatal("invalid parameters");
@@ -283,11 +275,11 @@ void LeAddressManager::unregister_client(LeAddressManagerCallback* callback) {
     if (address_rotation_non_wake_alarm_ != nullptr) {
       address_rotation_non_wake_alarm_->Cancel();
     }
-    if (address_rotation_interval_min.has_value()) {
-      address_rotation_interval_min.reset();
+    if (expected_address_rotation_interval_min.has_value()) {
+      expected_address_rotation_interval_min.reset();
     }
-    if (address_rotation_interval_max.has_value()) {
-      address_rotation_interval_max.reset();
+    if (expected_address_rotation_interval_max.has_value()) {
+      expected_address_rotation_interval_max.reset();
     }
     log::info("Cancelled address rotation alarm");
   }
@@ -298,12 +290,8 @@ bool LeAddressManager::UnregisterSync(LeAddressManagerCallback* callback,
   handler_->BindOnceOn(this, &LeAddressManager::unregister_client, callback)();
   std::promise<void> promise;
   auto future = promise.get_future();
-  if (com_android_bluetooth_flags_use_shared_promise_for_le_address_manager()) {
-    handler_->Post(base::BindOnce([](std::promise<void> promise) { promise.set_value(); },
-                                  std::move(promise)));
-  } else {
-    handler_->Post(base::BindOnce(&std::promise<void>::set_value, base::Unretained(&promise)));
-  }
+  handler_->Post(base::BindOnce([](std::promise<void> promise) { promise.set_value(); },
+                                std::move(promise)));
 
   return future.wait_for(timeout) == std::future_status::ready;
 }
@@ -330,9 +318,6 @@ AddressWithType LeAddressManager::NewResolvableAddress() {
 }
 
 AddressWithType LeAddressManager::NewNonResolvableAddress() {
-  if (!com_android_bluetooth_flags_nrpa_for_non_connectable_adv()) {
-    log::assert_that(RotatingAddress(), "assert failed: RotatingAddress()");
-  }
   hci::Address address = generate_nrpa();
   auto random_address = AddressWithType(address, AddressType::RANDOM_DEVICE_ADDRESS);
   return random_address;
@@ -429,14 +414,15 @@ void LeAddressManager::schedule_rotate_random_address() {
           privateAddressIntervalRange.min);
 
   auto now = std::chrono::system_clock::now();
-  if (address_rotation_interval_min.has_value()) {
-    CheckAddressRotationHappenedInExpectedTimeInterval(
-            *address_rotation_interval_min, *address_rotation_interval_max, now, client_name);
+  if (expected_address_rotation_interval_min.has_value()) {
+    CheckAddressRotationHappenedInExpectedTimeInterval(*expected_address_rotation_interval_min,
+                                                       *expected_address_rotation_interval_max, now,
+                                                       client_name);
   }
 
   // Update the expected range here.
-  address_rotation_interval_min.emplace(now + privateAddressIntervalRange.min);
-  address_rotation_interval_max.emplace(now + privateAddressIntervalRange.max);
+  expected_address_rotation_interval_min.emplace(now + privateAddressIntervalRange.min);
+  expected_address_rotation_interval_max.emplace(now + privateAddressIntervalRange.max);
 }
 
 void LeAddressManager::set_random_address() {
@@ -544,13 +530,6 @@ hci::Address LeAddressManager::generate_nrpa() {
   } while (address == public_address_);  // Address shall not be same as the public address
 
   return address;
-}
-
-std::chrono::milliseconds LeAddressManager::GetNextPrivateAddressIntervalMs() {
-  auto interval_random_part_wake_delay = maximum_rotation_time_ - minimum_rotation_time_;
-  auto random_ms =
-          std::chrono::milliseconds(os::GenerateRandom()) % (interval_random_part_wake_delay);
-  return minimum_rotation_time_ + random_ms;
 }
 
 PrivateAddressIntervalRange LeAddressManager::GetNextPrivateAddressIntervalRange(
@@ -847,6 +826,19 @@ void LeAddressManager::OnCommandComplete(bluetooth::hci::CommandCompleteView vie
 }
 
 void LeAddressManager::PrepareToRotateAddress() {
+  if (controller_->IsRpaGenerationSupported()) {
+    log::warn("Should not be called when RPA generation is supported");
+    return;
+  }
+
+  // We are rotating the address outside of what we previously scheduled.
+  // Prevent showing the warning log by removing expected time interval for the next rotation.
+  if (expected_address_rotation_interval_min.has_value()) {
+    expected_address_rotation_interval_min.reset();
+  }
+  if (expected_address_rotation_interval_max.has_value()) {
+    expected_address_rotation_interval_max.reset();
+  }
   handler_->BindOnceOn(this, &LeAddressManager::prepare_to_rotate)();
 }
 

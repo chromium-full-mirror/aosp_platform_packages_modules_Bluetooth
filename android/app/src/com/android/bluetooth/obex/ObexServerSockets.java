@@ -20,9 +20,11 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
+import android.bluetooth.State;
 import android.util.Log;
 
 import com.android.bluetooth.btservice.AdapterService;
+import com.android.bluetooth.flags.Flags;
 import com.android.obex.ResponseCodes;
 import com.android.obex.ServerSession;
 
@@ -154,8 +156,7 @@ public class ObexServerSockets {
             if (!initSocketOK) {
                 // Need to break out of this loop if BT is being turned off.
                 int state = adapter.getState();
-                if ((state != BluetoothAdapter.STATE_TURNING_ON)
-                        && (state != BluetoothAdapter.STATE_ON)) {
+                if ((state != State.TURNING_ON) && (state != State.ON)) {
                     Log.w(TAG, "initServerSockets failed as BT is (being) turned off");
                     break;
                 }
@@ -232,7 +233,7 @@ public class ObexServerSockets {
     /** Signal to the {@link IObexConnectionHandler} that an error have occurred. */
     private synchronized void onAcceptFailed() {
         shutdown(false);
-        if (mAdapterService.getState() == BluetoothAdapter.STATE_ON) {
+        if (mAdapterService.getState() == State.ON) {
             Log.d(TAG, "onAcceptFailed() calling shutdown...");
             mConHandler.onAcceptFailed();
         }
@@ -346,6 +347,10 @@ public class ObexServerSockets {
                                     new ObexRejectServer(
                                             ResponseCodes.OBEX_HTTP_UNAVAILABLE, connSocket),
                                     null);
+                            // Close the connection socket to prevent resource leaks.
+                            if (Flags.closeConnSocketOnFailure()) {
+                                connSocket.close();
+                            }
                             // now wait for a new connect
                         } else {
                             // now wait for a new connect

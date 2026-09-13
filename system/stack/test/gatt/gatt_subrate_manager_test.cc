@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #include <bluetooth/log.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -22,15 +21,13 @@
 
 #include "hci/controller_mock.h"
 #include "stack/btm/btm_int_types.h"
-#include "test/mock/mock_stack_l2cap_interface.h"
 #include "stack/gatt/gatt_int.h"
 #include "stack/l2cap/l2c_int.h"
+#include "stack/mock/mock_stack_acl.h"
+#include "stack/mock/mock_stack_l2cap_interface.h"
+#include "stack/mock/mock_stack_l2cap_utils.h"
+#include "stack/mock/mock_stack_sdp_legacy_api.h"
 #include "test/mock/mock_main_shim_entry.h"
-#include "test/mock/mock_stack_acl.h"
-#include "test/mock/mock_stack_l2cap_utils.h"
-#include "stack/btm/btm_int_types.h"
-#include "stack/sdp/internal/sdp_api.h"
-#include "test/mock/mock_stack_sdp_legacy_api.h"
 
 #define TEST_BT com::android::bluetooth::flags
 
@@ -44,6 +41,8 @@ using ::testing::SaveArg;
 using ::testing::NiceMock;
 using ::testing::Eq;
 
+RawAddress test_addr_("C0:DE:C0:DE:00:00");
+
 class GattSubrateManagerTest : public ::testing::Test {
 protected:
 void SetUp() override {
@@ -56,26 +55,35 @@ void SetUp() override {
         = [](const RawAddress& /*bd_addr*/) { return true; };
     test::mock::stack_acl::acl_peer_supports_ble_connection_subrating_host.body
         = [](const RawAddress& /*bd_addr*/) { return true; };
+    test::mock::stack_acl::acl_link_is_disconnecting.body =
+        [](const RawAddress& /*bd_addr*/, tBT_TRANSPORT /*transport*/) { return false; };
     test::mock::stack_l2cap_utils::l2cu_find_lcb_by_bd_addr.body
         = [](const RawAddress& /*bd_addr*/, tBT_TRANSPORT /* transport */)
             { return (tL2C_LCB*) malloc(sizeof(tL2C_LCB)); };
-
-    test::mock::stack_sdp_legacy::api_.handle.SDP_CreateRecord = ::SDP_CreateRecord;
-    test::mock::stack_sdp_legacy::api_.handle.SDP_AddServiceClassIdList =
-            ::SDP_AddServiceClassIdList;
-    test::mock::stack_sdp_legacy::api_.handle.SDP_AddAttribute = ::SDP_AddAttribute;
-    test::mock::stack_sdp_legacy::api_.handle.SDP_AddProtocolList = ::SDP_AddProtocolList;
-    test::mock::stack_sdp_legacy::api_.handle.SDP_AddUuidSequence = ::SDP_AddUuidSequence;
+    test::mock::stack_sdp_legacy::api_.SDP_CreateRecord = []() { return uint32_t(0x10000); };
+    test::mock::stack_sdp_legacy::api_.SDP_AddServiceClassIdList =
+            [](uint32_t /*handle*/, uint16_t /*num_services*/, uint16_t* /*p_service_uuids*/) {
+              return true;
+            };
+    test::mock::stack_sdp_legacy::api_.SDP_AddAttribute =
+            [](uint32_t /*handle*/, uint16_t /*attr_id*/, uint8_t /*attr_type*/,
+               uint32_t /*attr_len*/, uint8_t* /*p_val*/) { return true; };
+    test::mock::stack_sdp_legacy::api_.SDP_AddProtocolList =
+            [](uint32_t /*handle*/, uint16_t /*num_elem*/, tSDP_PROTOCOL_ELEM* /*p_elem_list*/) {
+              return true;
+            };
+    test::mock::stack_sdp_legacy::api_.SDP_AddUuidSequence =
+            [](uint32_t /*handle*/, uint16_t /*attr_id*/, uint16_t /*num_uuids*/,
+               uint16_t* /*p_uuids*/) { return true; };
     gatt_init();
   }
 
   void TearDown() override {
     bluetooth::hci::testing::mock_controller_.reset();
-    test::mock::stack_sdp_legacy::api_.handle = {};
+    test::mock::stack_sdp_legacy::api_ = {};
     gatt_free();
   }
 
-  RawAddress test_addr_ = {{0xC0, 0xDE, 0xC0, 0xDE, 0x00, static_cast<uint8_t>(0)}};
   tGATT_IF test_client_if_ = 10;
   testing::NiceMock<bluetooth::testing::stack::l2cap::Mock> mock_stack_l2cap_interface_;
 };
@@ -376,6 +384,28 @@ TEST_F(GattSubrateManagerTest, RegisterSubrateConfig_NoUpdateNeeded) {
     // Config map now contains both clients
     EXPECT_EQ(2,
         (int)gatt_cb.subrate_info.at(test_addr_).config_map.at(GATT_SUBRATE_MODE_HIGH).size());
+}
+
+TEST_F(GattSubrateManagerTest, RegisterSubrateConfig_AclDisconnecting) {
+    // Setup: ACL link is disconnecting
+    test::mock::stack_acl::acl_link_is_disconnecting.body =
+        [](const RawAddress& /*bd_addr*/, tBT_TRANSPORT /*transport*/) { return true; };
+
+    gatt_cb.subrate_info[test_addr_] =
+        tGATT_SUBRATE_MGR_CB{.bda = test_addr_, .state = GATT_SUBRATE_SM_IDLE};
+
+    // Action: Register a LOW mode request
+    bool success = gatt_register_subrate_config(
+        test_client_if_, test_addr_, GATT_SUBRATE_MODE_LOW);
+
+    // Verification
+    EXPECT_FALSE(success);
+    // Pending queue should be empty as the request should be rejected early
+    EXPECT_TRUE(gatt_cb.subrate_info.at(test_addr_).pending_queue.empty());
+    // Config map should not contain the client
+    EXPECT_TRUE(gatt_cb.subrate_info.at(test_addr_).config_map.empty());
+    // State should remain IDLE
+    EXPECT_EQ(GATT_SUBRATE_SM_IDLE, gatt_cb.subrate_info.at(test_addr_).state);
 }
 
 /*

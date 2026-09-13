@@ -34,11 +34,8 @@
 #include "bta/include/bta_gatt_api.h"
 #include "bta/include/bta_ras_api.h"
 #include "bta/ras/ras_types.h"
-#include "btm_ble_api_types.h"
 #include "com_android_bluetooth_flags.h"
 #include "gatt/database.h"
-#include "gatt_api.h"
-#include "gattdefs.h"
 #include "gd/hci/controller.h"
 #include "main/shim/entry.h"
 #include "osi/include/alarm.h"
@@ -46,7 +43,10 @@
 #include "stack/btm/btm_device_record.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/btm_ble_addr.h"
+#include "stack/include/btm_ble_api_types.h"
 #include "stack/include/gap_api.h"
+#include "stack/include/gatt_api.h"
+#include "stack/include/gattdefs.h"
 #include "stack/include/l2cap_interface.h"
 #include "stack/include/main_thread.h"
 
@@ -203,7 +203,7 @@ public:
                               tracker->vendor_specific_characteristics_, tracker->conn_interval_);
       return;
     }
-    BTA_GATTC_Open(gatt_if_, ble_bd_addr.bda, BTM_BLE_DIRECT_CONNECTION, true);
+    BTA_GATTC_Open(gatt_if_, ble_bd_addr.bda, BTM_BLE_OPPORTUNISTIC);
   }
 
   void SendVendorSpecificReply(
@@ -301,7 +301,7 @@ public:
             bluetooth::stack::l2cap::get_interface().L2CA_GetBleConnInterval(tracker->address_);
     log::debug("The initial conn interval {}", tracker->conn_interval_);
     log::info("Search service");
-    BTA_GATTC_ServiceSearchRequest(tracker->conn_id_, kRangingService);
+    BTA_GATTC_ServiceSearchRequest(tracker->conn_id_);
   }
 
   void OnGattDisconnected(const tBTA_GATTC_CLOSE& evt) {
@@ -939,12 +939,9 @@ public:
   void SetTimeOutAlarm(std::shared_ptr<RasTracker> tracker, uint16_t interval_ms,
                        TimeoutType timeout_type) {
     if (tracker->ranging_type_ == RangingType::REAL_TIME) {
-      if (com_android_bluetooth_flags_channel_sounding_offload() &&
-          is_ranging_hardware_offload_enabled_) {
-        log::info(
-                "Channel sounding offload is enabled and ranging type is "
-                "REAL_TIME, not setting timeout alarm for tracker address {}.",
-                tracker->address_for_cs_);
+      if (is_ranging_hardware_offload_enabled_) {
+        log::info("Ranging type is REAL_TIME, not setting timeout alarm for tracker address {}.",
+                  tracker->address_for_cs_);
         return;
       }
     }

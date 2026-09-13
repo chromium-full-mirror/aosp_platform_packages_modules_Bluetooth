@@ -2,13 +2,6 @@ package: "com.android.bluetooth.flags"
 container: "com.android.bt"
 
 flag {
-    name:"channel_sounding_offload"
-    namespace: "bluetooth"
-    description: "Add mechanism to handle channel sounding offload"
-    bug: "423421929"
-}
-
-flag {
     name: "channel_sounding_26q1_fix"
     namespace: "bluetooth"
     description: "Fix issues found in UPF and vendor-reported issues"
@@ -19,10 +12,18 @@ flag {
 }
 
 flag {
-    name: "add_rssi_and_power_in_distance_measurement_result"
+    name: "include_power_and_rssi_in_distance_measurement_result"
     namespace: "bluetooth"
-    description: "Add RSSI and power in DistanceMeasurementResult"
+    is_exported: true
+    description: "Include remote TX power and reflector RSSI in DistanceMeasurementResult"
     bug: "462311235"
+}
+
+flag {
+    name: "enforce_security_for_ranging"
+    namespace: "bluetooth"
+    description: "Makes sure that the link is encrypted with LE Secure Connections before starting distance measurement session"
+    bug: "487455955"
     metadata {
         purpose: PURPOSE_BUGFIX
     }

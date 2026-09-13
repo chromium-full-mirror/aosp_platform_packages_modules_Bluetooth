@@ -17,9 +17,14 @@
 package com.android.bluetooth.gatt;
 
 import static android.bluetooth.BluetoothDevice.TRANSPORT_BREDR;
+import static android.bluetooth.BluetoothGatt.GATT_CONNECTION_TIMEOUT;
+import static android.bluetooth.BluetoothGatt.GATT_FAILURE;
+import static android.bluetooth.BluetoothGatt.GATT_SUCCESS;
+import static android.bluetooth.BluetoothProfile.CONNECTION_POLICY_ALLOWED;
 import static android.bluetooth.BluetoothProfile.STATE_CONNECTED;
 import static android.bluetooth.BluetoothProfile.STATE_DISCONNECTED;
 
+import static com.android.bluetooth.ChangeIds.DONOT_STEAL_AUDIO_ON_GATT_CONN;
 import static com.android.bluetooth.Util.transportToString;
 import static com.android.bluetooth.Utils.callbackToApp;
 import static com.android.bluetooth.gatt.ContextMap.RemoveReason.REASON_BINDER_DIED;
@@ -38,6 +43,7 @@ import static java.util.Objects.requireNonNull;
 import static java.util.Objects.requireNonNullElseGet;
 
 import android.annotation.Nullable;
+import android.app.compat.CompatChanges;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
@@ -58,18 +64,20 @@ import android.os.Looper;
 import android.os.SystemProperties;
 import android.provider.Settings;
 import android.sysprop.BluetoothProperties;
+import android.util.ArraySet;
 import android.util.Log;
 
 import com.android.bluetooth.ActionOnDeathRecipient;
 import com.android.bluetooth.Util;
-import com.android.bluetooth.Utils;
 import com.android.bluetooth.btservice.AbstractionLayer;
 import com.android.bluetooth.btservice.AdapterService;
 import com.android.bluetooth.btservice.CompanionManager;
 import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.profile.ProfileService;
+import com.android.bluetooth.util.Text;
 import com.android.bluetooth.util.TimeProvider;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.modules.utils.build.SdkLevel;
 
 import com.google.protobuf.ByteString;
 
@@ -79,6 +87,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -105,20 +114,20 @@ public class GattService extends ProfileService {
     private static final int GATT_SUBRATE_LATENCY_INDEX = 2;
     private static final int GATT_SUBRATE_CONT_NUM_INDEX = 3;
 
-    private static final int SUBRATE_LOW_MODE_SUBRATE_MIN_DEFAULT = 2;
-    private static final int SUBRATE_LOW_MODE_SUBRATE_MAX_DEFAULT = 4;
-    private static final int SUBRATE_LOW_MODE_LATENCY_DEFAULT = 0;
-    private static final int SUBRATE_LOW_MODE_CONT_NUM_DEFAULT = 1;
+    private static final int SUBRATE_HIGH_MODE_SUBRATE_MIN_DEFAULT = 2;
+    private static final int SUBRATE_HIGH_MODE_SUBRATE_MAX_DEFAULT = 4;
+    private static final int SUBRATE_HIGH_MODE_LATENCY_DEFAULT = 0;
+    private static final int SUBRATE_HIGH_MODE_CONT_NUM_DEFAULT = 1;
 
     private static final int SUBRATE_BALANCED_MODE_SUBRATE_MIN_DEFAULT = 5;
     private static final int SUBRATE_BALANCED_MODE_SUBRATE_MAX_DEFAULT = 7;
     private static final int SUBRATE_BALANCED_MODE_LATENCY_DEFAULT = 0;
     private static final int SUBRATE_BALANCED_MODE_CONT_NUM_DEFAULT = 4;
 
-    private static final int SUBRATE_HIGH_MODE_SUBRATE_MIN_DEFAULT = 8;
-    private static final int SUBRATE_HIGH_MODE_SUBRATE_MAX_DEFAULT = 10;
-    private static final int SUBRATE_HIGH_MODE_LATENCY_DEFAULT = 0;
-    private static final int SUBRATE_HIGH_MODE_CONT_NUM_DEFAULT = 6;
+    private static final int SUBRATE_LOW_MODE_SUBRATE_MIN_DEFAULT = 8;
+    private static final int SUBRATE_LOW_MODE_SUBRATE_MAX_DEFAULT = 10;
+    private static final int SUBRATE_LOW_MODE_LATENCY_DEFAULT = 0;
+    private static final int SUBRATE_LOW_MODE_CONT_NUM_DEFAULT = 6;
 
     private static final Integer GATT_MTU_MAX = 517;
     private static final Map<String, Integer> EARLY_MTU_EXCHANGE_PACKAGES =
@@ -173,6 +182,12 @@ public class GattService extends ProfileService {
     /** HashMap used for storing RSSI cache entries */
     @VisibleForTesting final Map<String, RssiCacheEntry> mRssiCache = new HashMap<>();
 
+    /** A remote device RSSI read is requested, null if none */
+    private BluetoothDevice mPendingRssiDevice;
+
+    /** Set of clients requesting RSSI */
+    @VisibleForTesting final Set<Integer> mClientsPendingRssi = new ArraySet<>();
+
     private final CompanionDeviceManager mCompanionDeviceManager;
     private final GattServerManager mServerManager;
     private final GattNativeInterface mNativeInterface;
@@ -200,7 +215,6 @@ public class GattService extends ProfileService {
                 advertiseManagerNativeInterface,
                 distanceMeasurementNativeInterface,
                 new ContextMap<>() /* mClientMap */,
-                new ContextMap<>() /* mServerMap */,
                 new HashSet<>() /* mReliableQueue */,
                 companionDeviceManager,
                 null,
@@ -214,7 +228,6 @@ public class GattService extends ProfileService {
             AdvertiseManagerNativeInterface advertiseManagerNativeInterface,
             DistanceMeasurementNativeInterface distanceMeasurementNativeInterface,
             ContextMap<IBluetoothGattCallback> clientMap,
-            ContextMap<IBluetoothGattServerCallback> serverMap,
             Set<BluetoothDevice> reliableQueue,
             CompanionDeviceManager companionDeviceManager,
             @Nullable Looper gattLooper,
@@ -229,8 +242,7 @@ public class GattService extends ProfileService {
         Settings.Global.putInt(
                 getContentResolver(), "bluetooth_sanitized_exposure_notification_supported", 1);
 
-        mServerManager =
-                new GattServerManager(getAdapterService(), this, serverMap, mMetricsReporter);
+        mServerManager = new GattServerManager(getAdapterService(), this, mMetricsReporter);
         var nativeCallback = new GattNativeCallback(getAdapterService(), this, mServerManager);
         mNativeInterface =
                 requireNonNullElseGet(
@@ -336,6 +348,7 @@ public class GattService extends ProfileService {
                     mRestrictedHandles.clear();
                     mServerManager.cleanup();
                     mRssiCache.clear();
+                    mClientsPendingRssi.clear();
                     mReliableQueue.clear();
                     mNativeInterface.cleanup();
                     mAdvertiseManager.cleanup();
@@ -351,7 +364,7 @@ public class GattService extends ProfileService {
     @Override
     public void dump(StringBuilder sb) {
         super.dump(sb);
-        sb.append(GattUtil.dump(mAdvertiseManager, mClientMap, mServerManager).indent(2));
+        sb.append(Text.indent(GattUtil.dump(mAdvertiseManager, mClientMap, mServerManager), "  "));
     }
 
     public IBinder getBluetoothAdvertise() {
@@ -488,17 +501,31 @@ public class GattService extends ProfileService {
         if (app == null) {
             return;
         }
-        final int disconnectStatus;
-        if (status == 0x16 // HCI_ERR_CONN_CAUSE_LOCAL_HOST
-                && getAdapterService().getKeyMissingCount(device) > 0) {
-            // Native stack disconnects the link on detecting the bond loss. Native GATT would
-            // return HCI_ERR_CONN_CAUSE_LOCAL_HOST in such case, but the apps should see
-            // HCI_ERR_AUTH_FAILURE.
-            Log.d(TAG, "onDisconnected(): disconnected due to bond loss for device=" + device);
-            disconnectStatus = 0x05 /* HCI_ERR_AUTH_FAILURE */;
-        } else {
-            disconnectStatus = status;
+        switch (status) {
+            case 0x00 -> { // HCI_SUCCESS
+                status = GATT_SUCCESS;
+            }
+            case 0x08 -> { // HCI_ERR_CONNECTION_TOUT
+                if (Flags.correctGattErrorCode()) {
+                    status = GATT_CONNECTION_TIMEOUT;
+                }
+            }
+            case 0x16 -> { // HCI_ERR_CONN_CAUSE_LOCAL_HOST
+                if (getAdapterService().getKeyMissingCount(device) > 0) {
+                    Log.d(
+                            TAG,
+                            "onDisconnected(): disconnected due to bond loss for device=" + device);
+                    status = 0x05 /* HCI_ERR_AUTH_FAILURE */;
+                }
+            }
+            default -> {
+                if (Flags.correctGattErrorCode()) {
+                    Log.w(TAG, "GATT disconnected reason=" + status);
+                    status = GATT_FAILURE;
+                }
+            }
         }
+        final int disconnectStatus = status;
         callbackToApp(
                 () -> app.getCallback().onClientConnectionState(disconnectStatus, false, device));
         mMetricsReporter.logDisconnectSuccess(device, app.getUid());
@@ -815,18 +842,46 @@ public class GattService extends ProfileService {
                 ("onReadRemoteRssi(): clientIf=" + clientIf + ", device=" + device)
                         + (", rssi=" + rssi + ", status=" + statusToString(status)));
 
-        var app = mClientMap.getById(clientIf);
-        if (app == null) {
-            return;
-        }
+        if (Flags.supportMultipleReadRssi()) {
+            // TODO(b/449681465): Remove synchronized when the flag is removed.
+            synchronized (mClientsPendingRssi) {
+                if (!Objects.equals(mPendingRssiDevice, device)) {
+                    Log.w(TAG, "Getting unexpected RSSI callback. requested=" + mPendingRssiDevice);
+                }
+                mPendingRssiDevice = null;
+                if (!mClientsPendingRssi.contains(clientIf)) {
+                    return;
+                }
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.d(TAG, "onReadRemoteRssi(): Putting timestamp and rssi into cache");
+                    mRssiCache.put(
+                            device.getAddress(),
+                            new RssiCacheEntry(mTimeProvider.elapsedRealtime(), rssi));
+                }
 
-        if (Flags.readRssiThrottling() && status == BluetoothGatt.GATT_SUCCESS) {
-            Log.d(TAG, "onReadRemoteRssi(): Putting timestamp and rssi into cache");
-            mRssiCache.put(
-                    device.getAddress(), new RssiCacheEntry(mTimeProvider.elapsedRealtime(), rssi));
-        }
+                for (int client : mClientsPendingRssi) {
+                    var app = mClientMap.getById(client);
+                    if (app == null) {
+                        continue;
+                    }
+                    callbackToApp(() -> app.getCallback().onReadRemoteRssi(device, rssi, status));
+                }
+                mClientsPendingRssi.clear();
+            }
+        } else {
+            var app = mClientMap.getById(clientIf);
+            if (app == null) {
+                return;
+            }
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.d(TAG, "onReadRemoteRssi(): Putting timestamp and rssi into cache");
+                mRssiCache.put(
+                        device.getAddress(),
+                        new RssiCacheEntry(mTimeProvider.elapsedRealtime(), rssi));
+            }
 
-        callbackToApp(() -> app.getCallback().onReadRemoteRssi(device, rssi, status));
+            callbackToApp(() -> app.getCallback().onReadRemoteRssi(device, rssi, status));
+        }
     }
 
     void onConfigureMTUFromNative(int connId, int status, int mtu) {
@@ -898,8 +953,7 @@ public class GattService extends ProfileService {
         final Map<BluetoothDevice, Integer> deviceStates = new HashMap<>();
 
         // Add paired LE devices
-        final BluetoothDevice[] bondedDevices = getAdapterService().getBondedDevices();
-        for (BluetoothDevice device : bondedDevices) {
+        for (BluetoothDevice device : getAdapterService().getBondedDevices()) {
             if (getDeviceType(device) != AbstractionLayer.BT_DEVICE_TYPE_BREDR) {
                 deviceStates.put(device, STATE_DISCONNECTED);
             }
@@ -982,8 +1036,7 @@ public class GattService extends ProfileService {
                         + (" transport=" + transportToString(transport)));
         var appName = Util.appNameOrUnknown(getAdapterService(), uid);
         mClientMap.add(uid, appName, uuid, callback, transport, tag);
-        mNativeInterface.gattClientRegisterApp(
-                uuid.getLeastSignificantBits(), uuid.getMostSignificantBits(), name, eattSupport);
+        mNativeInterface.gattClientRegisterApp(uuid, name, eattSupport);
     }
 
     void unregisterClient(
@@ -1063,17 +1116,46 @@ public class GattService extends ProfileService {
         }
 
         if (transport != TRANSPORT_BREDR && isDirect && !opportunistic) {
-            String attributionTag = getLastAttributionTag(source);
-            if (packageName != null) {
-                for (Map.Entry<String, String> entry :
-                        GATT_CLIENTS_NOTIFY_TO_ADAPTER_PACKAGES.entrySet()) {
-                    if (packageName.contains(entry.getKey())
-                            && ((attributionTag != null
-                                            && attributionTag.contains(entry.getValue()))
-                                    || entry.getValue().isEmpty())) {
-                        getAdapterService().notifyDirectLeGattClientConnect(clientIf, device);
-                        break;
+            if (!Flags.gattConnSettings()) {
+                String attributionTag = getLastAttributionTag(source);
+                if (packageName != null) {
+                    for (Map.Entry<String, String> entry :
+                            GATT_CLIENTS_NOTIFY_TO_ADAPTER_PACKAGES.entrySet()) {
+                        if (packageName.contains(entry.getKey())
+                                && ((attributionTag != null
+                                                && attributionTag.contains(entry.getValue()))
+                                        || entry.getValue().isEmpty())) {
+                            getAdapterService().notifyDirectLeGattClientConnect(clientIf, device);
+                            break;
+                        }
                     }
+                }
+            } else {
+                // This logic prevents app-initiated GATT connections from hijacking an active LE
+                // Audio stream, controlled by the DONOT_STEAL_AUDIO_ON_GATT_CONN compatibility
+                // flag.
+                boolean disableLeAudio = false;
+                if (Flags.gattThread()) {
+                    disableLeAudio =
+                            CompatChanges.isChangeEnabled(
+                                            DONOT_STEAL_AUDIO_ON_GATT_CONN, source.getUid())
+                                    && SdkLevel.isAtLeastC();
+                } else {
+                    final long token = Binder.clearCallingIdentity();
+                    try {
+                        disableLeAudio =
+                                CompatChanges.isChangeEnabled(
+                                                DONOT_STEAL_AUDIO_ON_GATT_CONN, source.getUid())
+                                        && SdkLevel.isAtLeastC();
+                    } finally {
+                        Binder.restoreCallingIdentity(token);
+                    }
+                }
+                if (disableLeAudio) {
+                    // Notify gatt connection trigger from connectGatt to LeAudio so that It will
+                    // mark the device as not available for LeAudio
+                    Log.i(TAG, "clientConnect(): notifyDirectLeGattClientConnect");
+                    getAdapterService().notifyDirectLeGattClientConnect(clientIf, device);
                 }
             }
         }
@@ -1177,7 +1259,7 @@ public class GattService extends ProfileService {
         Log.d(TAG, "discoverServices(): device=" + device + ", connId=" + connId);
 
         if (connId != null) {
-            mNativeInterface.gattClientSearchService(connId, true, 0, 0);
+            mNativeInterface.gattClientSearchService(connId, true, new UUID(0, 0));
         } else {
             Log.e(TAG, "discoverServices(): No connection for " + device);
         }
@@ -1193,8 +1275,7 @@ public class GattService extends ProfileService {
         final var clientIf = clientApp.getId();
         final var connId = getFirstConnectionIdForDevice(clientIf, device);
         if (connId != null) {
-            mNativeInterface.gattClientDiscoverServiceByUuid(
-                    connId, uuid.getLeastSignificantBits(), uuid.getMostSignificantBits());
+            mNativeInterface.gattClientDiscoverServiceByUuid(connId, uuid);
         } else {
             Log.e(TAG, "discoverServiceByUuid(): No connection for " + device);
         }
@@ -1241,12 +1322,7 @@ public class GattService extends ProfileService {
         }
 
         mNativeInterface.gattClientReadUsingCharacteristicUuid(
-                connId,
-                uuid.getLeastSignificantBits(),
-                uuid.getMostSignificantBits(),
-                startHandle,
-                endHandle,
-                authReq);
+                connId, uuid, startHandle, endHandle, authReq);
     }
 
     int writeCharacteristic(
@@ -1382,16 +1458,16 @@ public class GattService extends ProfileService {
         mNativeInterface.gattClientRegisterForNotifications(clientIf, device, handle, enable);
     }
 
-    void readRemoteRssi(IBluetoothGattCallback callback, BluetoothDevice device) {
+    boolean readRemoteRssi(IBluetoothGattCallback callback, BluetoothDevice device) {
         enforceGattThread();
         var clientApp = mClientMap.getByCallbackId(callback);
         if (clientApp == null) {
             Log.w(TAG, "readRemoteRssi(" + callback + "): App not registered");
-            return;
+            return false;
         }
         final var clientIf = clientApp.getId();
         Log.d(TAG, "readRemoteRssi(): device=" + device);
-        if (Flags.readRssiThrottling() && mRssiReadThrottleMs > 0) {
+        if (mRssiReadThrottleMs > 0) {
             final var entry = mRssiCache.get(device.getAddress());
             if (entry != null
                     && (mTimeProvider.elapsedRealtime() - entry.readTimeStamp)
@@ -1403,10 +1479,28 @@ public class GattService extends ProfileService {
                                         .getCallback()
                                         .onReadRemoteRssi(
                                                 device, entry.rssi, BluetoothGatt.GATT_SUCCESS));
-                return;
+                return true;
             }
         }
-        mNativeInterface.gattClientReadRemoteRssi(clientIf, device);
+        if (Flags.supportMultipleReadRssi()) {
+            // TODO(b/449681465): Remove synchronized when the flag is removed.
+            synchronized (mClientsPendingRssi) {
+                if (mClientsPendingRssi.isEmpty()) {
+                    mPendingRssiDevice = device;
+                    mNativeInterface.gattClientReadRemoteRssi(clientIf, device);
+                }
+                // The controller is reading the RSSI of another device.
+                if (!Objects.equals(mPendingRssiDevice, device)) {
+                    Log.d(TAG, "Ignore RSSI request because it's busy.");
+                    return false;
+                } else {
+                    mClientsPendingRssi.add(clientIf);
+                }
+            }
+        } else {
+            mNativeInterface.gattClientReadRemoteRssi(clientIf, device);
+        }
+        return true;
     }
 
     void configureMTU(IBluetoothGattCallback callback, BluetoothDevice device, int mtu) {
@@ -1542,15 +1636,27 @@ public class GattService extends ProfileService {
         }
     }
 
+    private boolean shouldBlockMessaging(BluetoothDevice device) {
+        if (Flags.checkMapclientConnectionPolicyForAncs()) {
+            return getAdapterService()
+                    .getMapClientService()
+                    .map(
+                            mapClientService ->
+                                    mapClientService.getConnectionPolicy(device)
+                                            != CONNECTION_POLICY_ALLOWED)
+                    .orElse(false);
+        } else {
+            return getAdapterService().getMessageAccessPermission(device)
+                    != BluetoothDevice.ACCESS_ALLOWED;
+        }
+    }
+
     private boolean isRestrictedSrvcUuid(final UUID uuid, BluetoothDevice device) {
         return isFidoSrvcUuid(uuid)
                 || isAndroidTvRemoteSrvcUuid(uuid)
                 || isLeAudioSrvcUuid(uuid)
                 || isAndroidHeadtrackerSrvcUuid(uuid)
-                || (Flags.gattMessagingPermissions()
-                        && isAppleNotificationCenterSrvcUuid(uuid)
-                        && getAdapterService().getMessageAccessPermission(device)
-                                != BluetoothDevice.ACCESS_ALLOWED);
+                || (isAppleNotificationCenterSrvcUuid(uuid) && shouldBlockMessaging(device));
     }
 
     private int getDeviceType(BluetoothDevice device) {
@@ -1649,7 +1755,7 @@ public class GattService extends ProfileService {
     }
 
     private void forceRunSyncOnGattThread(Runnable r) {
-        if (!Flags.gattThread() || Utils.isInstrumentationTestMode()) {
+        if (!Flags.gattThread() || Util.isInstrumentationTestMode()) {
             r.run();
             return;
         }
@@ -1704,12 +1810,12 @@ public class GattService extends ProfileService {
 
     // TODO(b/377424060) Remove when "use internal APIs instead of framework APIs" is fixed
     boolean isOnGattThread() {
-        if (!Flags.gattThread() || Utils.isInstrumentationTestMode()) return false;
+        if (!Flags.gattThread() || Util.isInstrumentationTestMode()) return false;
         return mGattHandler.getLooper().isCurrentThread();
     }
 
     void enforceGattThread() {
-        if (!Flags.gattThread() || Utils.isInstrumentationTestMode()) return;
+        if (!Flags.gattThread() || Util.isInstrumentationTestMode()) return;
 
         if (!mGattHandler.getLooper().isCurrentThread()) {
             throw new IllegalStateException("Not on gatt thread");
@@ -1717,7 +1823,7 @@ public class GattService extends ProfileService {
     }
 
     private void enforceGattThreadIsNotUsed() {
-        if (!Flags.gattThread() || Utils.isInstrumentationTestMode()) return;
+        if (!Flags.gattThread() || Util.isInstrumentationTestMode()) return;
 
         if (mGattHandler.getLooper().isCurrentThread()) {
             throw new IllegalStateException("Must NOT be on gatt thread");

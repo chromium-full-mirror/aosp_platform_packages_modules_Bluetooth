@@ -338,6 +338,8 @@ size_t read(uint8_t* p_buf, uint32_t len) {
   return bytes_read;
 }
 
+void flush_source() {}
+
 // Check if OPUS codec is supported
 bool is_opus_supported() { return true; }
 
@@ -379,7 +381,8 @@ bool codec_info(btav_a2dp_codec_index_t /*codec_index*/, bluetooth::a2dp::CodecI
 std::optional<a2dp_configuration> get_a2dp_configuration(
         RawAddress /*peer_address*/, std::vector<a2dp_remote_capabilities> const& /*remote_seps*/,
         btav_a2dp_codec_config_t const& /*user_preferences*/,
-        ::bluetooth::a2dp::CodecId /* user_preferred_codec_id */, bool /* is_source */) {
+        std::optional<::bluetooth::a2dp::CodecId> /* user_preferred_codec_id */,
+        bool /* is_source */) {
   return std::nullopt;
 }
 

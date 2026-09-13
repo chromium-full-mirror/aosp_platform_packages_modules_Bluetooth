@@ -505,7 +505,6 @@ public class BluetoothOppTransfer implements BluetoothOppBatch.BluetoothOppBatch
     }
 
     private void startObexSession() {
-
         mBatch.mStatus = Constants.BATCH_STATUS_RUNNING;
 
         mCurrentShare = mBatch.getPendingShare();
@@ -743,7 +742,6 @@ public class BluetoothOppTransfer implements BluetoothOppBatch.BluetoothOppBatch
                     Log.e(TAG, "Bluetooth socket close error ", e3);
                 }
                 connectRfcommSocket();
-                return;
             }
         }
     }

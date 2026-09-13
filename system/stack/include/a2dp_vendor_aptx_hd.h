@@ -24,10 +24,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "a2dp_codec_api.h"
-#include "a2dp_vendor_aptx_hd_constants.h"
-#include "avdt_api.h"
 #include "internal_include/bt_target.h"
+#include "stack/include/a2dp_codec_api.h"
+#include "stack/include/a2dp_vendor_aptx_hd_constants.h"
+#include "stack/include/avdt_api.h"
 #include "stack/include/bt_hdr.h"
 
 class A2dpCodecConfigAptxHd : public A2dpCodecConfig {
@@ -39,6 +39,7 @@ public:
   tA2DP_STATUS setCodecConfig(const uint8_t* p_peer_codec_info, bool is_capability,
                               uint8_t* p_result_codec_config) override;
   bool setPeerCodecCapabilities(const uint8_t* p_peer_codec_capabilities) override;
+  int getTrackBitRate() const override;
 
 private:
   bool useRtpHeaderMarkerBit() const override;
@@ -88,12 +89,6 @@ int A2DP_VendorGetTrackSampleRateAptxHd(const uint8_t* p_codec_info);
 // Returns the track bits per sample on success, or -1 if |p_codec_info|
 // contains invalid codec information.
 int A2DP_VendorGetTrackBitsPerSampleAptxHd(const uint8_t* p_codec_info);
-
-// Gets the track bitrate value for the A2DP aptX-HD codec.
-// |p_codec_info| is a pointer to the aptX-HD codec_info to decode.
-// Returns the track sample rate on success, or -1 if |p_codec_info|
-// contains invalid codec information.
-int A2DP_VendorGetBitRateAptxHd(const uint8_t* p_codec_info);
 
 // Gets the channel count for the A2DP aptX-HD codec.
 // |p_codec_info| is a pointer to the aptX-HD codec_info to decode.

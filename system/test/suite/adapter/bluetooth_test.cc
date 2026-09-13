@@ -26,6 +26,7 @@
 #include <mutex>
 
 #include "osi/include/allocator.h"
+#include "osi/include/wakelock.h"
 
 extern bt_interface_t bluetoothInterface;
 
@@ -101,7 +102,7 @@ static bt_callbacks_t callbacks = {
 };
 
 void BluetoothTest::SetUp() {
-  com::android::bluetooth::flags::provider_->reset_flags();
+  com_android_bluetooth_flags_reset_flags();
   android::ProcessState::self()->startThreadPool();
   state_ = BT_STATE_OFF;
   properties_changed_count_ = 0;
@@ -115,12 +116,12 @@ void BluetoothTest::SetUp() {
   remove("/data/misc/bluedroid/bt_config.conf.encrypted-checksum");
 
   instance = this;
-  int status = bluetoothInterface.init(&callbacks, false, false, 0, false, "default");
-  ASSERT_EQ(status, BT_STATUS_SUCCESS);
+  bluetooth_init(&callbacks, false, false, 0, false, "default", nullptr, false);
+  wakelock_set_os_callouts(nullptr);  // To force using 'native' wakelock in tests
 }
 
 void BluetoothTest::TearDown() {
-  bluetoothInterface.cleanup();
+  bluetooth_cleanup();
   instance = nullptr;
 }
 

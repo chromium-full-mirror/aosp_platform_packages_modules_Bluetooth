@@ -16,7 +16,7 @@
 
 // Stubbed non-standard codec.
 
-#include "a2dp_vendor_ldac.h"
+#include "stack/include/a2dp_vendor_ldac.h"
 
 bool A2DP_IsCodecValidLdac(const uint8_t* p_codec_info) { return false; }
 
@@ -34,8 +34,6 @@ bool A2DP_VendorCodecEqualsLdac(const uint8_t* p_codec_info_a,
                                 const uint8_t* p_codec_info_b) {
   return false;
 }
-
-int A2DP_VendorGetBitRateLdac(const uint8_t* p_codec_info) { return -1; }
 
 int A2DP_VendorGetTrackSampleRateLdac(const uint8_t* p_codec_info) { return -1; }
 

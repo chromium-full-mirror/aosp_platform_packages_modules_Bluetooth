@@ -18,7 +18,7 @@
 
 #include <cstdint>
 
-#include "a2dp_vendor_aptx.h"
+#include "stack/include/a2dp_vendor_aptx.h"
 
 bool A2DP_IsCodecValidAptx(const uint8_t* p_codec_info) { return false; }
 
@@ -33,8 +33,6 @@ bool A2DP_VendorCodecTypeEqualsAptx(const uint8_t* p_codec_info_a, const uint8_t
 bool A2DP_VendorCodecEqualsAptx(const uint8_t* p_codec_info_a, const uint8_t* p_codec_info_b) {
   return false;
 }
-
-int A2DP_VendorGetBitRateAptx(const uint8_t* p_codec_info) { return -1; }
 
 int A2DP_VendorGetTrackSampleRateAptx(const uint8_t* p_codec_info) { return -1; }
 

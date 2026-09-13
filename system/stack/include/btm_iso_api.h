@@ -20,7 +20,6 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include "btm_iso_api_types.h"
@@ -34,10 +33,11 @@ public:
   virtual ~CigCallbacks() = default;
   virtual void OnSetupIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t cig_id) = 0;
   virtual void OnRemoveIsoDataPath(uint8_t status, uint16_t conn_handle, uint8_t cig_id) = 0;
-  virtual void OnIsoLinkQualityRead(uint8_t conn_handle, uint8_t cig_id, uint32_t txUnackedPackets,
-                                    uint32_t txFlushedPackets, uint32_t txLastSubeventPackets,
-                                    uint32_t retransmittedPackets, uint32_t crcErrorPackets,
-                                    uint32_t rxUnreceivedPackets, uint32_t duplicatePackets) = 0;
+  virtual void OnIsoLinkQualityRead(uint16_t conn_handle, uint8_t cig_id,
+                                    uint32_t tx_unacked_packets, uint32_t tx_flushed_packets,
+                                    uint32_t tx_last_subevent_packets,
+                                    uint32_t retransmitted_packets, uint32_t crc_error_packets,
+                                    uint32_t rx_unreceived_packets, uint32_t duplicate_packets) = 0;
 
   virtual void OnCisEvent(uint8_t event, void* data) = 0;
   virtual void OnCigEvent(uint8_t event, void* data) = 0;
@@ -253,6 +253,56 @@ public:
    */
   virtual void SetBigChannelMapClassificationByConnHandles(uint8_t action, uint8_t big_handle,
                                                            const std::vector<uint16_t>& handles);
+
+  /**
+   * Expects incoming CIS events for a specific client, pseudo address, CIG ID, and CIS ID.
+   * This function registers a listener for incoming CIS connections that match the provided
+   * criteria. Any CIS request without a listener registered for it, will automatically be
+   * rejected by the stack.
+   * Note: The listener is persistent and will remain active until explicitly
+   *       removed by calling `RemoveIncomingCisEventsListener()`. Registration
+   *       may fail if another client has already registered for the same CIS
+   *       from the same device.
+   *
+   * @param client_handle The handle of the client expecting the events.
+   * @param pseudo_address The pseudo address of the peer device.
+   * @param cig_id The Connected Isochronous Group (CIG) ID.
+   * @param cis_id The Connected Isochronous Stream (CIS) ID.
+   * @return True if the listener was successfully added, false otherwise.
+   */
+  virtual bool AddIncomingCisEventsListener(iso_manager::IsoClientHandle client_handle,
+                                            const RawAddress& pseudo_address, uint8_t cig_id,
+                                            uint8_t cis_id);
+
+  /**
+   * Cancels the expectation of incoming CIS events for a specific client, pseudo address, CIG ID,
+   * and CIS ID. This function unregisters a previously registered listener for incoming CIS
+   * connections.
+   * Note: After unregistering, no further events for this CIS will be routed
+   *       to the client. The client cannot unregister the event listener for a
+   *       connected CIS. The CIS must be disconnected before unregistering.
+   *
+   * @param client_handle The handle of the client that registered the expectation.
+   * @param pseudo_address The pseudo address of the peer device.
+   * @param cig_id The Connected Isochronous Group (CIG) ID.
+   * @param cis_id The Connected Isochronous Stream (CIS) ID.
+   */
+  virtual void RemoveIncomingCisEventsListener(iso_manager::IsoClientHandle client_handle,
+                                               const RawAddress& pseudo_address, uint8_t cig_id,
+                                               uint8_t cis_id);
+
+  /**
+   * Accepts an incoming CIS connection.
+   * @param conn_handle The connection handle of the incoming CIS.
+   */
+  virtual void AcceptIncomingCisConnection(uint16_t conn_handle);
+
+  /**
+   * Rejects an incoming CIS connection.
+   * @param conn_handle The connection handle of the incoming CIS.
+   * @param reason The reason for rejecting the connection.
+   */
+  virtual void RejectIncomingCisConnection(uint16_t conn_handle, uint8_t reason);
 
   /**
    * Starts the IsoManager module

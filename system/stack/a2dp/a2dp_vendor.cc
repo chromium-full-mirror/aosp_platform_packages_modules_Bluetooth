@@ -20,26 +20,26 @@
 
 #define LOG_TAG "bluetooth-a2dp"
 
-#include "a2dp_vendor.h"
+#include "stack/include/a2dp_vendor.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 
-#include "a2dp_codec_api.h"
-#include "a2dp_constants.h"
-#include "a2dp_vendor_aptx.h"
-#include "a2dp_vendor_aptx_constants.h"
-#include "a2dp_vendor_aptx_hd.h"
-#include "a2dp_vendor_aptx_hd_constants.h"
-#include "a2dp_vendor_ldac.h"
-#include "a2dp_vendor_ldac_constants.h"
-#include "a2dp_vendor_lhdcv5.h"
-#include "a2dp_vendor_lhdcv5_constants.h"
-#include "a2dp_vendor_opus.h"
-#include "a2dp_vendor_opus_constants.h"
-#include "avdt_api.h"
 #include "hardware/bt_av.h"
+#include "stack/include/a2dp_codec_api.h"
+#include "stack/include/a2dp_constants.h"
+#include "stack/include/a2dp_vendor_aptx.h"
+#include "stack/include/a2dp_vendor_aptx_constants.h"
+#include "stack/include/a2dp_vendor_aptx_hd.h"
+#include "stack/include/a2dp_vendor_aptx_hd_constants.h"
+#include "stack/include/a2dp_vendor_ldac.h"
+#include "stack/include/a2dp_vendor_ldac_constants.h"
+#include "stack/include/a2dp_vendor_lhdcv5.h"
+#include "stack/include/a2dp_vendor_lhdcv5_constants.h"
+#include "stack/include/a2dp_vendor_opus.h"
+#include "stack/include/a2dp_vendor_opus_constants.h"
+#include "stack/include/avdt_api.h"
 #include "stack/include/bt_hdr.h"
 
 bool A2DP_IsVendorSourceCodecValid(const uint8_t* p_codec_info) {
@@ -229,35 +229,6 @@ bool A2DP_VendorCodecTypeEquals(const uint8_t* p_codec_info_a, const uint8_t* p_
   // vendor-specific data stored in "p_codec_info_a" and "p_codec_info_b".
 
   return true;
-}
-
-int A2DP_VendorGetBitRate(const uint8_t* p_codec_info) {
-  uint32_t vendor_id = A2DP_VendorCodecGetVendorId(p_codec_info);
-  uint16_t codec_id = A2DP_VendorCodecGetCodecId(p_codec_info);
-
-  // Check for aptX
-  if (vendor_id == A2DP_APTX_VENDOR_ID && codec_id == A2DP_APTX_CODEC_ID_BLUETOOTH) {
-    return A2DP_VendorGetBitRateAptx(p_codec_info);
-  }
-
-  // Check for aptX-HD
-  if (vendor_id == A2DP_APTX_HD_VENDOR_ID && codec_id == A2DP_APTX_HD_CODEC_ID_BLUETOOTH) {
-    return A2DP_VendorGetBitRateAptxHd(p_codec_info);
-  }
-
-  // Check for LDAC
-  if (vendor_id == A2DP_LDAC_VENDOR_ID && codec_id == A2DP_LDAC_CODEC_ID) {
-    return A2DP_VendorGetBitRateLdac(p_codec_info);
-  }
-
-  // Check for Opus
-  if (vendor_id == A2DP_OPUS_VENDOR_ID && codec_id == A2DP_OPUS_CODEC_ID) {
-    return A2DP_VendorGetBitRateOpus(p_codec_info);
-  }
-
-  // Add checks based on <vendor_id, codec_id>
-
-  return -1;
 }
 
 int A2DP_VendorGetSinkTrackChannelType(const uint8_t* p_codec_info) {

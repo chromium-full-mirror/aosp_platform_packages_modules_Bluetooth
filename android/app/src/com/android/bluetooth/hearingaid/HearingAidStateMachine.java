@@ -55,11 +55,9 @@ import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
 import android.os.Looper;
 import android.os.Message;
-import android.os.UserHandle;
 import android.util.Log;
 
-import com.android.bluetooth.Utils;
-import com.android.bluetooth.flags.Flags;
+import com.android.bluetooth.Util;
 import com.android.bluetooth.profile.ProfileService;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.State;
@@ -117,6 +115,12 @@ final class HearingAidStateMachine extends StateMachine {
 
     public void doQuit() {
         log("doQuit for device " + mDevice);
+        if (mConnectionState != STATE_DISCONNECTED && mLastConnectionState != -1) {
+            // Broadcast CONNECTION_STATE_CHANGED when state machine is turned off while
+            // the device is connected
+            mLastConnectionState = mConnectionState;
+            broadcastConnectionState(STATE_DISCONNECTED);
+        }
         quitNow();
     }
 
@@ -465,12 +469,7 @@ final class HearingAidStateMachine extends StateMachine {
         intent.addFlags(
                 Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT
                         | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
-        if (Flags.onlyBroadcastToLocalUser()) {
-            mService.sendBroadcast(intent, BLUETOOTH_CONNECT, Utils.getTempBroadcastBundle());
-        } else {
-            mService.sendBroadcastAsUser(
-                    intent, UserHandle.ALL, BLUETOOTH_CONNECT, Utils.getTempBroadcastBundle());
-        }
+        mService.sendBroadcast(intent, BLUETOOTH_CONNECT, Util.getTempBroadcastBundle());
     }
 
     private static String messageWhatToString(int what) {

@@ -21,9 +21,9 @@
 #ifndef A2DP_VENDOR_OPUS_H
 #define A2DP_VENDOR_OPUS_H
 
-#include "a2dp_codec_api.h"
-#include "a2dp_vendor_opus_constants.h"
-#include "avdt_api.h"
+#include "stack/include/a2dp_codec_api.h"
+#include "stack/include/a2dp_vendor_opus_constants.h"
+#include "stack/include/avdt_api.h"
 
 class A2dpCodecConfigOpusBase : public A2dpCodecConfig {
 protected:
@@ -34,6 +34,7 @@ protected:
   tA2DP_STATUS setCodecConfig(const uint8_t* p_peer_codec_info, bool is_capability,
                               uint8_t* p_result_codec_config) override;
   bool setPeerCodecCapabilities(const uint8_t* p_peer_codec_capabilities) override;
+  int getTrackBitRate() const override;
 
 private:
   [[maybe_unused]] bool is_source_;  // True if local is Source

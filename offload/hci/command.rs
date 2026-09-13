@@ -48,6 +48,8 @@ pub enum Command {
 pub enum ReturnParameters {
     /// 7.3.2 Reset Command
     Reset(ResetComplete),
+    /// 7.4.5 Read Buffer Size
+    ReadBufferSize(ReadBufferSizeComplete),
     /// 7.8.2 LE Read Buffer Size [V1]
     LeReadBufferSizeV1(LeReadBufferSizeV1Complete),
     /// 7.8.2 LE Read Buffer Size [V2]
@@ -186,6 +188,37 @@ fn test_reset_complete() {
     let Ok(Event::CommandComplete(e)) = Event::from_bytes(&dump) else { panic!() };
     let ReturnParameters::Reset(ref p) = e.return_parameters else { panic!() };
     assert_eq!(p.status, Status::Success);
+    assert_eq!(e.to_bytes(), &dump[..]);
+}
+
+// 7.4.5 Read Buffer Size
+
+impl CommandOpCode for ReadBufferSize {
+    const OPCODE: OpCode = OpCode::from(0x04, 0x0005);
+}
+
+#[derive(Debug)]
+pub struct ReadBufferSize;
+
+#[derive(Debug, Read, Write)]
+pub struct ReadBufferSizeComplete {
+    pub status: Status,
+    pub acl_data_packet_length: u16,
+    pub synchronous_data_packet_length: u8,
+    pub total_num_acl_data_packets: u16,
+    pub total_num_synchronous_data_packets: u16,
+}
+
+#[test]
+fn test_read_buffer_size_complete() {
+    let dump = [0x0e, 0x0b, 0x01, 0x05, 0x10, 0x00, 0xff, 0x03, 0xff, 0x0a, 0x00, 0x0a, 0x00];
+    let Ok(Event::CommandComplete(e)) = Event::from_bytes(&dump) else { panic!() };
+    let ReturnParameters::ReadBufferSize(ref p) = e.return_parameters else { panic!() };
+    assert_eq!(p.status, Status::Success);
+    assert_eq!(p.acl_data_packet_length, 1023);
+    assert_eq!(p.synchronous_data_packet_length, 255);
+    assert_eq!(p.total_num_acl_data_packets, 10);
+    assert_eq!(p.total_num_synchronous_data_packets, 10);
     assert_eq!(e.to_bytes(), &dump[..]);
 }
 
@@ -553,7 +586,7 @@ impl CommandOpCode for LeGetVendorCapabilities {
 #[derive(Debug, Read, Write, CommandToBytes)]
 pub struct LeGetVendorCapabilities {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LeGetVendorCapabilitiesComplete {
     pub status: Status,
     pub max_advt_instances: u8,
@@ -573,6 +606,10 @@ pub struct LeGetVendorCapabilitiesComplete {
     pub dynamic_audio_buffer_support: Option<u32>,
     pub a2dp_offload_v2_support: Option<u8>,
     pub iso_link_feedback_support: Option<u8>,
+    pub sniff_offload_support: Option<u8>,
+    pub big_set_channel_map_classification_support: Option<u16>,
+    pub vendor_connection_handle_min: Option<u16>,
+    pub vendor_connection_handle_max: Option<u16>,
 }
 
 impl Read for LeGetVendorCapabilitiesComplete {
@@ -596,6 +633,10 @@ impl Read for LeGetVendorCapabilitiesComplete {
             dynamic_audio_buffer_support: r.read_u32::<4>(),
             a2dp_offload_v2_support: r.read_u8(),
             iso_link_feedback_support: r.read_u8(),
+            sniff_offload_support: r.read_u8(),
+            big_set_channel_map_classification_support: r.read_u16(),
+            vendor_connection_handle_min: r.read_u16(),
+            vendor_connection_handle_max: r.read_u16(),
         })
     }
 }
@@ -610,7 +651,7 @@ impl Write for LeGetVendorCapabilitiesComplete {
         w.write_u8(self.filtering_support);
         w.write_u8(self.max_filter);
         w.write_u8(self.activity_energy_info_support);
-        w.write_u16(self.version_supported.unwrap_or(0x0105));
+        w.write_u16(self.version_supported.unwrap_or(0));
         w.write_u16(self.total_num_of_advt_tracked.unwrap_or(0));
         w.write_u8(self.extended_scan_support.unwrap_or(0));
         w.write_u8(self.debug_logging_supported.unwrap_or(0));
@@ -620,6 +661,10 @@ impl Write for LeGetVendorCapabilitiesComplete {
         w.write_u32::<4>(self.dynamic_audio_buffer_support.unwrap_or(0));
         w.write_u8(self.a2dp_offload_v2_support.unwrap_or(0));
         w.write_u8(self.iso_link_feedback_support.unwrap_or(0));
+        w.write_u8(self.sniff_offload_support.unwrap_or(0));
+        w.write_u16(self.big_set_channel_map_classification_support.unwrap_or(0));
+        w.write_u16(self.vendor_connection_handle_min.unwrap_or(0));
+        w.write_u16(self.vendor_connection_handle_max.unwrap_or(0));
     }
 }
 
@@ -633,29 +678,56 @@ fn test_le_get_vendor_capabilities() {
 #[test]
 fn test_le_get_vendor_capabilities_complete() {
     let dump = [
-        0x0e, 0x1e, 0x01, 0x53, 0xfd, 0x00, 0x01, 0x01, 0x00, 0x28, 0x00, 0x01, 0x39, 0x01, 0x05,
-        0x01, 0x14, 0x00, 0x01, 0x01, 0x00, 0x23, 0x00, 0x00, 0x00, 0x01, 0x23, 0x00, 0x00, 0x00,
-        0x00, 0x01,
+        0xe,  /* command complete */
+        0x25, /* len */
+        0x1,  /* num_hci_command_packets */
+        0x53, 0xfd, /* opcode */
+        0x0,  /* status */
+        0x1,  /* max_advt_instances */
+        0x1,  /* offloaded_resolution_of_private_address */
+        0x0, 0x0,  /* total_scan_results_storage */
+        0x10, /* max_irk_list_sz */
+        0x1,  /* filtering_support */
+        0x10, /* max_filter */
+        0x0,  /* activity_energy_info_support */
+        0x6, 0x1, /* version_supported */
+        0x10, 0x0, /* total_num_of_advt_tracked */
+        0x0, /* extended_scan_support */
+        0x0, /* debug_logging_supported */
+        0x0, /* le_address_generation_offloading_support */
+        0x0, 0x0, 0x0, 0x0, /* a2dp_source_offload_capability_mask */
+        0x1, /* bluetooth_quality_report_support */
+        0x0, 0x0, 0x0, 0x0, /* dynamic_audio_buffer_support */
+        0x1, /* a2dp_offload_v2_support */
+        0x0, /* iso_link_feedback_support */
+        0x0, /* sniff_offload_support */
+        0x0, 0x0, /* big_set_channel_map_classification_support */
+        0x0, 0x3, /* vendor_connection_handle_min */
+        0xff, 0x3, /* vendor_connection_handle_max */
     ];
     let Ok(Event::CommandComplete(e)) = Event::from_bytes(&dump) else { panic!() };
     let ReturnParameters::LeGetVendorCapabilities(ref p) = e.return_parameters else { panic!() };
     assert_eq!(p.max_advt_instances, 1);
     assert_eq!(p.offloaded_resolution_of_private_address, 1);
-    assert_eq!(p.total_scan_results_storage, 10240);
-    assert_eq!(p.max_irk_list_sz, 0);
+    assert_eq!(p.total_scan_results_storage, 0);
+    assert_eq!(p.max_irk_list_sz, 16);
     assert_eq!(p.filtering_support, 1);
-    assert_eq!(p.max_filter, 57);
-    assert_eq!(p.activity_energy_info_support, 1);
-    assert_eq!(p.version_supported, Some(0x0105));
-    assert_eq!(p.total_num_of_advt_tracked, Some(20));
-    assert_eq!(p.extended_scan_support, Some(1));
-    assert_eq!(p.debug_logging_supported, Some(1));
+    assert_eq!(p.max_filter, 16);
+    assert_eq!(p.activity_energy_info_support, 0);
+    assert_eq!(p.version_supported, Some(0x0106));
+    assert_eq!(p.total_num_of_advt_tracked, Some(16));
+    assert_eq!(p.extended_scan_support, Some(0));
+    assert_eq!(p.debug_logging_supported, Some(0));
     assert_eq!(p.le_address_generation_offloading_support, Some(0));
-    assert_eq!(p.a2dp_source_offload_capability_mask, Some(0x23));
+    assert_eq!(p.a2dp_source_offload_capability_mask, Some(0x00000000));
     assert_eq!(p.bluetooth_quality_report_support, Some(1));
-    assert_eq!(p.dynamic_audio_buffer_support, Some(0x23));
-    assert_eq!(p.a2dp_offload_v2_support, Some(0));
-    assert_eq!(p.iso_link_feedback_support, Some(1));
+    assert_eq!(p.dynamic_audio_buffer_support, Some(0x00000000));
+    assert_eq!(p.a2dp_offload_v2_support, Some(1));
+    assert_eq!(p.iso_link_feedback_support, Some(0));
+    assert_eq!(p.sniff_offload_support, Some(0));
+    assert_eq!(p.big_set_channel_map_classification_support, Some(0x0000));
+    assert_eq!(p.vendor_connection_handle_min, Some(0x0300));
+    assert_eq!(p.vendor_connection_handle_max, Some(0x03ff));
     assert_eq!(e.to_bytes(), &dump[..]);
 }
 
@@ -670,8 +742,15 @@ pub enum A2dpHardwareOffload {
 
 #[derive(Debug, Read, Write)]
 pub struct A2dpHardwareOffloadComplete {
-    status: Status,
-    sub_opcode: u8,
+    pub status: Status,
+    pub sub_opcode: u8,
+}
+
+impl A2dpHardwareOffloadComplete {
+    /// Creates a new `A2dpHardwareOffloadComplete` event.
+    pub fn new(status: Status, sub_opcode: u8) -> Self {
+        Self { status, sub_opcode }
+    }
 }
 
 impl CommandOpCode for A2dpHardwareOffload {
@@ -720,19 +799,33 @@ pub struct StartA2dpOffload {
 
 impl StartA2dpOffload {
     const OPCODE: u8 = 0x03;
+
+    /// Returns the opcode of the command.
+    pub fn opcode(&self) -> u8 {
+        Self::OPCODE
+    }
 }
 
 #[derive(Debug, Read, Write)]
-pub struct StopA2dpOffload {}
+pub struct StopA2dpOffload {
+    pub connection_handle: u16,
+    pub l2cap_channel_id: u16,
+    pub data_path_direction: u8,
+}
 
 impl StopA2dpOffload {
     const OPCODE: u8 = 0x04;
+
+    /// Returns the opcode of the command.
+    pub fn opcode(&self) -> u8 {
+        Self::OPCODE
+    }
 }
 
 #[test]
 fn test_start_a2dp_offload() {
     let dump = [
-        0x5d, 0xfd, 14, 0x03, 0x23, 0x01, 0x67, 0x45, 0x00, 0x00, 0x01, 0x00, 0x42, 0x03, 0x01,
+        0x5d, 0xfd, 0x0e, 0x03, 0x23, 0x01, 0x67, 0x45, 0x00, 0x00, 0x01, 0x00, 0x42, 0x03, 0x01,
         0x02, 0x03,
     ];
     let Ok(Command::A2dpHardwareOffload(A2dpHardwareOffload::StartA2dpOffload(c))) =
@@ -762,12 +855,15 @@ fn test_start_a2dp_complete() {
 
 #[test]
 fn test_stop_a2dp_offload() {
-    let dump = [0x5d, 0xfd, 1, 0x04];
+    let dump = [0x5d, 0xfd, 0x06, 0x04, 0x23, 0x01, 0x67, 0x45, 0x00];
     let Ok(Command::A2dpHardwareOffload(A2dpHardwareOffload::StopA2dpOffload(c))) =
         Command::from_bytes(&dump)
     else {
         panic!()
     };
+    assert_eq!(c.connection_handle, 0x0123);
+    assert_eq!(c.l2cap_channel_id, 0x4567);
+    assert_eq!(c.data_path_direction, 0);
     assert_eq!(A2dpHardwareOffload::StopA2dpOffload(c).to_bytes(), &dump[..]);
 }
 

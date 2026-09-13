@@ -26,13 +26,13 @@
 
 #include "../le_audio_types.h"
 #include "broadcast_configuration_provider.h"
-#include "btm_iso_api.h"
-#include "btm_iso_api_types.h"
 #include "mock_codec_manager.h"
 #include "stack/include/btm_ble_api_types.h"
+#include "stack/include/btm_iso_api.h"
+#include "stack/include/btm_iso_api_types.h"
+#include "stack/mock/mock_stack_btm_iso.h"
 #include "test/common/mock_functions.h"
 #include "test/mock/mock_main_shim_le_advertising_manager.h"
-#include "test/mock/mock_stack_btm_iso.h"
 
 #define TEST_BT com::android::bluetooth::flags
 
@@ -158,8 +158,7 @@ protected:
             .WillByDefault(
                     [](uint8_t /*inst_id*/, ::BleAdvertiserInterface::GetAddressCallback cb) {
                       uint8_t address_type = 0x02;
-                      RawAddress address({0x11, 0x22, 0x33, 0x44, 0x55, 0x66});
-                      cb.Run(address_type, address);
+                      std::move(cb).Run(address_type, "11:22:33:44:55:66");
                     });
 
     ON_CALL(*mock_ble_advertising_manager_, SetData)
@@ -322,7 +321,7 @@ protected:
   }
 
   void TearDown() override {
-    com::android::bluetooth::flags::provider_->reset_flags();
+    com_android_bluetooth_flags_reset_flags();
     iso_manager_->Stop();
     mock_iso_manager_ = nullptr;
     Mock::VerifyAndClearExpectations(sm_callbacks_.get());
@@ -1170,9 +1169,6 @@ TEST_F(StateMachineTest, GetMetadataBeforeGettingAddress) {
 }
 
 TEST_F(StateMachineTest, ConfigureDataPathBeforeSetIsoDataPath) {
-  com::android::bluetooth::flags::
-        provider_->leaudio_broadcast_config_data_path_before_set_iso_data_path(true);
-
   EXPECT_CALL(*(sm_callbacks_.get()), OnStateMachineCreateStatus(_, true)).Times(1);
 
   auto sound_context = bluetooth::le_audio::types::LeAudioContextType::MEDIA;

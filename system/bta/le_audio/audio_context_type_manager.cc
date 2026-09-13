@@ -17,13 +17,13 @@
 #include "audio_context_type_manager.h"
 
 #include <bluetooth/log.h>
+#include <bluetooth/types/string_helpers.h>
 #include <hardware/bluetooth.h>
 
 #include <mutex>
 #include <utility>
 #include <vector>
 
-#include "common/strings.h"
 #include "le_audio_utils.h"
 
 using bluetooth::common::ToString;
@@ -88,7 +88,7 @@ public:
       if (bluetooth::le_audio::types::kLeAudioContextAllBidir.test(context_type)) {
         /* Some of the bidirectional context needs to be allowed also by Audio Framework */
         if (!isBidirectionalControlledByAudioFramework(context_type) ||
-            isMetadataTagPresent(entry.tags, "VX_AOSP_bidirectional")) {
+            isMetadataTagPresent(entry.tags, "VX_AOSP_BIDIRECTIONAL")) {
           local_encoding_contexts_types_.sink.set(context_type);
         }
       }
@@ -264,7 +264,7 @@ public:
     }
 
     log::info(
-            "IsInCall: {}, IsInVoip: {}, InInGame: {}, local_encoding_contexts_types_.source: {}, "
+            "IsInCall: {}, IsInVoip: {}, IsInGame: {}, local_encoding_contexts_types_.source: {}, "
             "local_encoding_contexts_types_.sink: {}, "
             "local_decoding_context_types_: {}, remote_directions: {}",
             IsInCall(), IsInVoip(), IsInGame(), ToString(local_encoding_contexts_types_.source),
@@ -303,16 +303,24 @@ public:
     BidirectionalPair<AudioContexts> additional_local_contexts_based_on_states = {AudioContexts(),
                                                                                   AudioContexts()};
     if (IsInGame()) {
-      if (copy_local_encoding_ctxs.source.any()) {
-        log::info("Adding game Mode to remote Sink");
+      if (copy_local_encoding_ctxs.source.none() && copy_local_decoding_ctxs.none()) {
+        log::info(
+                "Adding game Mode to remote Sink as Audio Hal doesn't specify metadata during the "
+                "game mode");
         copy_local_encoding_ctxs.source.set(LeAudioContextType::GAME);
         additional_local_contexts_based_on_states.source.set(LeAudioContextType::GAME);
-      }
+      } else {
+        if (copy_local_encoding_ctxs.source.any()) {
+          log::info("Adding game Mode to remote Sink");
+          copy_local_encoding_ctxs.source.set(LeAudioContextType::GAME);
+          additional_local_contexts_based_on_states.source.set(LeAudioContextType::GAME);
+        }
 
-      if (copy_local_decoding_ctxs.any()) {
-        log::info("Adding game Mode to remote Source");
-        copy_local_decoding_ctxs.set(LeAudioContextType::GAME);
-        additional_local_contexts_based_on_states.sink.set(LeAudioContextType::GAME);
+        if (copy_local_decoding_ctxs.any()) {
+          log::info("Adding game Mode to remote Source");
+          copy_local_decoding_ctxs.set(LeAudioContextType::GAME);
+          additional_local_contexts_based_on_states.sink.set(LeAudioContextType::GAME);
+        }
       }
     }
 
@@ -422,9 +430,9 @@ public:
     std::stringstream stream;
 
     stream << std::format(
-            "AudioContextTypeManager: \n IsInCall: {}, IsInVoip: {}, IsInGame: {}\n, "
-            "local_encoding_contexts_types_.source: {}, local_encoding_contexts_types_.sink: {}\n, "
-            "local_decoding_context_types_(sink): {} \n",
+            "AudioContextTypeManager:\n IsInCall: {}, IsInVoip: {}, IsInGame: {}\n "
+            "local_encoding_contexts_types_.source: {}\n local_encoding_contexts_types_.sink: {}\n "
+            "local_decoding_context_types_(sink): {}\n",
             IsInCall(), IsInVoip(), IsInGame(), ToString(local_encoding_contexts_types_.source),
             ToString(local_encoding_contexts_types_.sink), ToString(local_decoding_context_types_));
     dprintf(fd, "%s\n", stream.str().c_str());

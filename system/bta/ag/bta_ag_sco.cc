@@ -39,14 +39,10 @@
 #include "bta/include/bta_le_audio_api.h"
 #include "bta_ag_api.h"
 #include "bta_sys.h"
-#include "btm_api_types.h"
-#include "btm_status.h"
 #include "device/include/esco_parameters.h"
 #include "hardware/bt_hf.h"
 #include "hci/controller.h"
 #include "hci/hci_packets.h"
-#include "hci_error_code.h"
-#include "hcidefs.h"
 #include "internal/btm_api.h"
 #include "internal_include/bt_target.h"
 #include "main/shim/entry.h"
@@ -56,8 +52,11 @@
 #include "stack/btm/btm_int_types.h"
 #include "stack/btm/btm_sco.h"
 #include "stack/btm/btm_sco_hfp_hal.h"
+#include "stack/include/btm_api_types.h"
 #include "stack/include/btm_client_interface.h"
 #include "stack/include/btm_status.h"
+#include "stack/include/hci_error_code.h"
+#include "stack/include/hcidefs.h"
 #include "stack/include/main_thread.h"
 
 using HfpInterface = bluetooth::audio::hfp::HfpClientInterface;
@@ -89,12 +88,6 @@ static HfpInterface::Offload* hfp_offload_interface;
 static HfpInterface::Encode* hfp_encode_interface;
 static HfpInterface::Decode* hfp_decode_interface;
 static std::unordered_map<tBTA_AG_UUID_CODEC, ::hfp::sco_config> sco_config_map;
-// Remove when sco_managed_by_audio_remove_hfp_hal is shipped
-static std::unordered_map<tBTA_AG_UUID_CODEC, esco_coding_format_t> codec_coding_format_map{
-        {tBTA_AG_UUID_CODEC::UUID_CODEC_LC3, ESCO_CODING_FORMAT_LC3},
-        {tBTA_AG_UUID_CODEC::UUID_CODEC_MSBC, ESCO_CODING_FORMAT_MSBC},
-        {tBTA_AG_UUID_CODEC::UUID_CODEC_CVSD, ESCO_CODING_FORMAT_CVSD},
-};
 
 /* sco events */
 enum {
@@ -361,6 +354,18 @@ static void bta_ag_esco_connreq_cback(tBTM_ESCO_EVT event, tBTM_ESCO_EVT_DATA* p
       /* If no other SCO active, allow this one */
       if (!bta_ag_cb.sco.p_curr_scb) {
         log::verbose("Accept Conn Request (sco_inx 0x{:04x})", sco_inx);
+        if (bta_ag_is_sco_managed_by_audio()) {
+          log::verbose("Sco managed by audio, ask audio to initiate SCO");
+          p_scb->sendAcceptConnectionRsp = true;
+          p_scb->conn_data = p_data->conn_evt;
+          tBTA_AG_VAL val = {};
+          val.hdr.handle = bta_ag_scb_to_idx(p_scb);
+          val.hdr.app_id = p_scb->app_id;
+          val.hdr.status = BTA_AG_SUCCESS;
+          val.bd_addr = p_scb->peer_addr;
+          (*bta_ag_cb.p_cback)(BTA_AG_AT_BCC_EVT, (tBTA_AG*)&val);
+          return;
+        }
         bta_ag_sco_conn_rsp(p_scb, &p_data->conn_evt);
 
         bta_ag_cb.sco.state = BTA_AG_SCO_OPENING_ST;
@@ -369,6 +374,18 @@ static void bta_ag_esco_connreq_cback(tBTM_ESCO_EVT event, tBTM_ESCO_EVT_DATA* p
       } else {
         /* Begin a transfer: Close current SCO before responding */
         log::verbose("bta_ag_esco_connreq_cback: Begin XFER");
+        if (bta_ag_is_sco_managed_by_audio()) {
+          log::verbose("Sco managed by audio, ask audio to initiate SCO");
+          p_scb->sendAcceptConnectionRsp = true;
+          p_scb->conn_data = p_data->conn_evt;
+          tBTA_AG_VAL val = {};
+          val.hdr.handle = bta_ag_scb_to_idx(p_scb);
+          val.hdr.app_id = p_scb->app_id;
+          val.hdr.status = BTA_AG_SUCCESS;
+          val.bd_addr = p_scb->peer_addr;
+          (*bta_ag_cb.p_cback)(BTA_AG_AT_BCC_EVT, (tBTA_AG*)&val);
+          return;
+        }
         bta_ag_cb.sco.p_xfer_scb = p_scb;
         bta_ag_cb.sco.conn_data = p_data->conn_evt;
         bta_ag_cb.sco.state = BTA_AG_SCO_OPEN_XFER_ST;
@@ -597,17 +614,10 @@ static void updateCodecParametersFromProviderInfo(tBTA_AG_UUID_CODEC esco_codec,
     params.output_data_path = sco_config_it->second.outputDataPath;
     if (!sco_config_it->second.useControllerCodec) {
       log::debug("use DSP Codec instead of controller codec");
-
-      if (com_android_bluetooth_flags_sco_managed_by_audio_remove_hfp_hal()) {
-        params.input_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
-        params.output_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
-        params.transmit_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
-        params.receive_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
-      } else {
-        esco_coding_format_t codingFormat = codec_coding_format_map[esco_codec];
-        params.input_coding_format.coding_format = codingFormat;
-        params.output_coding_format.coding_format = codingFormat;
-      }
+      params.input_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
+      params.output_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
+      params.transmit_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
+      params.receive_coding_format.coding_format = ESCO_CODING_FORMAT_TRANSPNT;
       params.input_bandwidth = TXRX_64KBITS_RATE;
       params.output_bandwidth = TXRX_64KBITS_RATE;
     }
@@ -630,6 +640,18 @@ static void bta_ag_codec_negotiation_timer_cback(void* data) {
 
   /* Announce that codec negotiation failed. */
   bta_ag_sco_codec_nego(p_scb, false);
+
+  // CancelStreamingRequest before callback is sent to java layer
+  if (bta_ag_is_sco_managed_by_audio()) {
+    if (hfp_software_datapath_enabled) {
+      if (hfp_encode_interface) {
+        hfp_encode_interface->CancelStreamingRequest();
+        hfp_decode_interface->CancelStreamingRequest();
+      }
+    } else {
+      hfp_offload_interface->CancelStreamingRequest();
+    }
+  }
 
   /* call app callback */
   bta_ag_cback_sco(p_scb, BTA_AG_AUDIO_CLOSE_EVT, CODEC_NEGOTIATION_FAIL);
@@ -682,8 +704,7 @@ void bta_ag_codec_negotiate(tBTA_AG_SCB* p_scb) {
   // if remote supports codec negotiation or AptX voice codec
   if (((p_scb->codec_updated || p_scb->codec_fallback) && (p_scb->features & BTA_AG_FEAT_CODEC) &&
        (p_scb->peer_features & BTA_AG_PEER_FEAT_CODEC)) ||
-      (aptx_voice && (com_android_bluetooth_flags_qc_aptx_codec_negotiation() &&
-                      (p_scb->peer_codecs & BTA_AG_SCO_APTX_SWB_SETTINGS_Q0_MASK)))) {
+      (aptx_voice && (p_scb->peer_codecs & BTA_AG_SCO_APTX_SWB_SETTINGS_Q0_MASK))) {
     log::info("Starting codec negotiation");
     /* Change the power mode to Active until SCO open is completed. */
     bta_sys_busy(BTA_ID_AG, p_scb->app_id, p_scb->peer_addr);
@@ -699,8 +720,7 @@ void bta_ag_codec_negotiate(tBTA_AG_SCB* p_scb) {
       /* Send +QCS to the peer */
       bta_ag_send_qcs(p_scb);
     } else {
-      if (aptx_voice && (com_android_bluetooth_flags_qc_aptx_codec_negotiation() &&
-                         (p_scb->peer_codecs & BTA_AG_SCO_APTX_SWB_SETTINGS_Q0_MASK))) {
+      if (aptx_voice && (p_scb->peer_codecs & BTA_AG_SCO_APTX_SWB_SETTINGS_Q0_MASK)) {
         p_scb->sco_codec = BTM_SCO_CODEC_MSBC;
         p_scb->is_aptx_swb_codec = false;
       }
@@ -816,27 +836,17 @@ static void bta_ag_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
           /* remove listening connection */
           bta_ag_remove_sco(p_scb, false);
 
-          if (!com_android_bluetooth_flags_sco_state_machine_update_in_codec_state() &&
-              p_scb == p_sco->p_curr_scb) {
-            p_sco->p_curr_scb = nullptr;
-          }
-
           /* If last SCO instance then finish shutting down */
           if (!bta_ag_other_scb_open(p_scb)) {
             p_sco->state = BTA_AG_SCO_SHUTDOWN_ST;
           } else {
-            if (com_android_bluetooth_flags_sco_state_machine_update_in_codec_state()) {
-              if (p_scb == p_sco->p_curr_scb) {
-                /* If SCO disconnected during codec negotiation, just go back to listening to allow
-                 * SCO reconnection */
-                p_sco->state = BTA_AG_SCO_LISTEN_ST;
-                if (!com_android_bluetooth_flags_sco_state_machine_update_revision()) {
-                  p_sco->p_curr_scb = nullptr;
-                }
-              }
-            } else {
-              /* just go back to listening */
+            if (p_scb == p_sco->p_curr_scb) {
+              /* If SCO disconnected during codec negotiation, just go back to listening to allow
+               * SCO reconnection */
               p_sco->state = BTA_AG_SCO_LISTEN_ST;
+              if (!com_android_bluetooth_flags_sco_state_machine_update_revision()) {
+                p_sco->p_curr_scb = nullptr;
+              }
             }
           }
           if (com_android_bluetooth_flags_sco_state_machine_update_revision() &&
@@ -846,15 +856,10 @@ static void bta_ag_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
           break;
 
         case BTA_AG_SCO_CLOSE_E:
-          if (com_android_bluetooth_flags_sco_state_machine_update_in_codec_state()) {
-            if (p_scb == p_sco->p_curr_scb) {
-              /* sco open is not started yet. just go back to listening */
-              p_sco->state = BTA_AG_SCO_LISTEN_ST;
-              p_sco->p_curr_scb = nullptr;
-            }
-          } else {
+          if (p_scb == p_sco->p_curr_scb) {
             /* sco open is not started yet. just go back to listening */
             p_sco->state = BTA_AG_SCO_LISTEN_ST;
+            p_sco->p_curr_scb = nullptr;
           }
           break;
 
@@ -1290,6 +1295,20 @@ bool bta_ag_sco_is_opening(tBTA_AG_SCB* p_scb) {
 
 /*******************************************************************************
  *
+ * Function         bta_ag_sco_is_codec_negotiating
+ *
+ * Description      Check if sco is in Codec negotiation.
+ *
+ *
+ * Returns          true if sco is in Codec negotiation for this scb, false
+ *                  otherwise.
+ *
+ ******************************************************************************/
+bool bta_ag_sco_is_codec_negotiating(tBTA_AG_SCB* p_scb) {
+  return (bta_ag_cb.sco.state == BTA_AG_SCO_CODEC_ST) && (bta_ag_cb.sco.p_curr_scb == p_scb);
+}
+/*******************************************************************************
+ *
  * Function         bta_ag_sco_listen
  *
  * Description
@@ -1342,10 +1361,22 @@ void bta_ag_sco_open(tBTA_AG_SCB* p_scb, const tBTA_AG_DATA& data) {
   /* if another scb using sco, this is a transfer */
   if (bta_ag_cb.sco.p_curr_scb && bta_ag_cb.sco.p_curr_scb != p_scb) {
     log::info("transfer {} -> {}", bta_ag_cb.sco.p_curr_scb->peer_addr, p_scb->peer_addr);
+    if (bta_ag_is_sco_managed_by_audio() && p_scb->sendAcceptConnectionRsp) {
+      bta_ag_sco_conn_rsp(p_scb, &p_scb->conn_data);
+      p_scb->sendAcceptConnectionRsp = false;
+      bta_ag_sco_event(p_scb, BTA_AG_SCO_CONN_OPEN_E);
+      return;
+    }
     bta_ag_sco_event(p_scb, BTA_AG_SCO_XFER_E);
   } else {
     /* else it is an open */
     log::info("open {}", p_scb->peer_addr);
+    if (bta_ag_is_sco_managed_by_audio() && p_scb->sendAcceptConnectionRsp) {
+      bta_ag_sco_conn_rsp(p_scb, &p_scb->conn_data);
+      p_scb->sendAcceptConnectionRsp = false;
+      bta_ag_sco_event(p_scb, BTA_AG_SCO_CONN_OPEN_E);
+      return;
+    }
     bta_ag_sco_event(p_scb, BTA_AG_SCO_OPEN_E);
   }
 }
@@ -1366,6 +1397,10 @@ void bta_ag_sco_close(tBTA_AG_SCB* p_scb, const tBTA_AG_DATA& /* data */) {
    * state. */
   if ((p_scb->sco_idx != BTM_INVALID_SCO_INDEX) || (bta_ag_cb.sco.state == BTA_AG_SCO_CODEC_ST)) {
     log::verbose("bta_ag_sco_close: sco_inx = {}", p_scb->sco_idx);
+    if (com_android_bluetooth_flags_call_end_codec_negotiation() &&
+        bta_ag_cb.sco.state == BTA_AG_SCO_CODEC_ST) {
+      alarm_cancel(p_scb->codec_negotiation_timer);
+    }
     bta_ag_sco_event(p_scb, BTA_AG_SCO_CLOSE_E);
   }
 }
@@ -1551,6 +1586,13 @@ void bta_ag_sco_conn_close(tBTA_AG_SCB* p_scb, const tBTA_AG_DATA& /* data */,
          (p_scb->callsetup_ind == BTA_AG_CALLSETUP_NONE)) ||
         (p_scb->post_sco == BTA_AG_POST_SCO_CALL_END)) {
       bta_sys_sco_unuse(BTA_ID_AG, p_scb->app_id, p_scb->peer_addr);
+    } else if (com_android_bluetooth_flags_sco_close_after_rfcomm_disconnect() &&
+               (!p_scb->svc_conn)) {
+      bool exist_other_scb = bta_ag_other_scb_open(p_scb);
+      log::warn("SCO closed after RFCOMM closed ({})", exist_other_scb);
+      if (!exist_other_scb) {
+        bta_sys_sco_unuse(BTA_ID_AG, p_scb->app_id, p_scb->peer_addr);
+      }
     }
 
     /* call app callback */
@@ -1635,21 +1677,15 @@ void bta_ag_sco_conn_rsp(tBTA_AG_SCB* p_scb, tBTM_ESCO_CONN_REQ_EVT_DATA* /*p_da
 bool bta_ag_get_sco_offload_enabled() { return hfp_hal_interface::get_offload_enabled(); }
 
 bool bta_ag_get_wbs_supported() {
-  if (bta_ag_is_sco_managed_by_audio() &&
-      com_android_bluetooth_flags_sco_managed_by_audio_remove_hfp_hal()) {
-    return sco_config_map.contains(tBTA_AG_UUID_CODEC::UUID_CODEC_MSBC);
-  } else {
-    return hfp_hal_interface::get_wbs_supported();
-  }
+  return bta_ag_is_sco_managed_by_audio()
+                 ? sco_config_map.contains(tBTA_AG_UUID_CODEC::UUID_CODEC_MSBC)
+                 : hfp_hal_interface::get_wbs_supported();
 }
 
 bool bta_ag_get_swb_supported() {
-  if (bta_ag_is_sco_managed_by_audio() &&
-      com_android_bluetooth_flags_sco_managed_by_audio_remove_hfp_hal()) {
-    return sco_config_map.contains(tBTA_AG_UUID_CODEC::UUID_CODEC_LC3);
-  } else {
-    return hfp_hal_interface::get_swb_supported();
-  }
+  return bta_ag_is_sco_managed_by_audio()
+                 ? sco_config_map.contains(tBTA_AG_UUID_CODEC::UUID_CODEC_LC3)
+                 : hfp_hal_interface::get_swb_supported();
 }
 
 void bta_ag_set_sco_offload_enabled(bool value) { hfp_hal_interface::enable_offload(value); }
@@ -1686,7 +1722,7 @@ void bta_ag_stream_suspended() {
   }
 }
 
-const RawAddress& bta_ag_get_active_device() { return active_device_addr; }
+const RawAddress bta_ag_get_active_device() { return active_device_addr; }
 
 void bta_clear_active_device() {
   log::debug("Set bta active device to null, current active device:{}", active_device_addr);
@@ -1715,9 +1751,7 @@ void bta_ag_api_set_active_device(const RawAddress& new_active_device) {
   // Start audio session if there was no previous active device.
   // hfp_encode/decode/offload_interface are expected to be initialized in
   // bta_ag_init_hfp_client_interface, earlier than calls to set active device.
-  if (bta_ag_is_sco_managed_by_audio() &&
-      com_android_bluetooth_flags_sco_managed_by_audio_remove_hfp_hal() &&
-      active_device_addr.IsEmpty()) {
+  if (bta_ag_is_sco_managed_by_audio() && active_device_addr.IsEmpty()) {
     if (hfp_software_datapath_enabled) {
       if (hfp_encode_interface && hfp_decode_interface) {
         hfp_encode_interface->StartSession();
@@ -1730,58 +1764,10 @@ void bta_ag_api_set_active_device(const RawAddress& new_active_device) {
     }
   }
 
-  if (bta_ag_is_sco_managed_by_audio() &&
-      !com_android_bluetooth_flags_sco_managed_by_audio_remove_hfp_hal()) {
-    // Initialize and start HFP software data path
-    if (!hfp_client_interface) {
-      hfp_client_interface = HfpInterface::Get();
-      if (!hfp_client_interface) {
-        log::error("could not acquire audio source interface");
-      }
-    }
-    hfp_software_datapath_enabled =
-            osi_property_get_bool("bluetooth.hfp.software_datapath.enabled", false);
-
-    // Initialize and start HFP software datapath if enabled
-    if (hfp_software_datapath_enabled) {
-      if (hfp_client_interface && !hfp_encode_interface && !hfp_decode_interface) {
-        hfp_encode_interface = hfp_client_interface->GetEncode(get_main_thread());
-        hfp_decode_interface = hfp_client_interface->GetDecode(get_main_thread());
-        if (!hfp_encode_interface || !hfp_decode_interface) {
-          log::warn("could not get HFP SW interface");
-        }
-      }
-
-      if (hfp_encode_interface && hfp_decode_interface) {
-        if (active_device_addr.IsEmpty()) {
-          hfp_encode_interface->StartSession();
-          hfp_decode_interface->StartSession();
-        }
-      }
-    } else {  // Initialize and start HFP offloading
-      if (hfp_client_interface && !hfp_offload_interface) {
-        hfp_offload_interface = hfp_client_interface->GetOffload(get_main_thread());
-        if (!hfp_offload_interface) {
-          log::warn("could not get offload interface");
-        }
-      }
-
-      if (hfp_offload_interface) {
-        sco_config_map = hfp_offload_interface->GetHfpScoConfig();
-        // start audio session if there was no previous active device
-        if (active_device_addr.IsEmpty()) {
-          hfp_offload_interface->StartSession();
-        }
-      }
-    }
-  }
   active_device_addr = new_active_device;
 }
 
 void bta_ag_release_hfp_client_interface() {
-  if (!com_android_bluetooth_flags_sco_managed_by_audio_remove_hfp_hal()) {
-    return;
-  }
   sco_config_map = {};
   if (!hfp_client_interface) {
     return;
@@ -1802,8 +1788,7 @@ void bta_ag_release_hfp_client_interface() {
 }
 
 void bta_ag_init_hfp_client_interface() {
-  if (!bta_ag_is_sco_managed_by_audio() ||
-      !com_android_bluetooth_flags_sco_managed_by_audio_remove_hfp_hal()) {
+  if (!bta_ag_is_sco_managed_by_audio()) {
     return;
   }
 

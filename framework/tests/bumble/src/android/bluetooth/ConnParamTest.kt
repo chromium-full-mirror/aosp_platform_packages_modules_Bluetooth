@@ -23,7 +23,6 @@ import android.bluetooth.test_utils.BlockingBluetoothAdapter
 import android.bluetooth.test_utils.EnableBluetoothRule
 import android.content.Context
 import android.os.SystemProperties
-import android.platform.test.annotations.RequiresFlagsEnabled
 import android.platform.test.flag.junit.DeviceFlagsValueProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -38,11 +37,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
-import org.mockito.Mockito.mock
 import org.mockito.Mockito.timeout
 import org.mockito.Mockito.verify
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
 import pandora.HostProto.AdvertiseRequest
 import pandora.HostProto.AdvertiseResponse
 import pandora.HostProto.OwnAddressType
@@ -76,20 +75,19 @@ class ConnParamTest {
 
     @After
     fun tearDown() {
-        InstrumentationRegistry.getInstrumentation().uiAutomation.dropShellPermissionIdentity()
         val bondedDevices = adapter.bondedDevices
         if (bondedDevices.contains(remoteLeDevice)) {
             host.removeBondAndVerify(remoteLeDevice)
         }
+        InstrumentationRegistry.getInstrumentation().uiAutomation.dropShellPermissionIdentity()
         host.close()
     }
 
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.initial_conn_params_p1")
     @Test
     fun connParamsAreRelaxedAfterServiceDiscovery() {
         checkAggressiveConnectionWillBeUsed()
 
-        val gattCallback = mock(BluetoothGattCallback::class.java)
+        val gattCallback = mock<BluetoothGattCallback>()
         val connectionIntervalCaptor = ArgumentCaptor.forClass(Int::class.java)
 
         val gatt = connectGattAndWaitConnection(gattCallback, false)
@@ -116,7 +114,6 @@ class ConnParamTest {
         disconnectAndWaitDisconnection(gatt, gattCallback)
     }
 
-    @RequiresFlagsEnabled("com.android.bluetooth.flags.initial_conn_params_p1")
     @Test
     fun connParamsAreRelaxedForBondedDevice_withBluetoothRestart() {
         checkAggressiveConnectionWillBeUsed()
@@ -127,7 +124,7 @@ class ConnParamTest {
         assertThat(BlockingBluetoothAdapter.enable()).isTrue()
 
         // Connect GATT
-        val gattCallback = mock(BluetoothGattCallback::class.java)
+        val gattCallback = mock<BluetoothGattCallback>()
         val connectionIntervalCaptor = ArgumentCaptor.forClass(Int::class.java)
         val gatt = connectGattAndWaitConnection(gattCallback, false)
 

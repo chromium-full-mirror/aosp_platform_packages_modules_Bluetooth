@@ -17,6 +17,7 @@
 package com.android.bluetooth.pbap;
 
 import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.CursorWindowAllocationException;
@@ -24,7 +25,6 @@ import android.database.MatrixCursor;
 import android.net.Uri;
 import android.provider.CallLog;
 import android.provider.CallLog.Calls;
-import android.provider.ContactsContract.CommonDataKinds;
 import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.provider.ContactsContract.Contacts;
 import android.provider.ContactsContract.Data;
@@ -36,6 +36,7 @@ import android.util.Log;
 
 import com.android.bluetooth.BluetoothMethodProxy;
 import com.android.bluetooth.R;
+import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.util.DevicePolicyUtils;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.obex.Operation;
@@ -48,6 +49,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 public class BluetoothPbapVcardManager {
@@ -56,20 +58,15 @@ public class BluetoothPbapVcardManager {
     private final ContentResolver mResolver;
     private final Context mContext;
 
-    static final String SORT_ORDER_PHONE_NUMBER = CommonDataKinds.Phone.NUMBER + " ASC";
-
-    static final String[] PHONES_CONTACTS_PROJECTION =
+    private static final String[] PHONES_CONTACTS_PROJECTION =
             new String[] {
                 Phone.CONTACT_ID, // 0
                 Phone.DISPLAY_NAME, // 1
+                Phone.STARRED, // 2
             };
 
-    static final String[] PHONE_LOOKUP_PROJECTION =
+    private static final String[] PHONE_LOOKUP_PROJECTION =
             new String[] {PhoneLookup._ID, PhoneLookup.DISPLAY_NAME};
-
-    static final int CONTACTS_ID_COLUMN_INDEX = 0;
-
-    static final int CONTACTS_NAME_COLUMN_INDEX = 1;
 
     private long mLastFetchedTimeStamp;
 
@@ -77,7 +74,7 @@ public class BluetoothPbapVcardManager {
     // most recently one should be the first handle. In table "calls", _id and
     // date are consistent in ordering, to implement simply, we sort by _id
     // here.
-    static final String CALLLOG_SORT_ORDER = Calls._ID + " DESC";
+    private static final String CALLLOG_SORT_ORDER = Calls._ID + " DESC";
 
     private static final int NEED_SEND_BODY = -1;
 
@@ -86,10 +83,21 @@ public class BluetoothPbapVcardManager {
     private static final Pattern PROPERTY_PATTERN = Pattern.compile("[;:]");
     private static final Pattern ATTRIBUTE_PATTERN = Pattern.compile(":");
 
+    private static final int HIGH_RES_PHOTO_CONTACTS_TRIAL_LIMIT = 20;
+    private static final int HIGH_RES_PHOTO_DIMENSION_LIMIT_IN_PIXELS = 300;
+    private static final int HIGH_RES_PHOTO_FILE_SIZE_LIMIT_IN_BYTES = 50 * 1024; // 50KB
+    private static final VCardComposer.PhotoOptions HIGH_RES_PHOTO_OPTIONS =
+            new VCardComposer.PhotoOptions(
+                    HIGH_RES_PHOTO_DIMENSION_LIMIT_IN_PIXELS,
+                    HIGH_RES_PHOTO_FILE_SIZE_LIMIT_IN_BYTES);
+
+    private final boolean mShouldAttemptHighResPhoto;
+
     public BluetoothPbapVcardManager(final Context context) {
         mContext = context;
         mResolver = mContext.getContentResolver();
         mLastFetchedTimeStamp = System.currentTimeMillis();
+        mShouldAttemptHighResPhoto = BluetoothPbapUtils.shouldAttemptHighResPhoto(mContext);
     }
 
     /** Create an owner vcard from the configured profile */
@@ -359,11 +367,12 @@ public class BluetoothPbapVcardManager {
                                     null,
                                     Phone.CONTACT_ID);
 
+            // TODO: remove this when the flag is removed
             ArrayList<String> contactNameIdList = new ArrayList<>();
-            appendDistinctNameIdList(
-                    contactNameIdList,
-                    mContext.getString(android.R.string.unknownName),
-                    contactCursor);
+            String defaultName = mContext.getString(android.R.string.unknownName);
+            if (!Flags.pbapCorrectFilteredIndex()) {
+                appendDistinctNameIdList(contactNameIdList, defaultName, contactCursor);
+            }
 
             if (contactCursor != null) {
                 if (!composer.init(contactCursor)) {
@@ -373,7 +382,9 @@ public class BluetoothPbapVcardManager {
                 if (idColumn < 0) {
                     idColumn = contactCursor.getColumnIndex(Contacts._ID);
                 }
+                int nameColumn = contactCursor.getColumnIndex(Data.DISPLAY_NAME);
 
+                // TODO: remove i when the flag is removed
                 int i = 0;
                 contactCursor.moveToFirst();
                 while (!contactCursor.isAfterLast()) {
@@ -399,11 +410,13 @@ public class BluetoothPbapVcardManager {
                         pbSize--;
                         continue;
                     } else {
-                        String name = getNameFromVCard(vcard);
-                        if (TextUtils.isEmpty(name)) {
-                            name = mContext.getString(android.R.string.unknownName);
+                        if (Flags.pbapCorrectFilteredIndex()) {
+                            nameList.add(
+                                    createDistinctNameId(
+                                            defaultName, idColumn, nameColumn, contactCursor));
+                        } else {
+                            nameList.add(contactNameIdList.get(i));
                         }
-                        nameList.add(contactNameIdList.get(i));
                     }
                     i++;
                 }
@@ -615,7 +628,8 @@ public class BluetoothPbapVcardManager {
 
         final Uri myUri = DevicePolicyUtils.getEnterprisePhoneUri(mContext);
         Cursor contactCursor = null;
-        Cursor contactIdCursor = new MatrixCursor(new String[] {Phone.CONTACT_ID});
+        Cursor contactIdStarredCursor =
+                new MatrixCursor(new String[] {Phone.CONTACT_ID, Phone.STARRED});
 
         String selectionClause = null;
         if (favorites) {
@@ -633,7 +647,7 @@ public class BluetoothPbapVcardManager {
                                     null,
                                     Phone.CONTACT_ID);
             if (contactCursor != null) {
-                contactIdCursor =
+                contactIdStarredCursor =
                         ContactCursorFilter.filterByRange(contactCursor, startPoint, endPoint);
             }
         } catch (CursorWindowAllocationException e) {
@@ -647,7 +661,7 @@ public class BluetoothPbapVcardManager {
         if (vcardselect) {
             return composeContactsAndSendSelectedVCards(
                     op,
-                    contactIdCursor,
+                    contactIdStarredCursor,
                     vcardType21,
                     ownerVCard,
                     needSendBody,
@@ -658,7 +672,7 @@ public class BluetoothPbapVcardManager {
                     vcardselectorop);
         } else {
             return composeContactsAndSendVCards(
-                    op, contactIdCursor, vcardType21, ownerVCard, ignorefilter, filter);
+                    op, contactIdStarredCursor, vcardType21, ownerVCard, ignorefilter, filter);
         }
     }
 
@@ -677,7 +691,8 @@ public class BluetoothPbapVcardManager {
         final Uri myUri = DevicePolicyUtils.getEnterprisePhoneUri(mContext);
 
         Cursor contactCursor = null;
-        Cursor contactIdCursor = new MatrixCursor(new String[] {Phone.CONTACT_ID});
+        Cursor contactIdStarredCursor =
+                new MatrixCursor(new String[] {Phone.CONTACT_ID, Phone.STARRED});
         // By default order is indexed
         String orderBy = Phone.CONTACT_ID;
         try {
@@ -697,13 +712,13 @@ public class BluetoothPbapVcardManager {
             Log.e(TAG, "CursorWindowAllocationException while composing phonebook one vcard");
         } finally {
             if (contactCursor != null) {
-                contactIdCursor = ContactCursorFilter.filterByOffset(contactCursor, offset);
+                contactIdStarredCursor = ContactCursorFilter.filterByOffset(contactCursor, offset);
                 contactCursor.close();
                 contactCursor = null;
             }
         }
         return composeContactsAndSendVCards(
-                op, contactIdCursor, vcardType21, ownerVCard, ignorefilter, filter);
+                op, contactIdStarredCursor, vcardType21, ownerVCard, ignorefilter, filter);
     }
 
     /** Filter contact cursor by certain condition. */
@@ -717,33 +732,43 @@ public class BluetoothPbapVcardManager {
 
         /**
          * @return a cursor containing contact ids of {@code startPoint}th to {@code endPoint}th
-         *     contact. (i.e. [startPoint, endPoint], both points should be greater than 0)
+         *     contact. (i.e. [startPoint, endPoint], both points should be greater than 0) Also
+         *     includes {@link Phone#STARRED} column.
          */
         static Cursor filterByRange(Cursor contactCursor, int startPoint, int endPoint) {
             final int contactIdColumn = contactCursor.getColumnIndex(Data.CONTACT_ID);
+            final int starredColumn = contactCursor.getColumnIndex(Phone.STARRED);
+
             long previousContactId = -1;
             // As startPoint, endOffset index starts from 1 to n, we set
             // currentPoint base as 1 not 0
             int currentOffset = 1;
-            final MatrixCursor contactIdsCursor = new MatrixCursor(new String[] {Phone.CONTACT_ID});
+            final MatrixCursor contactIdStarredCursor =
+                    new MatrixCursor(new String[] {Phone.CONTACT_ID, Phone.STARRED});
             while (contactCursor.moveToNext() && currentOffset <= endPoint) {
                 long currentContactId = contactCursor.getLong(contactIdColumn);
                 if (previousContactId != currentContactId) {
                     previousContactId = currentContactId;
                     if (currentOffset >= startPoint) {
-                        contactIdsCursor.addRow(new Long[] {currentContactId});
-                        Log.v(TAG, "contactIdsCursor.addRow: " + currentContactId);
+                        long starred = contactCursor.getLong(starredColumn);
+                        contactIdStarredCursor.addRow(new Long[] {currentContactId, starred});
+                        Log.v(
+                                TAG,
+                                "contactIdStarredCursor.addRow: contactId="
+                                        + currentContactId
+                                        + ", starred="
+                                        + starred);
                     }
                     currentOffset++;
                 }
             }
-            return contactIdsCursor;
+            return contactIdStarredCursor;
         }
     }
 
     private int composeContactsAndSendVCards(
             Operation op,
-            final Cursor contactIdCursor,
+            final Cursor contactIdStarredCursor,
             final boolean vcardType21,
             String ownerVCard,
             boolean ignorefilter,
@@ -787,26 +812,45 @@ public class BluetoothPbapVcardManager {
                                 .replace(PhoneNumberUtils.WAIT, 'w');
                     });
             buffer = new HandlerForStringBuffer(op, ownerVCard);
-            Log.v(TAG, "contactIdCursor size: " + contactIdCursor.getCount());
-            if (!composer.init(contactIdCursor) || !buffer.init()) {
+            Log.v(TAG, "contactIdStarredCursor size: " + contactIdStarredCursor.getCount());
+            if (!composer.init(contactIdStarredCursor) || !buffer.init()) {
                 return ResponseCodes.OBEX_HTTP_INTERNAL_ERROR;
             }
-            int idColumn = contactIdCursor.getColumnIndex(Data.CONTACT_ID);
+            int idColumn = contactIdStarredCursor.getColumnIndex(Data.CONTACT_ID);
             if (idColumn < 0) {
-                idColumn = contactIdCursor.getColumnIndex(Contacts._ID);
+                idColumn = contactIdStarredCursor.getColumnIndex(Contacts._ID);
             }
 
-            while (!contactIdCursor.isAfterLast()) {
+            int highResPhotoTrialsCount = 0;
+
+            while (!contactIdStarredCursor.isAfterLast()) {
                 if (BluetoothPbapObexServer.sIsAborted) {
                     ((ServerOperation) op).setAborted(true);
                     BluetoothPbapObexServer.sIsAborted = false;
                     break;
                 }
-                String vcard =
-                        composer.buildVCard(
-                                RawContactsEntity.queryRawContactEntity(
-                                        mResolver, contactIdCursor.getLong(idColumn)));
-                if (!contactIdCursor.moveToNext()) {
+
+                final long contactId = contactIdStarredCursor.getLong(idColumn);
+                Map<String, List<ContentValues>> contentValuesListMap =
+                        RawContactsEntity.queryRawContactEntity(mResolver, contactId);
+
+                VCardComposer.PhotoOptions highResPhotoOptions = null;
+                if (mShouldAttemptHighResPhoto
+                        && highResPhotoTrialsCount < HIGH_RES_PHOTO_CONTACTS_TRIAL_LIMIT) {
+
+                    int starredColumn = contactIdStarredCursor.getColumnIndex(Phone.STARRED);
+                    long starred = contactIdStarredCursor.getLong(starredColumn);
+
+                    // Use high-res photo for a starred (a.k.a. favorite) contact if available.
+                    if (starred == 1) {
+                        Log.v(TAG, "Enable high-res photo for contact ID " + contactId);
+                        highResPhotoTrialsCount++;
+                        highResPhotoOptions = HIGH_RES_PHOTO_OPTIONS;
+                    }
+                }
+                String vcard = composer.buildVCard(contentValuesListMap, highResPhotoOptions);
+
+                if (!contactIdStarredCursor.moveToNext()) {
                     Log.i(TAG, "Cursor#moveToNext() returned false");
                 }
                 if (vcard == null) {
@@ -848,7 +892,7 @@ public class BluetoothPbapVcardManager {
 
     private int composeContactsAndSendSelectedVCards(
             Operation op,
-            final Cursor contactIdCursor,
+            final Cursor contactIdStarredCursor,
             final boolean vcardType21,
             String ownerVCard,
             int needSendBody,
@@ -892,26 +936,45 @@ public class BluetoothPbapVcardManager {
                                 .replace(PhoneNumberUtils.WAIT, 'w');
                     });
             buffer = new HandlerForStringBuffer(op, ownerVCard);
-            Log.v(TAG, "contactIdCursor size: " + contactIdCursor.getCount());
-            if (!composer.init(contactIdCursor) || !buffer.init()) {
+            Log.v(TAG, "contactIdStarredCursor size: " + contactIdStarredCursor.getCount());
+            if (!composer.init(contactIdStarredCursor) || !buffer.init()) {
                 return ResponseCodes.OBEX_HTTP_INTERNAL_ERROR;
             }
-            int idColumn = contactIdCursor.getColumnIndex(Data.CONTACT_ID);
+            int idColumn = contactIdStarredCursor.getColumnIndex(Data.CONTACT_ID);
             if (idColumn < 0) {
-                idColumn = contactIdCursor.getColumnIndex(Contacts._ID);
+                idColumn = contactIdStarredCursor.getColumnIndex(Contacts._ID);
             }
 
-            while (!contactIdCursor.isAfterLast()) {
+            int highResPhotoTrialsCount = 0;
+
+            while (!contactIdStarredCursor.isAfterLast()) {
                 if (BluetoothPbapObexServer.sIsAborted) {
                     ((ServerOperation) op).setAborted(true);
                     BluetoothPbapObexServer.sIsAborted = false;
                     break;
                 }
-                String vcard =
-                        composer.buildVCard(
-                                RawContactsEntity.queryRawContactEntity(
-                                        mResolver, contactIdCursor.getLong(idColumn)));
-                if (!contactIdCursor.moveToNext()) {
+
+                final long contactId = contactIdStarredCursor.getLong(idColumn);
+                Map<String, List<ContentValues>> contentValuesListMap =
+                        RawContactsEntity.queryRawContactEntity(mResolver, contactId);
+
+                VCardComposer.PhotoOptions highResPhotoOptions = null;
+                if (mShouldAttemptHighResPhoto
+                        && highResPhotoTrialsCount < HIGH_RES_PHOTO_CONTACTS_TRIAL_LIMIT) {
+
+                    int starredColumn = contactIdStarredCursor.getColumnIndex(Phone.STARRED);
+                    long starred = contactIdStarredCursor.getLong(starredColumn);
+
+                    // Use high-res photo for a starred (a.k.a. favorite) contact if available.
+                    if (starred == 1) {
+                        Log.v(TAG, "Enable high-res photo for contact ID " + contactId);
+                        highResPhotoTrialsCount++;
+                        highResPhotoOptions = HIGH_RES_PHOTO_OPTIONS;
+                    }
+                }
+                String vcard = composer.buildVCard(contentValuesListMap, highResPhotoOptions);
+
+                if (!contactIdStarredCursor.moveToNext()) {
                     Log.i(TAG, "Cursor#moveToNext() returned false");
                 }
                 if (vcard == null) {
@@ -1148,7 +1211,9 @@ public class BluetoothPbapVcardManager {
             for (String line : lines) {
                 // Check whether the current property is changing (ignoring multi-line properties)
                 // and determine if the current property is filtered in.
-                if (!Character.isWhitespace(line.charAt(0)) && !line.startsWith("=")) {
+                if (!Character.isWhitespace(line.charAt(0))
+                        && !line.startsWith("=")
+                        && (!Flags.pbapCorrectVcardFilter() || !line.startsWith(";"))) {
                     String currentProp = PROPERTY_PATTERN.split(line, 2)[0];
                     filteredIn = true;
 
@@ -1300,14 +1365,24 @@ public class BluetoothPbapVcardManager {
         final int nameColumn = cursor.getColumnIndex(Data.DISPLAY_NAME);
         cursor.moveToPosition(-1);
         while (cursor.moveToNext()) {
-            final long contactId =
-                    cursor.getLong(contactIdColumn != -1 ? contactIdColumn : idColumn);
-            String displayName = nameColumn != -1 ? cursor.getString(nameColumn) : defaultName;
-            if (TextUtils.isEmpty(displayName)) {
-                displayName = defaultName;
-            }
+            String newString;
+            if (Flags.pbapCorrectFilteredIndex()) {
+                newString =
+                        createDistinctNameId(
+                                defaultName,
+                                contactIdColumn != -1 ? contactIdColumn : idColumn,
+                                nameColumn,
+                                cursor);
+            } else {
+                final long contactId =
+                        cursor.getLong(contactIdColumn != -1 ? contactIdColumn : idColumn);
+                String displayName = nameColumn != -1 ? cursor.getString(nameColumn) : defaultName;
+                if (TextUtils.isEmpty(displayName)) {
+                    displayName = defaultName;
+                }
 
-            String newString = displayName + "," + contactId;
+                newString = displayName + "," + contactId;
+            }
             if (!resultList.contains(newString)) {
                 resultList.add(newString);
             }
@@ -1315,6 +1390,17 @@ public class BluetoothPbapVcardManager {
         for (String nameId : resultList) {
             Log.i(TAG, "appendDistinctNameIdList result: " + nameId);
         }
+    }
+
+    private static String createDistinctNameId(
+            String defaultName, int idColumn, int nameColumn, Cursor cursor) {
+        long contactId = cursor.getLong(idColumn);
+        String displayName = nameColumn != -1 ? cursor.getString(nameColumn) : defaultName;
+        if (TextUtils.isEmpty(displayName)) {
+            displayName = defaultName;
+        }
+
+        return displayName + "," + contactId;
     }
 
     @VisibleForTesting

@@ -67,6 +67,7 @@ final class AvrcpCoverArtStorage {
         String hash = coverArt.getImageHash();
         if (hash == null) {
             error("Failed to get the hash of the image");
+            coverArt.recycle();
             return null;
         }
 
@@ -75,6 +76,7 @@ final class AvrcpCoverArtStorage {
                 debug("Already have image of hash '" + hash + "'");
                 imageHandle = mImageHandles.get(hash);
                 debug("Sending back existing handle '" + imageHandle + "'");
+                coverArt.recycle();
                 return imageHandle;
             } else {
                 debug("Got a new image, hash='" + hash + "'");
@@ -90,6 +92,7 @@ final class AvrcpCoverArtStorage {
                 mImages.put(imageHandle, coverArt);
                 trimToSize();
             } else {
+                coverArt.recycle();
                 error("Failed to store image. Could not get a handle.");
             }
         }
@@ -110,6 +113,7 @@ final class AvrcpCoverArtStorage {
     /** Clear out all stored images and image handles */
     public void clear() {
         synchronized (mImagesLock) {
+            mImages.values().forEach(CoverArt::recycle);
             mImages.clear();
             mImageHandles.clear();
         }
@@ -125,6 +129,7 @@ final class AvrcpCoverArtStorage {
                 debug("Evicting '" + imageHandle + "' -> " + coverArt);
                 mImages.remove(imageHandle);
                 mImageHandles.remove(coverArt.getImageHash());
+                coverArt.recycle();
             }
         }
     }
@@ -154,10 +159,10 @@ final class AvrcpCoverArtStorage {
 
     public void dump(StringBuilder sb) {
         int bytes = 0;
-        sb.append("\n\timages (").append(mImageHandles.size());
+        sb.append("\n  timages (").append(mImageHandles.size());
         if (mMaxImages > 0) sb.append(" / ").append(mMaxImages);
         sb.append("):");
-        sb.append("\n\t\tHandle   : Hash                              : CoverArt");
+        sb.append("\n    Handle   : Hash                              : CoverArt");
         synchronized (mImagesLock) {
             // Be sure to use entry set below or each access well count to the ordering
             for (Map.Entry<String, CoverArt> entry : mImages.entrySet()) {
@@ -170,11 +175,11 @@ final class AvrcpCoverArtStorage {
                         hash = key;
                     }
                 }
-                sb.append(String.format("\n\t\t%-8s : %-32s : %s", imageHandle, hash, coverArt));
+                sb.append(String.format("\n    %-8s : %-32s : %s", imageHandle, hash, coverArt));
                 bytes += coverArt.size();
             }
         }
-        sb.append("\n\tImage bytes: ").append(bytes);
+        sb.append("\n  Image bytes: ").append(bytes);
     }
 
     /** Print a message to DEBUG if debug output is enabled */

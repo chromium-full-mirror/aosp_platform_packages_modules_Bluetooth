@@ -1027,7 +1027,6 @@ public class BluetoothMapContentObserver {
         }
 
         if (mAccount != null) {
-
             mProviderClient = mResolver.acquireUnstableContentProviderClient(mAuthority);
             if (mProviderClient == null) {
                 throw new RemoteException("Failed to acquire provider for " + mAuthority);
@@ -1069,7 +1068,6 @@ public class BluetoothMapContentObserver {
             mResolver.registerContentObserver(uri, true, mObserver);
 
             if (mAccount.getType() == TYPE.IM) {
-
                 uri =
                         Uri.parse(
                                 mAccount.mBase_uri_no_account
@@ -2609,12 +2607,10 @@ public class BluetoothMapContentObserver {
                         .contentResolverQuery(mResolver, uri, null, null, null, null);
         try {
             if (c != null && c.moveToFirst()) {
-                if (Flags.notDeleteLockedMessage()) {
-                    int lockedColIndex = c.getColumnIndex(Sms.LOCKED);
-                    if (lockedColIndex >= 0 && c.getInt(lockedColIndex) == 1) {
-                        Log.w(TAG, "Can't delete locked MMS");
-                        return false;
-                    }
+                int lockedColIndex = c.getColumnIndex(Mms.LOCKED);
+                if (lockedColIndex >= 0 && c.getInt(lockedColIndex) == 1) {
+                    Log.w(TAG, "Can't delete locked MMS");
+                    return false;
                 }
                 /* Move to deleted folder, or delete if already in deleted folder */
                 int threadId = c.getInt(c.getColumnIndex(Mms.THREAD_ID));
@@ -2718,12 +2714,10 @@ public class BluetoothMapContentObserver {
                         .contentResolverQuery(mResolver, uri, null, null, null, null);
         try {
             if (c != null && c.moveToFirst()) {
-                if (Flags.notDeleteLockedMessage()) {
-                    int lockedColIndex = c.getColumnIndex(Sms.LOCKED);
-                    if (lockedColIndex >= 0 && c.getInt(lockedColIndex) == 1) {
-                        Log.w(TAG, "Can't delete locked SMS");
-                        return false;
-                    }
+                int lockedColIndex = c.getColumnIndex(Sms.LOCKED);
+                if (lockedColIndex >= 0 && c.getInt(lockedColIndex) == 1) {
+                    Log.w(TAG, "Can't delete locked SMS");
+                    return false;
                 }
                 /* Move to deleted folder, or delete if already in deleted folder */
                 int threadId = c.getInt(c.getColumnIndex(Sms.THREAD_ID));
@@ -3367,9 +3361,20 @@ public class BluetoothMapContentObserver {
         values.put(Mms.MMS_VERSION, PduHeaders.CURRENT_MMS_VERSION);
         values.put(Mms.PRIORITY, PduHeaders.PRIORITY_NORMAL);
         values.put(Mms.READ_REPORT, PduHeaders.VALUE_NO);
-        values.put(Mms.TRANSACTION_ID, "T" + Long.toHexString(System.currentTimeMillis()));
         values.put(Mms.DELIVERY_REPORT, PduHeaders.VALUE_NO);
         values.put(Mms.LOCKED, 0);
+
+        // This field is read by our MmsFileProvider via PduComposer when we create and send the PDU
+        // bytes representing the message we want sent. PduComposer asserts it must not be null.
+        // Despite this though, the field is otherwise unused/reserved in Telephony. The usual code
+        // paths in Messenger/Telephony owned code don't explicitly set this, and rely on a default
+        // constructor to set a value in the same format we're setting here (See
+        // SendPdu#generateTransactionId() constructor for details). Telephony could choose to use
+        // the field at any time. Thus, we need to set this for now to avoid an exception, but
+        // *should not* rely on the value being anything specific in our logic. We should explore
+        // removal in the future.
+        values.put(Mms.TRANSACTION_ID, "T" + Long.toHexString(System.currentTimeMillis()));
+
         if (msg.getTextOnly()) {
             values.put(Mms.TEXT_ONLY, true);
         }
@@ -3651,16 +3656,31 @@ public class BluetoothMapContentObserver {
 
             Log.d(TAG, "sendMessage to " + msgInfo.phone);
 
+            // TODO(b/480794923): Change this to SDK check once the SDK is finalized
+            boolean isMessageUpgradeAvailable =
+                    Flags.mapUseNewMessageApi()
+                            && com.android.internal.telephony.flags.Flags.messagePromotion();
+            Log.d(TAG, "isMessageUpgradeAvailable: " + isMessageUpgradeAvailable);
             if (parts.size() == 1) {
-                smsMng.sendTextMessageWithoutPersisting(
-                        msgInfo.phone,
-                        null,
-                        parts.get(0),
-                        sentIntents.get(0),
-                        deliveryIntents.get(0));
+                if (isMessageUpgradeAvailable) {
+                    smsMng.sendStoredTextMessage(
+                            msgInfo.uri, sentIntents.getFirst(), deliveryIntents.getFirst());
+                } else {
+                    smsMng.sendTextMessageWithoutPersisting(
+                            msgInfo.phone,
+                            null,
+                            parts.get(0),
+                            sentIntents.get(0),
+                            deliveryIntents.get(0));
+                }
             } else {
-                smsMng.sendMultipartTextMessageWithoutPersisting(
-                        msgInfo.phone, null, parts, sentIntents, deliveryIntents);
+                if (isMessageUpgradeAvailable) {
+                    smsMng.sendStoredMultipartTextMessage(
+                            msgInfo.uri, sentIntents, deliveryIntents);
+                } else {
+                    smsMng.sendMultipartTextMessageWithoutPersisting(
+                            msgInfo.phone, null, parts, sentIntents, deliveryIntents);
+                }
             }
         }
     }

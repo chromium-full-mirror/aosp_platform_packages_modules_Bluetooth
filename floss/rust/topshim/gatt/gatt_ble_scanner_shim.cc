@@ -190,10 +190,7 @@ void BleScannerIntf::OnBatchScanThresholdCrossed(int client_if) {
 
 // BleScannerInterface implementations
 
-void BleScannerIntf::RegisterScanner(Uuid uuid) {
-  scanner_intf_->RegisterScanner(
-          uuid, base::Bind(&BleScannerIntf::OnRegisterCallback, base::Unretained(this), uuid));
-}
+void BleScannerIntf::RegisterScanner(Uuid uuid) { scanner_intf_->RegisterScanner(uuid); }
 
 void BleScannerIntf::Unregister(uint8_t scanner_id) { scanner_intf_->Unregister(scanner_id); }
 
@@ -303,10 +300,6 @@ void BleScannerIntf::SyncTxParameters(RawAddress addr, uint8_t mode, uint16_t sk
   scanner_intf_->SyncTxParameters(addr, mode, skip, timeout, 0 /* place holder */);
 }
 
-void BleScannerIntf::OnRegisterCallback(Uuid uuid, uint8_t scanner_id, uint8_t btm_status) {
-  rusty::gdscan_register_callback(uuid, scanner_id, btm_status);
-}
-
 void BleScannerIntf::OnStatusCallback(uint8_t scanner_id, uint8_t btm_status) {
   rusty::gdscan_status_callback(scanner_id, btm_status);
 }
@@ -365,12 +358,6 @@ void BleScannerIntf::OnBigInfoReport(uint16_t sync_handle, bool encrypted) {
 void BleScannerIntf::RegisterCallbacks() {
   // Register self as a callback handler. We will dispatch to Rust callbacks.
   scanner_intf_->RegisterCallbacks(this);
-}
-
-// ScanningCallbacks overrides
-std::unique_ptr<BleScannerIntf> GetBleScannerIntf(const unsigned char* gatt_intf) {
-  return std::make_unique<BleScannerIntf>(
-          reinterpret_cast<const btgatt_interface_t*>(gatt_intf)->scanner);
 }
 
 }  // namespace rust

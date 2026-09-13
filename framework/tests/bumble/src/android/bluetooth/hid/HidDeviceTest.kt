@@ -72,11 +72,11 @@ import org.mockito.Mockito.any
 import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.eq
 import org.mockito.Mockito.inOrder
-import org.mockito.Mockito.mock
 import org.mockito.Mockito.timeout
 import org.mockito.Mockito.verify
-import org.mockito.MockitoAnnotations
 import org.mockito.hamcrest.MockitoHamcrest.argThat
+import org.mockito.junit.MockitoJUnit
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import pandora.HIDGrpc
 import pandora.HidProto.HidServiceType
@@ -85,12 +85,10 @@ import pandora.HidProto.ServiceRequest
 /** Test cases for [BluetoothHidDevice]. */
 @RunWith(AndroidJUnit4::class)
 class HidDeviceTest {
+    @get:Rule val mockitoRule = MockitoJUnit.rule()
     @get:Rule(order = 0) val checkFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()
-
     @get:Rule(order = 1) val permissionRule = AdoptShellPermissionsRule()
-
     @get:Rule(order = 2) val bumble = PandoraDevice()
-
     @get:Rule(order = 3) val enableBluetoothRule = EnableBluetoothRule(false, true)
 
     @Mock private lateinit var callback: BluetoothHidDevice.Callback
@@ -138,8 +136,6 @@ class HidDeviceTest {
 
     @Before
     fun setUp() {
-        MockitoAnnotations.initMocks(this)
-
         doAnswer {
                 bumble.remoteDevice.setPairingConfirmation(true)
                 null
@@ -224,7 +220,7 @@ class HidDeviceTest {
 
         verifyRemoteDeviceConnectToHidHostService()
 
-        callback = mock(BluetoothHidDevice.Callback::class.java)
+        callback = mock<BluetoothHidDevice.Callback>()
         inOrder = inOrder(receiver, callback)
         assertThat(hidDeviceService.registerApp(sdpSettings, null, outQos, executor, callback))
             .isTrue()
@@ -244,7 +240,7 @@ class HidDeviceTest {
 
         verifyRemoteDeviceBondToHidHostService()
 
-        callback = mock(BluetoothHidDevice.Callback::class.java)
+        callback = mock<BluetoothHidDevice.Callback>()
         inOrder = inOrder(receiver, callback)
         assertThat(
                 hidDeviceService.registerApp(
@@ -290,8 +286,7 @@ class HidDeviceTest {
         verifyHidDeviceConnectionStateChanged(device, STATE_CONNECTING)
         verifyHidDeviceConnectionStateChanged(device, STATE_CONNECTED)
 
-        assertThat(hidDeviceService.getConnectionState(device))
-            .isEqualTo(BluetoothHidDevice.STATE_CONNECTED)
+        assertThat(hidDeviceService.getConnectionState(device)).isEqualTo(STATE_CONNECTED)
     }
 
     private fun verifyDisconnectHidDeviceService() {
@@ -299,8 +294,7 @@ class HidDeviceTest {
         verifyHidDeviceConnectionStateChanged(device, STATE_DISCONNECTING)
         verifyHidDeviceConnectionStateChanged(device, STATE_DISCONNECTED)
 
-        assertThat(hidDeviceService.getConnectionState(device))
-            .isEqualTo(BluetoothHidDevice.STATE_DISCONNECTED)
+        assertThat(hidDeviceService.getConnectionState(device)).isEqualTo(STATE_DISCONNECTED)
     }
 
     private fun verifyRemoteDeviceBondToHidHostService() {

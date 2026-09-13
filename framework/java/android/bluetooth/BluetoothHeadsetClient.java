@@ -50,6 +50,7 @@ import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -664,7 +665,6 @@ public final class BluetoothHeadsetClient implements BluetoothProfile, AutoClose
     @RequiresBluetoothConnectPermission
     @RequiresPermission(allOf = {BLUETOOTH_CONNECT, BLUETOOTH_PRIVILEGED})
     public @BtProfileState int getConnectionState(@NonNull BluetoothDevice device) {
-        if (VDBG) log("getConnectionState(" + device + ")");
         final IBluetoothHeadsetClient service = getService();
         if (service == null) {
             Log.w(TAG, "Proxy not attached to service");
@@ -853,7 +853,7 @@ public final class BluetoothHeadsetClient implements BluetoothProfile, AutoClose
                 Log.e(TAG, e.toString() + "\n" + Log.getStackTraceString(new Throwable()));
             }
         }
-        return null;
+        return new ArrayList<>();
     }
 
     /**

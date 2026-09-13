@@ -34,12 +34,12 @@
 
 using bluetooth::Uuid;
 
-static const Uuid UUID_OBEX_OBJECT_PUSH = Uuid::From16Bit(0x1105);
-static const Uuid UUID_PBAP_PSE = Uuid::From16Bit(0x112F);
-static const Uuid UUID_MAP_MAS = Uuid::From16Bit(0x1132);
-static const Uuid UUID_MAP_MNS = Uuid::From16Bit(0x1133);
-static const Uuid UUID_SAP = Uuid::From16Bit(0x112D);
-static const Uuid UUID_DIP = Uuid::From16Bit(0x1200);
+static constexpr Uuid UUID_OBEX_OBJECT_PUSH = Uuid::From16Bit(0x1105);
+static constexpr Uuid UUID_PBAP_PSE = Uuid::From16Bit(0x112F);
+static constexpr Uuid UUID_MAP_MAS = Uuid::From16Bit(0x1132);
+static constexpr Uuid UUID_MAP_MNS = Uuid::From16Bit(0x1133);
+static constexpr Uuid UUID_SAP = Uuid::From16Bit(0x112D);
+static constexpr Uuid UUID_DIP = Uuid::From16Bit(0x1200);
 
 namespace android {
 static jmethodID method_sdpRecordFoundCallback;
@@ -119,7 +119,7 @@ static void sdp_search_callback(BtStatus status, const RawAddress& bd_addr, cons
     return;
   }
 
-  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv.get(), bd_addr);
+  ScopedLocalRef<jbyteArray> addr = addressToJByteArray(sCallbackEnv, bd_addr);
 
   ScopedLocalRef<jbyteArray> uuid(sCallbackEnv.get(), sCallbackEnv->NewByteArray(sizeof(Uuid)));
   if (!uuid.get()) {

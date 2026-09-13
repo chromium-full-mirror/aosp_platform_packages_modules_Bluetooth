@@ -25,6 +25,7 @@
     <uses-permission android:name="android.permission.ACCESS_BLUETOOTH_SHARE"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ALLOW_BLUETOOTH_BACKUP_DATA"/>
     <uses-permission android:name="android.permission.BLUETOOTH"/>
@@ -52,6 +53,7 @@
     <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_ROUTING"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED"/>
     <uses-permission android:name="android.permission.MODIFY_PHONE_STATE"/>
     <uses-permission android:name="android.permission.NET_ADMIN"/>
     <uses-permission android:name="android.permission.NET_TUNNELING"/>
@@ -302,5 +304,19 @@
                 <action android:name="com.android.bluetooth.backup.ACTION_BACKUP_DATA" />
             </intent-filter>
         </receiver>
+
+        <activity android:name="com.android.bluetooth.auracast.NfcAuracastActivity"
+                android:permission="android.permission.DISPATCH_NFC_MESSAGE"
+                android:theme="@android:style/Theme.NoDisplay"
+                android:exported="true"
+                android:excludeFromRecents="true"
+                android:noHistory="true"
+                android:process="@string/process">
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

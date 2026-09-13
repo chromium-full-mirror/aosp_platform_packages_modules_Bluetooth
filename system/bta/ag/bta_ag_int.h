@@ -38,8 +38,8 @@
 #include "internal_include/bt_target.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/btm_api_types.h"
+#include "stack/include/sdp_discovery_db.h"
 #include "stack/include/sdp_status.h"
-#include "stack/sdp/sdp_discovery_db.h"
 
 /*****************************************************************************
  *  Constants
@@ -281,14 +281,14 @@ typedef enum { BTA_AG_INIT_ST, BTA_AG_OPENING_ST, BTA_AG_OPEN_ST, BTA_AG_CLOSING
 /* type for each service control block */
 struct tBTA_AG_SCB {
   char clip[BTA_AG_AT_MAX_LEN + 1];     /* number string used for CLIP */
-  uint16_t serv_handle[BTA_AG_NUM_IDX]; /* RFCOMM server handles */
+  uint8_t serv_handle[BTA_AG_NUM_IDX];  /* RFCOMM server handles */
   tBTA_AG_AT_CB at_cb;                  /* AT command interpreter */
   RawAddress peer_addr;                 /* peer bd address */
   tSDP_DISCOVERY_DB* p_disc_db;         /* pointer to discovery database */
   tBTA_AG_SDP_METRICS_CB sdp_metrics;   /* SDP information for metrics */
   tBTA_SERVICE_MASK reg_services;       /* services specified in register API */
   tBTA_SERVICE_MASK open_services;      /* services specified in open API */
-  uint16_t conn_handle;                 /* RFCOMM handle of connected service */
+  uint8_t conn_handle;                  /* RFCOMM handle of connected service */
   tBTA_AG_FEAT features;                /* features registered by application */
   tBTA_AG_FEAT masked_features;         /* local BRSF features for this connection */
   tBTA_AG_PEER_FEAT peer_features;      /* peer device features */
@@ -346,6 +346,8 @@ struct tBTA_AG_SCB {
                                                                HF indicators */
   tBTA_AG_HF_IND local_hf_indicators[BTA_AG_MAX_NUM_LOCAL_HF_IND]; /* Local supported
                                                                HF indicators */
+  bool sendAcceptConnectionRsp = false;  /* whether to defer sending the accept rsp */
+  tBTM_ESCO_CONN_REQ_EVT_DATA conn_data; /* SCO data for pending conn request */
 
   std::string ToString() const {
     return std::format(
@@ -441,6 +443,7 @@ void bta_ag_rfc_do_open(tBTA_AG_SCB* p_scb, const tBTA_AG_DATA& data);
 bool bta_ag_sco_is_active_device(const RawAddress& bd_addr);
 bool bta_ag_sco_is_open(tBTA_AG_SCB* p_scb);
 bool bta_ag_sco_is_opening(tBTA_AG_SCB* p_scb);
+bool bta_ag_sco_is_codec_negotiating(tBTA_AG_SCB* p_scb);
 void bta_ag_sco_conn_rsp(tBTA_AG_SCB* p_scb, tBTM_ESCO_CONN_REQ_EVT_DATA* data);
 // Testonly
 void bta_ag_create_sco(tBTA_AG_SCB* p_scb, bool is_orig);
@@ -498,7 +501,7 @@ bool bta_ag_get_swb_supported();
 bool bta_ag_get_sco_offload_enabled();
 void bta_ag_set_sco_offload_enabled(bool value);
 void bta_ag_set_sco_allowed(bool value);
-const RawAddress& bta_ag_get_active_device();
+const RawAddress bta_ag_get_active_device();
 void bta_clear_active_device();
 void bta_ag_send_qac(tBTA_AG_SCB* p_scb);
 void bta_ag_send_qcs(tBTA_AG_SCB* p_scb);

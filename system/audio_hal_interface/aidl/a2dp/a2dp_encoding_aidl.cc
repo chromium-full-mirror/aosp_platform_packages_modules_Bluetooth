@@ -94,31 +94,6 @@ bool is_hal_offloading() {
          SessionType::A2DP_HARDWARE_OFFLOAD_ENCODING_DATAPATH;
 }
 
-// Opens the HAL client interface of the specified session type and check
-// that is is valid. Returns nullptr if the client interface did not open
-// properly.
-static BluetoothAudioClientInterface* new_hal_interface(A2dpTransport* transport_instance) {
-  auto hal_interface = new BluetoothAudioClientInterface(transport_instance);
-  if (hal_interface->IsValid()) {
-    return hal_interface;
-  } else {
-    log::error("BluetoothAudio HAL for a2dp is invalid");
-    delete transport_instance;
-    delete hal_interface;
-    return nullptr;
-  }
-}
-
-/// Delete the selected HAL client interface.
-static void delete_hal_interface(BluetoothAudioClientInterface* hal_interface) {
-  if (hal_interface == nullptr) {
-    return;
-  }
-  auto a2dp_transport = hal_interface->GetTransportInstance();
-  delete a2dp_transport;
-  delete hal_interface;
-}
-
 // Initialize BluetoothAudio HAL: openProvider
 bool init(bluetooth::common::MessageLoopThread* /*message_loop*/,
           StreamCallbacks const* stream_callbacks, bool offload_enabled) {
@@ -133,19 +108,24 @@ bool init(bluetooth::common::MessageLoopThread* /*message_loop*/,
     return false;
   }
 
-  auto a2dp_transport_software =
-          new A2dpTransport(SessionType::A2DP_SOFTWARE_ENCODING_DATAPATH, stream_callbacks);
-  software_hal_interface = new_hal_interface(a2dp_transport_software);
-  if (software_hal_interface == nullptr) {
+  software_hal_interface = new BluetoothAudioClientInterface(
+          SessionType::A2DP_SOFTWARE_ENCODING_DATAPATH, stream_callbacks);
+  if (!software_hal_interface->IsValid()) {
+    log::error("BluetoothAudio Software HAL for a2dp is invalid");
+    delete software_hal_interface;
+    software_hal_interface = nullptr;
     return false;
   }
 
   if (offload_enabled && offloading_hal_interface == nullptr) {
-    auto a2dp_transport_offload = new A2dpTransport(
+    offloading_hal_interface = new BluetoothAudioClientInterface(
             SessionType::A2DP_HARDWARE_OFFLOAD_ENCODING_DATAPATH, stream_callbacks);
-    offloading_hal_interface = new_hal_interface(a2dp_transport_offload);
-    if (offloading_hal_interface == nullptr) {
-      delete_hal_interface(software_hal_interface);
+    if (!offloading_hal_interface->IsValid()) {
+      log::error("BluetoothAudio Offload HAL for a2dp is invalid");
+      delete offloading_hal_interface;
+      offloading_hal_interface = nullptr;
+      // Cleanup software_hal_interface
+      delete software_hal_interface;
       software_hal_interface = nullptr;
       return false;
     }
@@ -176,12 +156,10 @@ bool init_decoder(StreamCallbacks const* stream_callbacks, bool offload_enabled)
   }
 
   if (offload_enabled) {
-    auto transport = new A2dpTransport(SessionType::A2DP_HARDWARE_OFFLOAD_DECODING_DATAPATH,
-                                       stream_callbacks);
-    decoder_offloading_hal_interface = new BluetoothAudioClientInterface(transport);
+    decoder_offloading_hal_interface = new BluetoothAudioClientInterface(
+            SessionType::A2DP_HARDWARE_OFFLOAD_DECODING_DATAPATH, stream_callbacks);
     if (!decoder_offloading_hal_interface->IsValid()) {
       log::error("BluetoothAudio HAL for a2dp decoder is invalid");
-      delete transport;
       delete decoder_offloading_hal_interface;
       return false;
     }
@@ -201,23 +179,17 @@ void cleanup() {
   transport->ResetPresentationPosition();
   active_hal_interface = nullptr;
 
-  transport = software_hal_interface->GetTransportInstance();
   delete software_hal_interface;
   software_hal_interface = nullptr;
-  delete transport;
   if (offloading_hal_interface != nullptr) {
-    transport = offloading_hal_interface->GetTransportInstance();
     delete offloading_hal_interface;
     offloading_hal_interface = nullptr;
-    delete transport;
   }
 
-  if (com::android::bluetooth::flags::a2dp_sink_offload() &&
+  if (com_android_bluetooth_flags_a2dp_sink_offload() &&
       decoder_offloading_hal_interface != nullptr) {
-    transport = decoder_offloading_hal_interface->GetTransportInstance();
     delete decoder_offloading_hal_interface;
     decoder_offloading_hal_interface = nullptr;
-    delete transport;
   }
 
   remote_delay = 0;
@@ -336,7 +308,7 @@ void ack_stream_started(Status ack) {
     return;
   }
 
-  if (com::android::bluetooth::flags::a2dp_clear_pending_status_before_binder_call()) {
+  if (com_android_bluetooth_flags_a2dp_clear_pending_status_before_binder_call()) {
     if (ack == Status::PENDING) {
       log::warn("ignoring PENDING status");
       return;
@@ -384,7 +356,7 @@ void ack_stream_suspended(Status ack) {
     return;
   }
 
-  if (com::android::bluetooth::flags::a2dp_clear_pending_status_before_binder_call()) {
+  if (com_android_bluetooth_flags_a2dp_clear_pending_status_before_binder_call()) {
     log::info("result={}", ack);
 
     // The pending cmd state is set from one of the binder threads.
@@ -435,6 +407,20 @@ size_t read(uint8_t* p_buf, uint32_t len) {
   return active_hal_interface->ReadAudioData(p_buf, len);
 }
 
+// Clear the FMQ.
+void flush_source() {
+  if (!is_hal_enabled()) {
+    log::error("BluetoothAudio HAL is not enabled");
+    return;
+  }
+  if (is_hal_offloading()) {
+    log::error("session_type={} is not A2DP_SOFTWARE_ENCODING_DATAPATH",
+               toString(active_hal_interface->GetTransportInstance()->GetSessionType()));
+    return;
+  }
+  active_hal_interface->FlushAudioData();
+}
+
 // Update A2DP delay report to BluetoothAudio HAL
 void set_remote_delay(uint16_t delay_report) {
   if (!is_hal_enabled()) {
@@ -442,7 +428,7 @@ void set_remote_delay(uint16_t delay_report) {
     remote_delay = delay_report;
     return;
   }
-  log::verbose("DELAY {} ms", static_cast<float>(delay_report / 10.0));
+  log::debug("DELAY {} ms", static_cast<float>(delay_report / 10.0));
   active_hal_interface->GetTransportInstance()->SetRemoteDelay(delay_report);
 }
 
@@ -515,13 +501,13 @@ provider::get_a2dp_configuration(
         std::vector<::bluetooth::audio::a2dp::provider::a2dp_remote_capabilities> const&
                 remote_seps,
         btav_a2dp_codec_config_t const& user_preferences,
-        ::bluetooth::a2dp::CodecId user_preferred_codec_id, bool is_source) {
+        std::optional<::bluetooth::a2dp::CodecId> user_preferred_codec_id, bool is_source) {
   using ::aidl::android::hardware::bluetooth::audio::A2dpRemoteCapabilities;
   using ::aidl::android::hardware::bluetooth::audio::CodecId;
 
   BluetoothAudioClientInterface* hal_interface_to_use = nullptr;
 
-  if (com::android::bluetooth::flags::a2dp_sink_offload()) {
+  if (com_android_bluetooth_flags_a2dp_sink_offload()) {
     if (is_source) {
       hal_interface_to_use = offloading_hal_interface;
       if (hal_interface_to_use == nullptr) {
@@ -647,11 +633,9 @@ provider::get_a2dp_configuration(
       hint.audioContext.bitmask = AudioContext::UNSPECIFIED;
       break;
   }
-
-  auto aidl_codec_id = convertCodecId(user_preferred_codec_id);
-  log::assert_that(aidl_codec_id.has_value(), "convertCodecId failed");
-  hint.codecId = aidl_codec_id.value();
-
+  hint.codecId = user_preferred_codec_id.has_value()
+                         ? convertCodecId(user_preferred_codec_id.value())
+                         : std::nullopt;
   log::info("local: {}, remote capabilities:", is_source ? "source" : "sink");
   for (auto const& sep : a2dp_remote_capabilities) {
     log::info("- {}", sep.toString());
@@ -661,7 +645,7 @@ provider::get_a2dp_configuration(
   // Invoke the HAL GetAdpCapabilities method with the
   // remote capabilities.
   std::optional<A2dpConfiguration> result = std::nullopt;
-  if (com::android::bluetooth::flags::a2dp_sink_offload()) {
+  if (com_android_bluetooth_flags_a2dp_sink_offload()) {
     result = hal_interface_to_use->GetA2dpConfiguration(a2dp_remote_capabilities, hint);
   } else {
     result = offloading_hal_interface->GetA2dpConfiguration(a2dp_remote_capabilities, hint);
@@ -738,7 +722,7 @@ std::optional<btav_a2dp_hal_provider_info_t> get_provider_info() {
   for (auto& codec_info : source_provider_info->codecInfos) {
     auto source_codec = convertCodecInfo(codec_info);
     if (source_codec.has_value()) {
-      log::verbose("provider source codec: {}", source_codec.value().ToString());
+      log::debug("provider source codec: {}", source_codec.value().ToString());
       codecs_info.source_codecs.push_back(source_codec.value());
     }
   }
@@ -746,7 +730,7 @@ std::optional<btav_a2dp_hal_provider_info_t> get_provider_info() {
   for (auto& codec_info : sink_provider_info->codecInfos) {
     auto sink_codec = convertCodecInfo(codec_info);
     if (sink_codec.has_value()) {
-      log::verbose("provider sink codec: {}", sink_codec.value().ToString());
+      log::debug("provider sink codec: {}", sink_codec.value().ToString());
       codecs_info.sink_codecs.push_back(sink_codec.value());
     }
   }

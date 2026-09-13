@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "bt_status.h"
+#include "btif_status.h"
 #include "bta/include/bta_gatt_api.h"
 #include "bta/include/bta_ras_api.h"
 #include "com_android_bluetooth.h"
@@ -55,41 +56,6 @@
 #include "src/gatt/ffi.rs.h"
 
 using bluetooth::Uuid;
-
-#define UUID_PARAMS(uuid) uuid_lsb(uuid), uuid_msb(uuid)
-
-static Uuid from_java_uuid(jlong uuid_msb, jlong uuid_lsb) {
-  std::array<uint8_t, Uuid::kNumBytes128> uu;
-  for (int i = 0; i < 8; i++) {
-    uu[7 - i] = (uuid_msb >> (8 * i)) & 0xFF;
-    uu[15 - i] = (uuid_lsb >> (8 * i)) & 0xFF;
-  }
-  return Uuid::From128BitBE(uu);
-}
-
-static uint64_t uuid_lsb(const Uuid& uuid) {
-  uint64_t lsb = 0;
-
-  auto uu = uuid.To128BitBE();
-  for (int i = 8; i <= 15; i++) {
-    lsb <<= 8;
-    lsb |= uu[i];
-  }
-
-  return lsb;
-}
-
-static uint64_t uuid_msb(const Uuid& uuid) {
-  uint64_t msb = 0;
-
-  auto uu = uuid.To128BitBE();
-  for (int i = 0; i <= 7; i++) {
-    msb <<= 8;
-    msb |= uu[i];
-  }
-
-  return msb;
-}
 
 static RawAddress str2addr(JNIEnv* env, jstring address) {
   const char* c_address = env->GetStringUTFChars(address, NULL);
@@ -155,7 +121,6 @@ static jmethodID method_onClientCharacteristicsUnoffloaded;
 static jmethodID method_onServerRegistered;
 static jmethodID method_onClientConnected;
 static jmethodID method_onServiceAdded;
-static jmethodID method_onServiceStopped;
 static jmethodID method_onServiceDeleted;
 static jmethodID method_onResponseSendCompleted;
 static jmethodID method_onServerReadCharacteristic;
@@ -226,7 +191,7 @@ static void btgattc_register_app_cb(int status, int clientIf, const Uuid& app_uu
     return;
   }
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onClientRegistered, status, clientIf,
-                               UUID_PARAMS(app_uuid));
+                               app_uuid.msb(), app_uuid.lsb());
 }
 
 static void btgattc_open_cb(int conn_id, int status, int clientIf, int transport,
@@ -237,7 +202,7 @@ static void btgattc_open_cb(int conn_id, int status, int clientIf, int transport
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onConnected, clientIf, conn_id, transport,
                                status, address.get());
 }
@@ -250,7 +215,7 @@ static void btgattc_close_cb(int conn_id, int status, int clientIf, int transpor
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onDisconnected, clientIf, conn_id, transport,
                                status, address.get());
 }
@@ -274,7 +239,7 @@ static void btgattc_notify_cb(int conn_id, const btgatt_notify_params_t& p_data)
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), p_data.bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, p_data.bda);
   ScopedLocalRef<jbyteArray> jb(sCallbackEnv.get(), sCallbackEnv->NewByteArray(p_data.len));
   sCallbackEnv->SetByteArrayRegion(jb.get(), 0, p_data.len, (jbyte*)p_data.value);
 
@@ -371,7 +336,7 @@ static void btgattc_remote_rssi_cb(int client_if, const RawAddress& bda, int rss
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
 
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onReadRemoteRssi, client_if, address.get(),
                                rssi, status);
@@ -436,7 +401,7 @@ static void fillGattDbElementArray(JNIEnv* env, jobject* array, const btgatt_db_
 
     ScopedLocalRef<jclass> uuidClazz(env, env->FindClass("java/util/UUID"));
     ScopedLocalRef<jobject> uuid(env, env->NewObject(uuidClazz.get(), uuidConstructor,
-                                                     uuid_msb(curr.uuid), uuid_lsb(curr.uuid)));
+                                                     curr.uuid.msb(), curr.uuid.lsb()));
     fid = env->GetFieldID(gattDbElementClazz.get(), "uuid", "Ljava/util/UUID;");
     env->SetObjectField(element.get(), fid, uuid.get());
 
@@ -571,7 +536,7 @@ static void btgatts_register_app_cb(int status, int server_if, const Uuid& uuid)
   }
   sPrivateGattServerManager->OpenServer(server_if);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onServerRegistered, status, server_if,
-                               UUID_PARAMS(uuid));
+                               uuid.msb(), uuid.lsb());
 }
 
 static void btgatts_connection_cb(int conn_id, int server_if, int transport, int connected,
@@ -582,7 +547,7 @@ static void btgatts_connection_cb(int conn_id, int server_if, int transport, int
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onClientConnected, address.get(), transport,
                                connected, conn_id, server_if);
 }
@@ -620,17 +585,6 @@ static void btgatts_service_added_cb(int status, int server_if, const btgatt_db_
                                array.get());
 }
 
-static void btgatts_service_stopped_cb(int status, int server_if, int srvc_handle) {
-  std::shared_lock<std::shared_mutex> lock(callbacks_mutex);
-  CallbackEnv sCallbackEnv(__func__);
-  if (!sCallbackEnv.valid() || !mCallbacksObj) {
-    return;
-  }
-  sPrivateGattServerManager->RemoveService(server_if, srvc_handle);
-  sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onServiceStopped, status, server_if,
-                               srvc_handle);
-}
-
 static void btgatts_service_deleted_cb(int status, int server_if, int srvc_handle) {
   std::shared_lock<std::shared_mutex> lock(callbacks_mutex);
   CallbackEnv sCallbackEnv(__func__);
@@ -650,7 +604,7 @@ static void btgatts_request_read_characteristic_cb(int conn_id, int trans_id, co
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onServerReadCharacteristic, address.get(),
                                conn_id, trans_id, attr_handle, offset, is_long);
 }
@@ -663,7 +617,7 @@ static void btgatts_request_read_descriptor_cb(int conn_id, int trans_id, const 
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onServerReadDescriptor, address.get(), conn_id,
                                trans_id, attr_handle, offset, is_long);
 }
@@ -678,7 +632,7 @@ static void btgatts_request_write_characteristic_cb(int conn_id, int trans_id,
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   ScopedLocalRef<jbyteArray> val(sCallbackEnv.get(), sCallbackEnv->NewByteArray(length));
   if (val.get()) {
     sCallbackEnv->SetByteArrayRegion(val.get(), 0, length, (jbyte*)value);
@@ -697,7 +651,7 @@ static void btgatts_request_write_descriptor_cb(int conn_id, int trans_id, const
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   ScopedLocalRef<jbyteArray> val(sCallbackEnv.get(), sCallbackEnv->NewByteArray(length));
   if (val.get()) {
     sCallbackEnv->SetByteArrayRegion(val.get(), 0, length, (jbyte*)value);
@@ -715,7 +669,7 @@ static void btgatts_request_exec_write_cb(int conn_id, int trans_id, const RawAd
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onExecuteWrite, address.get(), conn_id,
                                trans_id, exec_write);
 }
@@ -807,7 +761,6 @@ static const btgatt_server_callbacks_t sGattServerCallbacks = {
         btgatts_register_app_cb,
         btgatts_connection_cb,
         btgatts_service_added_cb,
-        btgatts_service_stopped_cb,
         btgatts_service_deleted_cb,
         btgatts_request_read_characteristic_cb,
         btgatts_request_read_descriptor_cb,
@@ -929,7 +882,7 @@ public:
       return;
     }
 
-    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv.get(), address);
+    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv, address);
     sCallbackEnv->CallVoidMethod(mAdvertiseCallbacksObj, method_onOwnAddressRead, advertiser_id,
                                  address_type, addr.get());
   }
@@ -948,7 +901,7 @@ public:
     if (!sCallbackEnv.valid() || !mDistanceMeasurementCallbacksObj) {
       return;
     }
-    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv.get(), address);
+    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv, address);
     sCallbackEnv->CallVoidMethod(mDistanceMeasurementCallbacksObj,
                                  method_onDistanceMeasurementStarted, addr.get(), method);
   }
@@ -959,7 +912,7 @@ public:
     if (!sCallbackEnv.valid() || !mDistanceMeasurementCallbacksObj) {
       return;
     }
-    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv.get(), address);
+    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv, address);
     sCallbackEnv->CallVoidMethod(mDistanceMeasurementCallbacksObj,
                                  method_onDistanceMeasurementStopped, addr.get(), reason, method);
   }
@@ -968,7 +921,7 @@ public:
                                    uint32_t error_centimeter, int azimuth_angle,
                                    int error_azimuth_angle, int altitude_angle,
                                    int error_altitude_angle, uint64_t elapsed_realtime_nanos,
-                                   int remote_tx_power, int reflector_rssi, int8_t confidence_level,
+                                   int remote_tx_power, int rssi, int8_t confidence_level,
                                    double delay_spread_meters, uint8_t detected_attack_level,
                                    double velocity_meters_per_second, uint8_t method) {
     std::shared_lock<std::shared_mutex> lock(callbacks_mutex);
@@ -976,13 +929,12 @@ public:
     if (!sCallbackEnv.valid() || !mDistanceMeasurementCallbacksObj) {
       return;
     }
-    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv.get(), address);
+    ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv, address);
     sCallbackEnv->CallVoidMethod(
             mDistanceMeasurementCallbacksObj, method_onDistanceMeasurementResult, addr.get(),
             centimeter, error_centimeter, azimuth_angle, error_azimuth_angle, altitude_angle,
-            error_altitude_angle, elapsed_realtime_nanos, remote_tx_power, reflector_rssi,
-            confidence_level, delay_spread_meters, detected_attack_level,
-            velocity_meters_per_second, method);
+            error_altitude_angle, elapsed_realtime_nanos, remote_tx_power, rssi, confidence_level,
+            delay_spread_meters, detected_attack_level, velocity_meters_per_second, method);
   }
 };
 
@@ -1096,12 +1048,12 @@ static int gattClientGetDeviceTypeNative(JNIEnv* env, jobject /* object */, jstr
   return sGattIf->client->get_device_type(str2addr(env, address));
 }
 
-static void gattClientRegisterAppNative(JNIEnv* env, jobject /* object */, jlong app_uuid_lsb,
-                                        jlong app_uuid_msb, jstring name, jboolean eatt_support) {
+static void gattClientRegisterAppNative(JNIEnv* env, jobject /* object */, jlong app_uuid_msb,
+                                        jlong app_uuid_lsb, jstring name, jboolean eatt_support) {
   if (!sGattIf) {
     return;
   }
-  Uuid uuid = from_java_uuid(app_uuid_msb, app_uuid_lsb);
+  Uuid uuid(app_uuid_msb, app_uuid_lsb);
   sGattIf->client->register_client(uuid, jstr_to_str(env, name).c_str(), eatt_support);
 }
 
@@ -1149,7 +1101,7 @@ static void readClientPhyCb(uint8_t clientIf, RawAddress bda, uint8_t tx_phy, ui
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
 
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onClientPhyRead, clientIf, address.get(),
                                tx_phy, rx_phy, status);
@@ -1175,24 +1127,24 @@ static void gattClientRefreshNative(JNIEnv* env, jobject /* object */, jint clie
 }
 
 static void gattClientSearchServiceNative(JNIEnv* /* env */, jobject /* object */, jint conn_id,
-                                          jboolean search_all, jlong service_uuid_lsb,
-                                          jlong service_uuid_msb) {
+                                          jboolean search_all, jlong service_uuid_msb,
+                                          jlong service_uuid_lsb) {
   if (!sGattIf) {
     return;
   }
 
-  Uuid uuid = from_java_uuid(service_uuid_msb, service_uuid_lsb);
+  Uuid uuid(service_uuid_msb, service_uuid_lsb);
   sGattIf->client->search_service(conn_id, search_all ? 0 : &uuid);
 }
 
 static void gattClientDiscoverServiceByUuidNative(JNIEnv* /* env */, jobject /* object */,
-                                                  jint conn_id, jlong service_uuid_lsb,
-                                                  jlong service_uuid_msb) {
+                                                  jint conn_id, jlong service_uuid_msb,
+                                                  jlong service_uuid_lsb) {
   if (!sGattIf) {
     return;
   }
 
-  Uuid uuid = from_java_uuid(service_uuid_msb, service_uuid_lsb);
+  Uuid uuid(service_uuid_msb, service_uuid_lsb);
   sGattIf->client->btif_gattc_discover_service_by_uuid(conn_id, uuid);
 }
 
@@ -1206,14 +1158,14 @@ static void gattClientReadCharacteristicNative(JNIEnv* /* env */, jobject /* obj
 }
 
 static void gattClientReadUsingCharacteristicUuidNative(JNIEnv* /* env */, jobject /* object */,
-                                                        jint conn_id, jlong uuid_lsb,
-                                                        jlong uuid_msb, jint s_handle,
+                                                        jint conn_id, jlong uuid_msb,
+                                                        jlong uuid_lsb, jint s_handle,
                                                         jint e_handle, jint authReq) {
   if (!sGattIf) {
     return;
   }
 
-  Uuid uuid = from_java_uuid(uuid_msb, uuid_lsb);
+  Uuid uuid(uuid_msb, uuid_lsb);
   sGattIf->client->read_using_characteristic_uuid(conn_id, uuid, s_handle, e_handle, authReq);
 }
 
@@ -1332,8 +1284,16 @@ static int gattSubrateRequestNative(JNIEnv* env, jobject /* object */, jint /* c
     return 1;  // BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ENABLED
   }
   // TODO does BtStatus align with BluetoothStatusCodes ?
-  sGattIf->client->subrate_request(str2addr(env, address), subrate_min, subrate_max, max_latency,
-                                   cont_num, sup_timeout);
+  if (com_android_bluetooth_flags_gatt_return_unsupported_when_not_support_subrating()) {
+    BtStatus status = sGattIf->client->subrate_request(str2addr(env, address), subrate_min,
+                                                        subrate_max, max_latency, cont_num,
+                                                        sup_timeout);
+    // BluetoothStatusCodes.FEATURE_NOT_SUPPORTED
+    if (status.code() == UNSUPPORTED) return 11;
+  } else {
+    sGattIf->client->subrate_request(str2addr(env, address), subrate_min, subrate_max, max_latency,
+                                    cont_num, sup_timeout);
+  }
   return 0;  // BluetoothStatusCodes.SUCCESS
 }
 
@@ -1343,7 +1303,14 @@ static int gattSubrateModeRequestNative(JNIEnv* env, jobject /* object */, jint 
     return 1;  // BluetoothStatusCodes.ERROR_BLUETOOTH_NOT_ENABLED
   }
   // TODO does bt_status_t align with BluetoothStatusCodes ?
-  sGattIf->client->subrate_mode_request(client_if, str2addr(env, address), subrate_mode);
+  if (com_android_bluetooth_flags_gatt_return_unsupported_when_not_support_subrating()) {
+    BtStatus status = sGattIf->client->subrate_mode_request(
+        client_if, str2addr(env, address), subrate_mode);
+    // BluetoothStatusCodes.FEATURE_NOT_SUPPORTED
+    if (status.code() == UNSUPPORTED) return 11;
+  } else {
+    sGattIf->client->subrate_mode_request(client_if, str2addr(env, address), subrate_mode);
+  }
   return 0;  // BluetoothStatusCodes.SUCCESS
 }
 
@@ -1351,12 +1318,12 @@ static int gattSubrateModeRequestNative(JNIEnv* env, jobject /* object */, jint 
  * Native server functions
  */
 
-static void gattServerRegisterAppNative(JNIEnv* /* env */, jobject /* object */, jlong app_uuid_lsb,
-                                        jlong app_uuid_msb, jboolean eatt_support) {
+static void gattServerRegisterAppNative(JNIEnv* /* env */, jobject /* object */, jlong app_uuid_msb,
+                                        jlong app_uuid_lsb, jboolean eatt_support) {
   if (!sGattIf) {
     return;
   }
-  Uuid uuid = from_java_uuid(app_uuid_msb, app_uuid_lsb);
+  Uuid uuid(app_uuid_msb, app_uuid_lsb);
   sGattIf->server->register_server(uuid, eatt_support);
 }
 
@@ -1405,7 +1372,7 @@ static void readServerPhyCb(uint8_t serverIf, RawAddress bda, uint8_t tx_phy, ui
     return;
   }
 
-  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv.get(), bda);
+  ScopedLocalRef<jstring> address = addressToJString(sCallbackEnv, bda);
 
   sCallbackEnv->CallVoidMethod(mCallbacksObj, method_onServerPhyRead, serverIf, address.get(),
                                tx_phy, rx_phy, status);
@@ -1463,7 +1430,7 @@ static std::vector<btgatt_db_element_t> convertToDbElementsVector(JNIEnv* env,
     if (uuid.get() != NULL) {
       jlong uuid_msb = env->CallLongMethod(uuid.get(), uuidGetMsb);
       jlong uuid_lsb = env->CallLongMethod(uuid.get(), uuidGetLsb);
-      curr.uuid = from_java_uuid(uuid_msb, uuid_lsb);
+      curr.uuid = Uuid(uuid_msb, uuid_lsb);
     }
 
     fid = env->GetFieldID(gattDbElementClazz, "type", "I");
@@ -1497,14 +1464,6 @@ static void gattServerAddServiceNative(JNIEnv* env, jobject /* object */, jint s
 
   std::vector<btgatt_db_element_t> db = convertToDbElementsVector(env, gatt_db_elements);
   sGattIf->server->add_service(server_if, db.data(), db.size());
-}
-
-static void gattServerStopServiceNative(JNIEnv* /* env */, jobject /* object */, jint server_if,
-                                        jint svc_handle) {
-  if (!sGattIf) {
-    return;
-  }
-  sGattIf->server->stop_service(server_if, svc_handle);
 }
 
 static void gattServerDeleteServiceNative(JNIEnv* /* env */, jobject /* object */, jint server_if,
@@ -1797,7 +1756,7 @@ static void getOwnAddressCb(uint8_t advertiser_id, uint8_t address_type, RawAddr
     return;
   }
 
-  ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv.get(), address);
+  ScopedLocalRef<jstring> addr = addressToJString(sCallbackEnv, address);
   sCallbackEnv->CallVoidMethod(mAdvertiseCallbacksObj, method_onOwnAddressRead, advertiser_id,
                                address_type, addr.get());
 }
@@ -1931,17 +1890,19 @@ static void setPeriodicAdvertisingEnableNative(JNIEnv* /* env */, jobject /* obj
 
 static jobject gattClientOffloadCharacteristicsNative(JNIEnv* env, jobject /* object */,
                                                       jint conn_id, jobject gatt_db_elements,
-                                                      jlong endpoint_Id, jlong hub_id) {
+                                                      jlong endpoint_Id, jlong hub_id, jint uid,
+                                                      jstring attribution_tag) {
   if (!sGattIf) {
     return env->NewObject(android_bluetooth_GattOffloadSession.clazz,
                           android_bluetooth_GattOffloadSession.constructor,
                           BTGATT_OFFLOAD_SESSION_ID_UNKNOWN, tGATT_STATUS::GATT_ERROR);
   }
 
+  std::string attribution_tag_str = stringFromJstring(env, attribution_tag);
   btgatt_offload_result_t result{BTGATT_OFFLOAD_SESSION_ID_UNKNOWN, tGATT_STATUS::GATT_ERROR};
   std::vector<btgatt_db_element_t> db = convertToDbElementsVector(env, gatt_db_elements);
-  sGattIf->client->offload_characteristics(conn_id, db.data(), db.size(), endpoint_Id, hub_id,
-                                           &result);
+  sGattIf->client->offload_characteristics(conn_id, db.data(), db.size(), endpoint_Id, hub_id, uid,
+                                           std::move(attribution_tag_str), &result);
   return env->NewObject(android_bluetooth_GattOffloadSession.clazz,
                         android_bluetooth_GattOffloadSession.constructor, result.session_id,
                         result.status);
@@ -1949,16 +1910,18 @@ static jobject gattClientOffloadCharacteristicsNative(JNIEnv* env, jobject /* ob
 
 static jobject gattServerOffloadCharacteristicsNative(JNIEnv* env, jobject /* object */,
                                                       jint conn_id, jobject gatt_db_elements,
-                                                      jlong endpoint_Id, jlong hub_id) {
+                                                      jlong endpoint_Id, jlong hub_id, jint uid,
+                                                      jstring attribution_tag) {
   if (!sGattIf) {
     return env->NewObject(android_bluetooth_GattOffloadSession.clazz,
                           android_bluetooth_GattOffloadSession.constructor,
                           BTGATT_OFFLOAD_SESSION_ID_UNKNOWN, tGATT_STATUS::GATT_ERROR);
   }
+  std::string attribution_tag_str = stringFromJstring(env, attribution_tag);
   btgatt_offload_result_t result{BTGATT_OFFLOAD_SESSION_ID_UNKNOWN, tGATT_STATUS::GATT_ERROR};
   std::vector<btgatt_db_element_t> db = convertToDbElementsVector(env, gatt_db_elements);
-  sGattIf->server->offload_characteristics(conn_id, db.data(), db.size(), endpoint_Id, hub_id,
-                                           &result);
+  sGattIf->server->offload_characteristics(conn_id, db.data(), db.size(), endpoint_Id, hub_id, uid,
+                                           std::move(attribution_tag_str), &result);
   return env->NewObject(android_bluetooth_GattOffloadSession.clazz,
                         android_bluetooth_GattOffloadSession.constructor, result.session_id,
                         result.status);
@@ -2150,7 +2113,6 @@ static int register_com_android_bluetooth_gatt_(JNIEnv* env) {
            (void*)gattServerSetPreferredPhyNative},
           {"gattServerReadPhyNative", "(ILjava/lang/String;)V", (void*)gattServerReadPhyNative},
           {"gattServerAddServiceNative", "(ILjava/util/List;)V", (void*)gattServerAddServiceNative},
-          {"gattServerStopServiceNative", "(II)V", (void*)gattServerStopServiceNative},
           {"gattServerDeleteServiceNative", "(II)V", (void*)gattServerDeleteServiceNative},
           {"gattServerSendIndicationNative", "(III[B)V", (void*)gattServerSendIndicationNative},
           {"gattServerSendNotificationNative", "(III[B)V", (void*)gattServerSendNotificationNative},
@@ -2158,10 +2120,12 @@ static int register_com_android_bluetooth_gatt_(JNIEnv* env) {
           {"gattSubrateRequestNative", "(ILjava/lang/String;IIIII)I",
            (void*)gattSubrateRequestNative},
           {"gattClientOffloadCharacteristicsNative",
-           "(ILjava/util/List;JJ)Landroid/bluetooth/GattOffloadSession$InnerParcel;",
+           "(ILjava/util/List;JJILjava/lang/String;)Landroid/bluetooth/"
+           "GattOffloadSession$InnerParcel;",
            (void*)gattClientOffloadCharacteristicsNative},
           {"gattServerOffloadCharacteristicsNative",
-           "(ILjava/util/List;JJ)Landroid/bluetooth/GattOffloadSession$InnerParcel;",
+           "(ILjava/util/List;JJILjava/lang/String;)Landroid/bluetooth/"
+           "GattOffloadSession$InnerParcel;",
            (void*)gattServerOffloadCharacteristicsNative},
           {"gattClientUnoffloadCharacteristicsNative", "(II)V",
            (void*)gattClientUnoffloadCharacteristicsNative},
@@ -2209,7 +2173,6 @@ static int register_com_android_bluetooth_gatt_(JNIEnv* env) {
           {"onServerRegistered", "(IIJJ)V", &method_onServerRegistered},
           {"onClientConnected", "(Ljava/lang/String;IZII)V", &method_onClientConnected},
           {"onServiceAdded", "(IILjava/util/List;)V", &method_onServiceAdded},
-          {"onServiceStopped", "(III)V", &method_onServiceStopped},
           {"onServiceDeleted", "(III)V", &method_onServiceDeleted},
           {"onResponseSendCompleted", "(II)V", &method_onResponseSendCompleted},
           {"onServerReadCharacteristic", "(Ljava/lang/String;IIIIZ)V",

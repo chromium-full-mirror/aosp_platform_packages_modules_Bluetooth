@@ -21,7 +21,7 @@
  *  Interface to AVRCP mandatory commands
  *
  ******************************************************************************/
-#include "avrc_api.h"
+#include "stack/include/avrc_api.h"
 
 #include <android_bluetooth_sysprop.h>
 #include <bluetooth/log.h>
@@ -31,11 +31,8 @@
 
 #include <cstdint>
 
-#include "avct_api.h"
-#include "avrc_defs.h"
 #include "avrc_int.h"
 #include "avrcp.sysprop.h"
-#include "btif/include/btif_av.h"
 #include "btif/include/btif_config.h"
 #include "internal_include/bt_target.h"
 #include "osi/include/alarm.h"
@@ -43,6 +40,8 @@
 #include "osi/include/fixed_queue.h"
 #include "osi/include/properties.h"
 #include "stack/avct/avct_defs.h"
+#include "stack/include/avct_api.h"
+#include "stack/include/avrc_defs.h"
 #include "stack/include/bt_hdr.h"
 #include "stack/include/bt_types.h"
 #include "stack/include/bt_uuid16.h"
@@ -101,7 +100,33 @@ static void avrc_start_cmd_timer(uint8_t handle, uint8_t label, uint8_t msg_mask
  *
  *****************************************************************************/
 bool avrcp_absolute_volume_is_enabled() {
-  return android::sysprop::bluetooth::Avrcp::absolute_volume().value_or(true);
+  return android::sysprop::bluetooth::Avrcp::absolute_volume();
+}
+
+/******************************************************************************
+ *
+ * Function         avrcp_controller_cover_art_enabled
+ *
+ * Description      Check if Cover Art is enabled in config
+ *
+ * Returns          return true if Cover Art is enabled
+ *
+ *****************************************************************************/
+bool avrcp_controller_cover_art_enabled() {
+  return android::sysprop::bluetooth::Avrcp::isAvrcpControllerCoverArtEnabled();
+}
+
+/******************************************************************************
+ *
+ * Function         avrcp_controller_browsing_enabled
+ *
+ * Description      Check if Browsing is enabled in config
+ *
+ * Returns          return true if Browsing is enabled
+ *
+ *****************************************************************************/
+bool avrcp_controller_browsing_enabled() {
+  return android::sysprop::bluetooth::Avrcp::isAvrcpControllerBrowsingEnabled();
 }
 
 /******************************************************************************
@@ -1193,10 +1218,6 @@ uint16_t AVRC_MsgReq(uint8_t handle, uint8_t label, uint8_t ctype, BT_HDR* p_pkt
   }
 
   log::verbose("handle = {} label = {} ctype = {} len = {}", handle, label, ctype, p_pkt->len);
-  /* Handle for AVRCP fragment */
-  if (btif_av_src_sink_coexist_enabled()) {
-    is_new_avrcp = osi_property_get_bool("bluetooth.profile.avrcp.target.enabled", false);
-  }
   if (ctype >= AVRC_RSP_NOT_IMPL) {
     cr = AVCT_RSP;
   }
@@ -1456,11 +1477,11 @@ void AVRC_SaveControllerVersion(const RawAddress& bdaddr, uint16_t new_version) 
   }
 }
 
-void AVRC_UpdateCcb(RawAddress* addr, uint32_t company_id) {
+void AVRC_UpdateCcb(RawAddress addr, uint32_t company_id) {
   for (uint8_t i = 0; i < AVCT_NUM_CONN; i++) {
     log::info("handle:{}, update cback:0x{:0x}", i, company_id);
     if (avrc_cb.ccb[i].company_id == company_id) {
-      avrc_cb.ccb[i].ctrl_cback.Run(i, AVRC_CLOSE_IND_EVT, 0, addr);
+      avrc_cb.ccb[i].ctrl_cback.Run(i, AVRC_CLOSE_IND_EVT, 0, &addr);
     }
   }
 }

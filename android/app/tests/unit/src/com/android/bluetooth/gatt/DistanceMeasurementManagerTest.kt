@@ -18,6 +18,8 @@ package com.android.bluetooth.gatt
 
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothStatusCodes
+import android.bluetooth.BondStatus
+import android.bluetooth.EncryptionStatus
 import android.bluetooth.le.ChannelSoundingParams
 import android.bluetooth.le.DistanceMeasurementMethod
 import android.bluetooth.le.DistanceMeasurementParams
@@ -32,10 +34,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import androidx.test.platform.app.InstrumentationRegistry
 import com.android.bluetooth.BluetoothStatsLog
-import com.android.bluetooth.TestUtils
 import com.android.bluetooth.btservice.AdapterService
-import com.android.bluetooth.btservice.MetricsLogger
 import com.android.bluetooth.flags.Flags
+import com.android.bluetooth.getTestDevice
+import com.android.bluetooth.metrics.MetricsLogger
+import com.android.bluetooth.mockPackageManager
 import com.android.tests.bluetooth.MockitoRule
 import com.google.common.truth.Truth.assertThat
 import java.util.UUID
@@ -50,6 +53,7 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -57,7 +61,6 @@ import org.mockito.kotlin.whenever
 /** Test cases for [DistanceMeasurementManager]. */
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-@EnableFlags(Flags.FLAG_DISTANCE_MEASUREMENT_THREAD)
 class DistanceMeasurementManagerTest {
     @get:Rule val mockitoRule = MockitoRule()
     @get:Rule val setFlagsRule = SetFlagsRule()
@@ -69,7 +72,7 @@ class DistanceMeasurementManagerTest {
     @Mock private lateinit var callback: IDistanceMeasurementCallback
     @Mock private lateinit var mockMetricsLogger: MetricsLogger
 
-    private val device = TestUtils.getTestDevice(57)
+    private val device = getTestDevice(57)
 
     private lateinit var distanceMeasurementManager: DistanceMeasurementManager
     private lateinit var uuid: UUID
@@ -78,12 +81,26 @@ class DistanceMeasurementManagerTest {
 
     @Before
     fun setUp() {
-        doReturn(packageManager).whenever(adapterService).packageManager
+        adapterService.mockPackageManager(packageManager)
         doReturn(true).whenever(packageManager).hasSystemFeature(any())
         doReturn(true).whenever(adapterService).isLeChannelSoundingSupported
         val address = device.address
         doReturn(address).whenever(adapterService).getIdentityAddress(address)
         doReturn(true).whenever(adapterService).isConnected(any<BluetoothDevice>())
+        doReturn(BluetoothDevice.BOND_BONDED).whenever(adapterService).getBondState(any())
+
+        val bondStatus = mock<BondStatus>()
+        doReturn(BluetoothDevice.PAIRING_ALGORITHM_SC).whenever(bondStatus).pairingAlgorithm
+        doReturn(bondStatus)
+            .whenever(adapterService)
+            .getBondStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val encryptionStatus = mock<EncryptionStatus>()
+        doReturn(BluetoothDevice.ENCRYPTION_ALGORITHM_AES).whenever(encryptionStatus).algorithm
+        doReturn(16).whenever(encryptionStatus).keySize
+        doReturn(encryptionStatus)
+            .whenever(adapterService)
+            .getEncryptionStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
 
         handlerThread = HandlerThread("DistanceMeasurementManagerTest")
         handlerThread.start()
@@ -260,8 +277,8 @@ class DistanceMeasurementManagerTest {
             45,
             0,
             10000L,
-            127,
-            127,
+            DistanceMeasurementResult.INVALID_TX_POWER_DBM,
+            -20,
             1,
             /* delaySpreadMeters = */ 10.0,
             /* detectedAttackLevel= */ DistanceMeasurementResult.NADM_ATTACK_IS_POSSIBLE,
@@ -275,6 +292,11 @@ class DistanceMeasurementManagerTest {
         assertThat(result.azimuthAngle).isEqualTo(100)
         assertThat(result.altitudeAngle).isEqualTo(45)
         assertThat(result.measurementTimestampNanos).isEqualTo(10000)
+        if (Flags.includePowerAndRssiInDistanceMeasurementResult()) {
+            assertThat(result.remoteTxPowerDbm)
+                .isEqualTo(DistanceMeasurementResult.INVALID_TX_POWER_DBM)
+            assertThat(result.rssiDbm).isEqualTo(-20)
+        }
         assertThat(result.confidenceLevel).isEqualTo(0.01)
         assertThat(result.delaySpreadMeters).isEqualTo(10.0)
         assertThat(result.detectedAttackLevel)
@@ -334,8 +356,8 @@ class DistanceMeasurementManagerTest {
             -1,
             -1,
             1000L,
-            127,
-            127,
+            -10,
+            -20,
             -1,
             /* delaySpreadMeters= */ 10.0,
             /* detectedAttackLevel= */ DistanceMeasurementResult.NADM_ATTACK_IS_POSSIBLE,
@@ -349,6 +371,10 @@ class DistanceMeasurementManagerTest {
         assertThat(result.errorMeters).isEqualTo(1.00)
         assertThat(result.azimuthAngle).isEqualTo(Double.NaN)
         assertThat(result.errorAzimuthAngle).isEqualTo(Double.NaN)
+        if (Flags.includePowerAndRssiInDistanceMeasurementResult()) {
+            assertThat(result.remoteTxPowerDbm).isEqualTo(-10)
+            assertThat(result.rssiDbm).isEqualTo(-20)
+        }
         assertThat(result.altitudeAngle).isEqualTo(Double.NaN)
         assertThat(result.errorAltitudeAngle).isEqualTo(Double.NaN)
         assertThat(result.measurementTimestampNanos).isEqualTo(1000L)
@@ -405,6 +431,136 @@ class DistanceMeasurementManagerTest {
         assertThat(captor.firstValue)
             .asList()
             .contains(BluetoothStatsLog.CHANNEL_SOUNDING_TYPES_SUPPORTED__CS_TYPES__CS_BT_CORE60)
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENFORCE_SECURITY_FOR_RANGING)
+    fun testStartRssiTracker_SecurityCheck_BondStatusFail() {
+        doReturn(BluetoothDevice.BOND_BONDED).whenever(adapterService).getBondState(any())
+
+        val bondStatus = mock<BondStatus>()
+        whenever(bondStatus.pairingAlgorithm)
+            .thenReturn(BluetoothDevice.PAIRING_ALGORITHM_LE_LEGACY)
+        doReturn(bondStatus)
+            .whenever(adapterService)
+            .getBondStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val params =
+            DistanceMeasurementParams.Builder(device)
+                .setDurationSeconds(1000)
+                .setFrequency(DistanceMeasurementParams.REPORT_FREQUENCY_LOW)
+                .setMethodId(DistanceMeasurementMethod.DISTANCE_MEASUREMENT_METHOD_RSSI)
+                .build()
+        distanceMeasurementManager.startDistanceMeasurement(uuid, APP_UID, params, callback)
+
+        verify(nativeInterface, never())
+            .startDistanceMeasurement(any(), any(), any(), any(), any(), any())
+        verify(callback).onStartFail(device, BluetoothStatusCodes.ERROR_DEVICE_NOT_BONDED)
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENFORCE_SECURITY_FOR_RANGING)
+    fun testStartRssiTracker_SecurityCheck_EncryptionStatusNull() {
+        doReturn(BluetoothDevice.BOND_BONDED).whenever(adapterService).getBondState(any())
+        doReturn(null)
+            .whenever(adapterService)
+            .getBondStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+        doReturn(null)
+            .whenever(adapterService)
+            .getEncryptionStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val params =
+            DistanceMeasurementParams.Builder(device)
+                .setDurationSeconds(1000)
+                .setFrequency(DistanceMeasurementParams.REPORT_FREQUENCY_LOW)
+                .setMethodId(DistanceMeasurementMethod.DISTANCE_MEASUREMENT_METHOD_RSSI)
+                .build()
+        distanceMeasurementManager.startDistanceMeasurement(uuid, APP_UID, params, callback)
+
+        verify(nativeInterface, never())
+            .startDistanceMeasurement(any(), any(), any(), any(), any(), any())
+        verify(callback).onStartFail(device, BluetoothStatusCodes.ERROR_NO_LE_CONNECTION)
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENFORCE_SECURITY_FOR_RANGING)
+    fun testStartRssiTracker_SecurityCheck_EncryptionStatusAlgoFail() {
+        doReturn(BluetoothDevice.BOND_BONDED).whenever(adapterService).getBondState(any())
+        doReturn(null)
+            .whenever(adapterService)
+            .getBondStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val encryptionStatus = mock<EncryptionStatus>()
+        whenever(encryptionStatus.algorithm).thenReturn(BluetoothDevice.ENCRYPTION_ALGORITHM_NONE)
+        doReturn(encryptionStatus)
+            .whenever(adapterService)
+            .getEncryptionStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val params =
+            DistanceMeasurementParams.Builder(device)
+                .setDurationSeconds(1000)
+                .setFrequency(DistanceMeasurementParams.REPORT_FREQUENCY_LOW)
+                .setMethodId(DistanceMeasurementMethod.DISTANCE_MEASUREMENT_METHOD_RSSI)
+                .build()
+        distanceMeasurementManager.startDistanceMeasurement(uuid, APP_UID, params, callback)
+
+        verify(nativeInterface, never())
+            .startDistanceMeasurement(any(), any(), any(), any(), any(), any())
+        verify(callback).onStartFail(device, BluetoothStatusCodes.ERROR_DEVICE_NOT_BONDED)
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENFORCE_SECURITY_FOR_RANGING)
+    fun testStartRssiTracker_SecurityCheck_EncryptionStatusKeySizeFail() {
+        doReturn(BluetoothDevice.BOND_BONDED).whenever(adapterService).getBondState(any())
+        doReturn(null)
+            .whenever(adapterService)
+            .getBondStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val encryptionStatus = mock<EncryptionStatus>()
+        whenever(encryptionStatus.algorithm).thenReturn(BluetoothDevice.ENCRYPTION_ALGORITHM_AES)
+        whenever(encryptionStatus.keySize).thenReturn(10)
+        doReturn(encryptionStatus)
+            .whenever(adapterService)
+            .getEncryptionStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val params =
+            DistanceMeasurementParams.Builder(device)
+                .setDurationSeconds(1000)
+                .setFrequency(DistanceMeasurementParams.REPORT_FREQUENCY_LOW)
+                .setMethodId(DistanceMeasurementMethod.DISTANCE_MEASUREMENT_METHOD_RSSI)
+                .build()
+        distanceMeasurementManager.startDistanceMeasurement(uuid, APP_UID, params, callback)
+
+        verify(nativeInterface, never())
+            .startDistanceMeasurement(any(), any(), any(), any(), any(), any())
+        verify(callback).onStartFail(device, BluetoothStatusCodes.ERROR_DEVICE_NOT_BONDED)
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENFORCE_SECURITY_FOR_RANGING)
+    fun testStartRssiTracker_SecurityCheck_Success() {
+        doReturn(BluetoothDevice.BOND_BONDED).whenever(adapterService).getBondState(any())
+        doReturn(null)
+            .whenever(adapterService)
+            .getBondStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val encryptionStatus = mock<EncryptionStatus>()
+        whenever(encryptionStatus.algorithm).thenReturn(BluetoothDevice.ENCRYPTION_ALGORITHM_AES)
+        whenever(encryptionStatus.keySize).thenReturn(16)
+        doReturn(encryptionStatus)
+            .whenever(adapterService)
+            .getEncryptionStatus(any(), eq(BluetoothDevice.TRANSPORT_LE))
+
+        val params =
+            DistanceMeasurementParams.Builder(device)
+                .setDurationSeconds(1000)
+                .setFrequency(DistanceMeasurementParams.REPORT_FREQUENCY_LOW)
+                .setMethodId(DistanceMeasurementMethod.DISTANCE_MEASUREMENT_METHOD_RSSI)
+                .build()
+        distanceMeasurementManager.startDistanceMeasurement(uuid, APP_UID, params, callback)
+
+        verify(nativeInterface).startDistanceMeasurement(any(), any(), any(), any(), any(), any())
     }
 
     companion object {

@@ -30,6 +30,7 @@ import android.Manifest.permission.WRITE_SMS
 import android.annotation.PermissionMethod
 import android.annotation.PermissionName
 import android.annotation.RequiresPermission
+import android.app.BroadcastOptions
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
@@ -39,26 +40,54 @@ import android.bluetooth.BluetoothUtils
 import android.content.AttributionSource
 import android.content.Context
 import android.content.pm.PackageInfo
+import android.content.pm.PackageInfo.REQUESTED_PERMISSION_GRANTED
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.GET_PERMISSIONS
-import android.content.pm.PackageManager.MATCH_UNINSTALLED_PACKAGES
 import android.location.LocationManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerExemptionManager
+import android.os.Process
 import android.os.RemoteException
 import android.os.UserHandle
+import android.os.UserManager
 import android.permission.PermissionManager
 import android.permission.PermissionManager.PERMISSION_GRANTED
 import android.permission.PermissionManager.PERMISSION_HARD_DENIED
+import android.provider.DeviceConfig
 import android.util.Log
 import com.android.bluetooth.btservice.AdapterService
 import com.android.bluetooth.profile.ProfileService
+import com.android.modules.utils.build.SdkLevel
 
 private const val TAG = Util.BT_PREFIX + "Util"
 
 object Util {
     const val BT_PREFIX = "Bluetooth"
+
+    private const val KEY_TEMP_ALLOW_LIST_DURATION_MS = "temp_allow_list_duration_ms"
+    private const val DEFAULT_TEMP_ALLOW_LIST_DURATION_MS = 20_000L
+
+    /**
+     * Check if we are running in `BluetoothInstrumentationTest` context by trying to load
+     * `com.android.bluetooth.TestUtils`. If we are not in Instrumentation test mode, this class
+     * should not be found. If `TestUtils` is removed in the future, another test class in
+     * BluetoothInstrumentationTest should be used instead
+     */
+    @JvmStatic
+    val isInstrumentationTestMode: Boolean by lazy {
+        runCatching { Class.forName("com.android.bluetooth.TestUtils") }.isSuccess
+    }
+
+    /**
+     * Throws [IllegalStateException] if we are not in BluetoothInstrumentationTest. Useful for
+     * ensuring certain methods only get called in BluetoothInstrumentationTest
+     */
+    @JvmStatic
+    fun enforceInstrumentationTestMode() {
+        check(isInstrumentationTestMode) { "Not in BluetoothInstrumentationTest" }
+    }
 
     @JvmStatic
     fun ProfileService?.checkProfileAvailable(tag: String): Boolean {
@@ -115,6 +144,21 @@ object Util {
             BluetoothDevice.TRANSPORT_LE -> "LE"
             else -> "Unknown transport ($transport)"
         }
+
+    @JvmStatic
+    fun getRedactedAddressStringFromByte(address: ByteArray?): String? {
+        if (address == null || address.size != Utils.BD_ADDR_LEN) {
+            return null
+        }
+
+        return String.format("XX:XX:XX:XX:%02X:%02X", address[4], address[5])
+    }
+
+    @JvmStatic fun BluetoothDevice.getByteAddress() = getBytesFromAddress(address)
+
+    @JvmStatic
+    fun getBytesFromAddress(address: String) =
+        address.split(":").map { it.toInt(16).toByte() }.toByteArray()
 
     /**
      * Converts HCI disconnect reasons to Android disconnect reasons.
@@ -197,42 +241,36 @@ object Util {
      * @return `true` if BLE is supported, `false` otherwise
      */
     @JvmStatic
-    fun isBleSupported(context: Context) =
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
+    fun Context.isBleSupported() =
+        packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
 
     /** @return `true` if this Android device is an automotive device, `false` otherwise */
     @JvmStatic
-    fun isAutomotive(context: Context) =
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)
+    fun Context.isAutomotive() = packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)
 
     /** @return `true` if this Android device is an IoT device, `false` otherwise */
     @JvmStatic
-    fun isIotDevice(context: Context) =
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_EMBEDDED)
+    fun Context.isIotDevice() = packageManager.hasSystemFeature(PackageManager.FEATURE_EMBEDDED)
 
     /** @return `true` if this Android device is a TV device, `false` otherwise */
     @Suppress("DEPRECATION") // Checking deprecated PackageManager.FEATURE_TELEVISION
     @JvmStatic
-    fun isTv(context: Context) =
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
-            context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    fun Context.isTv() =
+        packageManager.hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
+            packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 
     /** @return `true` if this Android device is a watch device, `false` otherwise */
-    @JvmStatic
-    fun isWatch(context: Context) =
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)
+    @JvmStatic fun Context.isWatch() = packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)
 
     /** @return `true` if this Android device is an XR device, `false` otherwise */
-    @JvmStatic
-    fun isXrDevice(context: Context) =
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_XR_PERIPHERAL)
+    fun Context.isXrDevice() = packageManager.hasSystemFeature(PackageManager.FEATURE_XR_PERIPHERAL)
 
     /**
      * Returns true if the specified package has disavowed the use of bluetooth scans for location,
      * that is, if they have specified the `neverForLocation` flag on the [BLUETOOTH_SCAN]
      * permission.
      */
-    @SuppressWarnings("IncorrectRequiresPermissionPropagation") // This method checks the permission
+    @Suppress("IncorrectRequiresPermissionPropagation") // This method checks the permission
     @JvmStatic
     fun hasDisavowedLocationForScan(
         context: Context,
@@ -257,21 +295,25 @@ object Util {
 
         // Check the last attribution in the chain for a neverForLocation disavowal.
         val packageName = currentAttrib.packageName
-        val pm = context.packageManager
-        try {
-            // TODO(b/183478032): Cache PackageInfo for use here.
-            val pkgInfo =
-                pm.getPackageInfo(packageName!!, GET_PERMISSIONS or MATCH_UNINSTALLED_PACKAGES)
-            for (i in pkgInfo.requestedPermissions!!.indices) {
-                if (pkgInfo.requestedPermissions!![i] == BLUETOOTH_SCAN) {
-                    return (pkgInfo.requestedPermissionsFlags!![i] and
-                        PackageInfo.REQUESTED_PERMISSION_NEVER_FOR_LOCATION) != 0
-                }
+
+        // Previous check must have enforced isSameProfileGroup(currentAttrib.uid, myUserHandle)
+        val packageInfo =
+            try {
+                val userHandle = UserHandle.getUserHandleForUid(currentAttrib.uid)
+                val contextAsUser = context.createPackageContextAsUser(packageName!!, 0, userHandle)
+                contextAsUser.packageManager.getPackageInfo(packageName, GET_PERMISSIONS)
+            } catch (e: PackageManager.NameNotFoundException) {
+                Log.w(TAG, "Could not find package for disavowal check: $packageName")
+                return false
             }
-        } catch (e: PackageManager.NameNotFoundException) {
-            Log.w(TAG, "Could not find package for disavowal check: $packageName")
+
+        val index = packageInfo.requestedPermissions?.indexOf(BLUETOOTH_SCAN) ?: -1
+        if (index == -1) {
+            return false
         }
-        return false
+
+        val flags = packageInfo.requestedPermissionsFlags?.get(index) ?: 0
+        return (flags and PackageInfo.REQUESTED_PERMISSION_NEVER_FOR_LOCATION) != 0
     }
 
     /**
@@ -298,7 +340,7 @@ object Util {
         !getSystemService(LocationManager::class.java).isLocationEnabledForUser(userHandle)
 
     /** Checks that calling process has ACCESS_COARSE_LOCATION and OP_COARSE_LOCATION is allowed */
-    @SuppressWarnings("IncorrectRequiresPermissionPropagation") // This method checks the permission
+    @Suppress("IncorrectRequiresPermissionPropagation") // This method checks the permission
     @JvmStatic
     fun Context.checkCallerHasCoarseLocation(
         source: AttributionSource,
@@ -329,7 +371,7 @@ object Util {
      * Checks that calling process has ACCESS_COARSE_LOCATION and OP_COARSE_LOCATION is allowed or
      * ACCESS_FINE_LOCATION and OP_FINE_LOCATION is allowed
      */
-    @SuppressWarnings("IncorrectRequiresPermissionPropagation") // This method checks the permission
+    @Suppress("IncorrectRequiresPermissionPropagation") // This method checks the permission
     @JvmStatic
     fun Context.checkCallerHasCoarseOrFineLocation(
         source: AttributionSource,
@@ -371,7 +413,7 @@ object Util {
     }
 
     /** Checks that calling process has ACCESS_FINE_LOCATION and OP_FINE_LOCATION is allowed */
-    @SuppressWarnings("IncorrectRequiresPermissionPropagation") // This method checks the permission
+    @Suppress("IncorrectRequiresPermissionPropagation") // This method checks the permission
     @JvmStatic
     fun Context.checkCallerHasFineLocation(
         source: AttributionSource,
@@ -423,32 +465,182 @@ object Util {
 
     /** Returns `true` if the caller holds [NETWORK_SETTINGS] */
     @JvmStatic
-    fun checkCallerHasNetworkSettingsPermission(context: Context) =
-        context.checkCallerHasPermission(NETWORK_SETTINGS)
+    fun Context.checkCallerHasNetworkSettingsPermission() =
+        checkCallerHasPermission(NETWORK_SETTINGS)
 
     /** Returns `true` if the caller holds [NETWORK_SETUP_WIZARD] */
     @JvmStatic
-    fun checkCallerHasNetworkSetupWizardPermission(context: Context) =
-        context.checkCallerHasPermission(NETWORK_SETUP_WIZARD)
+    fun Context.checkCallerHasNetworkSetupWizardPermission() =
+        checkCallerHasPermission(NETWORK_SETUP_WIZARD)
 
     /** Returns `true` if the caller holds [RADIO_SCAN_WITHOUT_LOCATION] */
     @JvmStatic
-    fun checkCallerHasScanWithoutLocationPermission(context: Context) =
-        context.checkCallerHasPermission(RADIO_SCAN_WITHOUT_LOCATION)
+    fun Context.checkCallerHasScanWithoutLocationPermission() =
+        checkCallerHasPermission(RADIO_SCAN_WITHOUT_LOCATION)
 
     /** Returns `true` if the caller holds [BLUETOOTH_PRIVILEGED] */
     @JvmStatic
-    fun checkCallerHasPrivilegedPermission(context: Context) =
-        context.checkCallerHasPermission(BLUETOOTH_PRIVILEGED)
+    fun Context.checkCallerHasPrivilegedPermission() =
+        checkCallerHasPermission(BLUETOOTH_PRIVILEGED)
+
+    /** Returns `true` if the uid / packageName pair holds [BLUETOOTH_PRIVILEGED] */
+    @JvmStatic
+    fun Context.checkPrivilegedPermission(packageName: String, uid: Int): Boolean {
+        val app = getPackageInfoAsUser(packageName, uid)
+
+        val permissions = app?.requestedPermissions ?: return false
+        val flags = app.requestedPermissionsFlags ?: return false
+
+        for (i in permissions.indices) {
+            if (
+                permissions[i] == BLUETOOTH_PRIVILEGED &&
+                    (flags[i] and REQUESTED_PERMISSION_GRANTED) != 0
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun Context.getPackageInfoAsUser(packageName: String, uid: Int): PackageInfo? {
+        return try {
+            val user = UserHandle.getUserHandleForUid(uid)
+            val pm = createContextAsUser(user, 0).packageManager
+            pm.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
+        } catch (e: PackageManager.NameNotFoundException) {
+            Log.e(TAG, "NameNotFoundException $packageName")
+            null
+        }
+    }
 
     /** Returns `true` if the caller holds [WRITE_SMS] */
-    @JvmStatic
-    fun checkCallerHasWriteSmsPermission(context: Context) =
-        context.checkCallerHasPermission(WRITE_SMS)
+    @JvmStatic fun Context.checkCallerHasWriteSmsPermission() = checkCallerHasPermission(WRITE_SMS)
 
     @PermissionMethod
     private fun Context.checkCallerHasPermission(@PermissionName permission: String) =
         checkCallingOrSelfPermission(permission) == PERMISSION_GRANTED
+
+    @JvmStatic fun getTempBroadcastBundle() = getTempBroadcastOptions().toBundle()
+
+    @JvmStatic
+    fun getTempBroadcastOptions(): BroadcastOptions {
+        val broadcastOptions = BroadcastOptions.makeBasic()
+        // Use the Bluetooth process identity to pass permission check when reading DeviceConfig
+        val identity = Binder.clearCallingIdentity()
+        try {
+            val durationMs =
+                DeviceConfig.getLong(
+                    DeviceConfig.NAMESPACE_BLUETOOTH,
+                    KEY_TEMP_ALLOW_LIST_DURATION_MS,
+                    DEFAULT_TEMP_ALLOW_LIST_DURATION_MS,
+                )
+            broadcastOptions.setTemporaryAppAllowlist(
+                durationMs,
+                PowerExemptionManager.TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_ALLOWED,
+                PowerExemptionManager.REASON_BLUETOOTH_BROADCAST,
+                "",
+            )
+        } finally {
+            Binder.restoreCallingIdentity(identity)
+        }
+        return broadcastOptions
+    }
+
+    /**
+     * Verifies whether the calling package name matches the calling app uid
+     *
+     * @param context the Bluetooth AdapterService context
+     * @param callingPackage the calling application package name
+     * @param callingUid the calling application uid
+     * @return `true` if the package name matches the calling app uid, `false` otherwise
+     */
+    @JvmStatic
+    fun Context.isPackageNameAccurate(callingPackage: String, callingUid: Int): Boolean {
+        val header = "isPackageNameAccurate: App with package name $callingPackage"
+        val callingUser = UserHandle.getUserHandleForUid(callingUid)
+
+        // Verifies the integrity of the calling package name
+        try {
+            val packageUid =
+                createContextAsUser(callingUser, 0).packageManager.getPackageUid(callingPackage, 0)
+            if (packageUid != callingUid) {
+                Log.e(TAG, "$header is UID $packageUid but caller is $callingUid")
+                return false
+            }
+        } catch (_: PackageManager.NameNotFoundException) {
+            Log.e(TAG, "$header does not exist")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Checks if the caller to the method is system server.
+     *
+     * @param tag the log tag to use in case the caller is not system server
+     * @param method the API method name
+     * @return `true` if the caller is system server, `false` otherwise
+     */
+    @JvmStatic
+    fun callerIsSystem(tag: String, method: String): Boolean {
+        if (isInstrumentationTestMode) {
+            return true
+        }
+        val res = checkCallerIsSystem()
+        if (!res) {
+            Log.w(TAG, "$tag.$method() - Not allowed outside system server")
+        }
+        return res
+    }
+
+    private fun checkCallerIsSystem() =
+        UserHandle.getAppId(Process.SYSTEM_UID) == UserHandle.getAppId(Binder.getCallingUid())
+
+    @JvmStatic
+    fun Context.callerIsSystemOrActiveOrManagedUser(tag: String, method: String) =
+        checkCallerIsSystemOrActiveOrManagedUser("$tag.$method()")
+
+    @JvmStatic
+    fun Context.checkCallerIsSystemOrActiveOrManagedUser(tag: String): Boolean {
+        if (isInstrumentationTestMode) {
+            return true
+        }
+        val res = checkCallerIsAllowed()
+        if (!res) {
+            Log.w(TAG, "$tag - Not allowed for non-active user and non-system and non-managed user")
+        }
+        return res
+    }
+
+    // Allowed caller should be:
+    // * Current user
+    // * Any profile in the same group of the current user (work profile, private space, clone, …)
+    //
+    // Then, for broader compatibility, we need to add some special situation that are miss-handling
+    // the multi-user scenario:
+    // * SystemUiUid because global UI is running under user 0
+    // * System user in case we are in HSUM mode
+    // * System uid for any request from the system server
+    private fun Context.checkCallerIsAllowed(): Boolean {
+        val currentUser = Process.myUserHandle()
+        val callingUid = Binder.getCallingUid()
+        val callingUser = UserHandle.getUserHandleForUid(callingUid)
+
+        val identity = Binder.clearCallingIdentity()
+        try {
+            return currentUser == callingUser ||
+                UserHandle.getAppId(Process.SYSTEM_UID) == UserHandle.getAppId(callingUid) ||
+                // SystemUiUid wrongfully run and request for User 0. It needs dedicated exception
+                UserHandle.getAppId(Utils.getSystemUiUid()) == UserHandle.getAppId(callingUid) ||
+                // In HSUM, UserHandle.SYSTEM is only for System, not human
+                (UserManager.isHeadlessSystemUserMode() && callingUser == UserHandle.SYSTEM) ||
+                // Allow any users in the same group (Managed, clone, private...)
+                getSystemService(UserManager::class.java)
+                    .isSameProfileGroup(currentUser, callingUser) // Requires Bluetooth Identity
+        } finally {
+            Binder.restoreCallingIdentity(identity)
+        }
+    }
 
     /**
      * Returns `true` if the [BLUETOOTH_ADVERTISE] permission is granted for the calling app.
@@ -482,7 +674,11 @@ object Util {
         source: AttributionSource,
         tagOrMessage: String,
         method: String? = null,
+        allowPccBypass: Boolean = false,
     ): Boolean {
+        if (isPccUid() && !allowPccBypass) {
+            throw SecurityException("PCC UIDs are blocked by default from Bluetooth APIs.")
+        }
         val message = if (method == null) tagOrMessage else "$tagOrMessage.$method()"
         return enforcePermissionForDataDelivery(context, BLUETOOTH_CONNECT, source, message)
     }
@@ -511,10 +707,19 @@ object Util {
      *
      * Should be used in situations where the app op should not be noted.
      */
+    @JvmOverloads
     @JvmStatic
     @RequiresPermission(BLUETOOTH_CONNECT)
-    fun enforceConnectPermissionForPreflight(context: Context, source: AttributionSource) =
-        enforcePermissionForPreflight(context, BLUETOOTH_CONNECT, source)
+    fun enforceConnectPermissionForPreflight(
+        context: Context,
+        source: AttributionSource,
+        allowPccBypass: Boolean = false,
+    ): Boolean {
+        if (isPccUid() && !allowPccBypass) {
+            throw SecurityException("PCC UIDs are blocked by default from Bluetooth APIs.")
+        }
+        return enforcePermissionForPreflight(context, BLUETOOTH_CONNECT, source)
+    }
 
     @PermissionMethod
     fun enforcePermissionForDataDelivery(
@@ -523,7 +728,7 @@ object Util {
         source: AttributionSource,
         message: String?,
     ): Boolean {
-        if (Utils.isInstrumentationTestMode()) {
+        if (isInstrumentationTestMode) {
             return true
         }
         val currentAttribution =
@@ -571,6 +776,36 @@ object Util {
         }
     }
 
+    /** Checks if the calling UID is a Private Compute Core (PCC) UID. */
+    @JvmStatic
+    fun isPccUid(): Boolean {
+        if (!android.app.privatecompute.flags.Flags.enablePccFrameworkSupport()) {
+            return false
+        }
+        if (!SdkLevel.isAtLeastC()) {
+            return false
+        }
+        return Process.isPrivateComputeCoreUid(Binder.getCallingUid())
+    }
+
+    /**
+     * Checks if the calling UID is a Private Compute Core (PCC) UID.
+     *
+     * PCC UIDs are restricted from performing certain egress operations to maintain data privacy
+     * boundaries.
+     *
+     * @param methodName the name of the method being checked, used for the exception message
+     * @throws SecurityException if the caller is a PCC UID
+     */
+    @JvmStatic
+    fun enforceCallingUidIsNotPcc(methodName: String) {
+        if (isPccUid()) {
+            throw SecurityException(
+                "PCC UIDs are not allowed to perform Bluetooth egress operation: $methodName"
+            )
+        }
+    }
+
     /** Execute a remote callback without propagating the [RemoteException] of a dead app */
     internal inline fun callbackToApp(block: () -> Unit) =
         try {
@@ -578,6 +813,12 @@ object Util {
         } catch (e: RemoteException) {
             BluetoothUtils.logRemoteException(TAG, e)
         }
+
+    /** Checks if the value is present in the array (null-safe). Convenient usage from Java. */
+    @JvmStatic
+    fun <T> Array<T>?.arrayContains(value: T): Boolean {
+        return this?.contains(value) ?: false
+    }
 }
 
 class ActionOnDeathRecipient(

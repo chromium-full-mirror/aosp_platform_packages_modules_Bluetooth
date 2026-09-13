@@ -79,9 +79,8 @@ import java.util.List;
 @MediumTest
 @RunWith(AndroidJUnit4.class)
 public class A2dpStateMachineTest {
-    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
-
     @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+    @Rule public final MockitoRule mMockitoRule = new MockitoRule();
 
     @Mock private A2dpService mService;
     @Mock private A2dpNativeInterface mNativeInterface;
@@ -124,9 +123,9 @@ public class A2dpStateMachineTest {
                     .setCodecSpecific4(0)
                     .build();
 
-    private A2dpStateMachine mStateMachine;
     private InOrder mInOrder;
     private TestLooper mLooper;
+    private A2dpStateMachine mStateMachine;
 
     @Before
     public void setUp() throws Exception {
@@ -219,47 +218,6 @@ public class A2dpStateMachineTest {
                         mService, mDevice, mNativeInterface, true, mLooper.getLooper());
 
         testProcessCodecConfigEventCase(true);
-    }
-
-    /** Verify the state machine reconfigures the optional codec when necessary */
-    @Test
-    @EnableFlags(Flags.FLAG_SYNCHRONIZE_CODEC_PREFERENCES_AND_PRIORITY)
-    public void testProcessCodecConfigEventToMandatoryCodecAndOptionalCodecDisabled() {
-        doReturn(BluetoothA2dp.OPTIONAL_CODECS_PREF_DISABLED)
-                .when(mService)
-                .getOptionalCodecsEnabled(any(BluetoothDevice.class));
-
-        var codecsSelectableSbc = List.of(mCodecConfigSbc);
-        var codecsSelectableSbcAac = List.of(mCodecConfigSbc, mCodecConfigAac);
-
-        BluetoothCodecStatus codecStatusSbcAndSbc =
-                new BluetoothCodecStatus(
-                        mCodecConfigSbc, codecsSelectableSbcAac, codecsSelectableSbc);
-        BluetoothCodecStatus codecStatusSbcAndSbcAac =
-                new BluetoothCodecStatus(
-                        mCodecConfigSbc, codecsSelectableSbcAac, codecsSelectableSbcAac);
-
-        doReturn(BluetoothA2dp.OPTIONAL_CODECS_NOT_SUPPORTED)
-                .when(mService)
-                .getSupportsOptionalCodecs(any(BluetoothDevice.class));
-
-        // Change codec status
-        // Selected codec = SBC, selectable codec = SBC
-        mStateMachine.processCodecConfigEvent(codecStatusSbcAndSbc);
-
-        // Verify that no need to update optional codec configuration
-        verify(mService, never()).disableOptionalCodecs(mDevice);
-
-        doReturn(BluetoothA2dp.OPTIONAL_CODECS_SUPPORTED)
-                .when(mService)
-                .getSupportsOptionalCodecs(any(BluetoothDevice.class));
-
-        // Change codec status
-        // Selected codec = SBC, selectable codec = SBC + AAC
-        mStateMachine.processCodecConfigEvent(codecStatusSbcAndSbcAac);
-
-        // Verify that state machine reconfig optional codec
-        verify(mService).disableOptionalCodecs(mDevice);
     }
 
     /** Helper method to test processCodecConfigEvent() */

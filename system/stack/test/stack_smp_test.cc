@@ -32,9 +32,9 @@
 #include "stack/include/acl_api.h"
 #include "stack/include/btm_ble_api.h"
 #include "stack/include/smp_status.h"
+#include "stack/mock/mock_stack_acl.h"
 #include "stack/smp/p_256_ecc_pp.h"
 #include "stack/smp/smp_int.h"
-#include "test/mock/mock_stack_acl.h"
 
 using testing::StrEq;
 
@@ -65,7 +65,6 @@ static const std::string* get_pts_broadcast_audio_config_options(void) {
   return &kBroadcastAudioConfigOptions;
 }
 static bool get_pts_le_audio_disable_ases_before_stopping(void) { return false; }
-static config_t* get_all(void) { return nullptr; }
 const packet_fragmenter_t* packet_fragmenter_get_interface() { return nullptr; }
 
 stack_config_t mock_stack_config{
@@ -92,7 +91,6 @@ stack_config_t mock_stack_config{
         .get_pts_broadcast_audio_config_options = get_pts_broadcast_audio_config_options,
         .get_pts_le_audio_disable_ases_before_stopping =
                 get_pts_le_audio_disable_ases_before_stopping,
-        .get_all = get_all,
 };
 const stack_config_t* stack_config_get_interface(void) { return &mock_stack_config; }
 
@@ -171,7 +169,7 @@ TEST_F(SmpCalculateConfirmTest, test_smp_gen_p2_4_confirm_as_central) {
   test::mock::stack_acl::BTM_ReadConnectionAddr.body =
           [](const RawAddress& /*remote_bda*/, RawAddress& local_conn_addr,
              tBLE_ADDR_TYPE* p_addr_type, bool /*ota_address*/) {
-            local_conn_addr = RawAddress({0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6});
+            local_conn_addr = RawAddress("A1:A2:A3:A4:A5:A6");
             *p_addr_type = BLE_ADDR_RANDOM;
           };
 
@@ -179,7 +177,7 @@ TEST_F(SmpCalculateConfirmTest, test_smp_gen_p2_4_confirm_as_central) {
   test::mock::stack_acl::BTM_ReadRemoteConnectionAddr.body =
           [](const RawAddress& /*pseudo_addr*/, RawAddress& conn_addr, tBLE_ADDR_TYPE* p_addr_type,
              bool /*ota_address*/) {
-            conn_addr = RawAddress({0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6});
+            conn_addr = RawAddress("B1:B2:B3:B4:B5:B6");
             *p_addr_type = BLE_ADDR_PUBLIC;
             return true;
           };
@@ -205,7 +203,7 @@ TEST_F(SmpCalculateConfirmTest, test_aes_128_as_central) {
   test::mock::stack_acl::BTM_ReadConnectionAddr.body =
           [](const RawAddress& /*remote_bda*/, RawAddress& local_conn_addr,
              tBLE_ADDR_TYPE* p_addr_type, bool /*ota_address*/) {
-            local_conn_addr = RawAddress({0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6});
+            local_conn_addr = RawAddress("A1:A2:A3:A4:A5:A6");
             *p_addr_type = BLE_ADDR_RANDOM;
           };
 
@@ -213,7 +211,7 @@ TEST_F(SmpCalculateConfirmTest, test_aes_128_as_central) {
   test::mock::stack_acl::BTM_ReadRemoteConnectionAddr.body =
           [](const RawAddress& /*pseudo_addr*/, RawAddress& conn_addr, tBLE_ADDR_TYPE* p_addr_type,
              bool /*ota_address*/) {
-            conn_addr = RawAddress({0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6});
+            conn_addr = RawAddress("B1:B2:B3:B4:B5:B6");
             *p_addr_type = BLE_ADDR_PUBLIC;
             return true;
           };
@@ -250,7 +248,7 @@ TEST_F(SmpCalculateConfirmTest, test_smp_calculate_confirm_as_central) {
   test::mock::stack_acl::BTM_ReadConnectionAddr.body =
           [](const RawAddress& /*remote_bda*/, RawAddress& local_conn_addr,
              tBLE_ADDR_TYPE* p_addr_type, bool /*ota_address*/) {
-            local_conn_addr = RawAddress({0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6});
+            local_conn_addr = RawAddress("A1:A2:A3:A4:A5:A6");
             *p_addr_type = BLE_ADDR_RANDOM;
           };
 
@@ -258,7 +256,7 @@ TEST_F(SmpCalculateConfirmTest, test_smp_calculate_confirm_as_central) {
   test::mock::stack_acl::BTM_ReadRemoteConnectionAddr.body =
           [](const RawAddress& /*pseudo_addr*/, RawAddress& conn_addr, tBLE_ADDR_TYPE* p_addr_type,
              bool /*ota_address*/) {
-            conn_addr = RawAddress({0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6});
+            conn_addr = RawAddress("B1:B2:B3:B4:B5:B6");
             *p_addr_type = BLE_ADDR_PUBLIC;
             return true;
           };

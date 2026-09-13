@@ -51,9 +51,9 @@ import com.android.bluetooth.audio_util.PlayStatus;
 import com.android.bluetooth.audio_util.PlayerInfo;
 import com.android.bluetooth.audio_util.PlayerSettingsManager;
 import com.android.bluetooth.btservice.AdapterService;
-import com.android.bluetooth.flags.Flags;
 import com.android.bluetooth.profile.ProfileService;
 import com.android.bluetooth.storage.BluetoothStorageManager;
+import com.android.bluetooth.util.Text;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.util.List;
@@ -275,11 +275,7 @@ public class AvrcpTargetService extends ProfileService {
      * device. See packages/modules/Bluetooth/system/profile/avrcp/device.cc.
      */
     private void setA2dpActiveDevice(@NonNull BluetoothDevice device) {
-        if (Flags.setA2dpActiveDeviceThroughAdapterService()) {
-            getAdapterService().setActiveDevice(device, BluetoothAdapter.ACTIVE_DEVICE_AUDIO);
-            return;
-        }
-        getAdapterService().getA2dpService().ifPresent(a2dp -> a2dp.setActiveDevice(device));
+        getAdapterService().setActiveDevice(device, BluetoothAdapter.ACTIVE_DEVICE_AUDIO);
     }
 
     /** Informs {@link AvrcpVolumeManager} that a new device is connected */
@@ -292,14 +288,6 @@ public class AvrcpTargetService extends ProfileService {
     void deviceDisconnected(BluetoothDevice device) {
         Log.i(TAG, "deviceDisconnected: device=" + device);
         mVolumeManager.deviceDisconnected(device);
-    }
-
-    /** Removes the stored volume for a device. */
-    public void removeStoredVolumeForDevice(BluetoothDevice device) {
-        if (Flags.mainlineBetaStorage()) throw new IllegalStateException("mainlineBetaStorage");
-        if (device == null) return;
-
-        mVolumeManager.removeStoredVolumeForDevice(device);
     }
 
     /**
@@ -377,8 +365,8 @@ public class AvrcpTargetService extends ProfileService {
      * <p>If a {@link com.android.bluetooth.audio_util.Image} is present in the {@link Metadata},
      * add its handle from {@link AvrcpCoverArtService}.
      */
-    Metadata getCurrentSongInfo() {
-        Metadata metadata = mMediaPlayerList.getCurrentSongInfo();
+    Metadata getSongInfo(String mediaId) {
+        Metadata metadata = mMediaPlayerList.getSongInfo(mediaId);
         if (mAvrcpCoverArtService != null && metadata.image != null) {
             metadata.image.setImageHandle(mAvrcpCoverArtService.storeImage(metadata.image));
         }
@@ -389,7 +377,7 @@ public class AvrcpTargetService extends ProfileService {
     PlayStatus getPlayState() {
         return PlayStatus.fromPlaybackState(
                 mMediaPlayerList.getCurrentPlayStatus(),
-                Long.parseLong(getCurrentSongInfo().duration));
+                Long.parseLong(mMediaPlayerList.getSongInfo("").duration));
     }
 
     /** Returns the current media ID of the active player from {@link MediaPlayerList}. */
@@ -397,7 +385,7 @@ public class AvrcpTargetService extends ProfileService {
         String id = mMediaPlayerList.getCurrentMediaId();
         if (id != null && !id.isEmpty()) return id;
 
-        Metadata song = getCurrentSongInfo();
+        Metadata song = mMediaPlayerList.getSongInfo("");
         if (song != null && !song.mediaId.isEmpty()) return song.mediaId;
 
         // We always want to return something, the error string just makes debugging easier
@@ -548,6 +536,16 @@ public class AvrcpTargetService extends ProfileService {
             return;
         }
 
+        if (KeyEvent.KEYCODE_VOLUME_UP == keyCode || KeyEvent.KEYCODE_VOLUME_DOWN == keyCode) {
+            mAudioManager.adjustSuggestedStreamVolume(
+                    KeyEvent.KEYCODE_VOLUME_UP == keyCode
+                            ? AudioManager.ADJUST_RAISE
+                            : AudioManager.ADJUST_LOWER,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.FLAG_SHOW_UI);
+            return;
+        }
+
         int action = pushed ? KeyEvent.ACTION_DOWN : KeyEvent.ACTION_UP;
         KeyEvent event = new KeyEvent(action, keyCode);
         mAudioManager.dispatchMediaKeyEvent(event);
@@ -664,6 +662,6 @@ public class AvrcpTargetService extends ProfileService {
         }
 
         // Tab everything over by two spaces
-        sb.append(tempBuilder.toString().replaceAll("(?m)^", "  "));
+        sb.append(Text.indent(tempBuilder.toString(), "  "));
     }
 }

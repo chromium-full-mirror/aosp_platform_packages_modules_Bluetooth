@@ -28,17 +28,18 @@
 
 #include "btif_gatt.h"
 
+#include <base/functional/bind.h>
 #include <com_android_bluetooth_flags.h>
 #include <hardware/bluetooth.h>
 #include <hardware/bt_gatt.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "bta/include/bta_gatt_api.h"
-#include "btif/include/btif_common.h"
+#include "btif/include/btif_jni_task.h"
 #include "btif_status.h"
 #include "main/shim/distance_measurement_manager.h"
 #include "main/shim/le_advertising_manager.h"
+#include "stack/include/main_thread.h"
 
 const btgatt_callbacks_t* bt_gatt_callbacks = NULL;
 
@@ -53,10 +54,19 @@ const btgatt_callbacks_t* bt_gatt_callbacks = NULL;
  ******************************************************************************/
 static BtStatus btif_gatt_init(const btgatt_callbacks_t* callbacks) {
   bt_gatt_callbacks = callbacks;
-  BTA_GATTS_InitBonded();
+  do_in_main_thread(base::BindOnce(&BTA_GATTS_InitBonded));
   return BtifStatus();
 }
 
+static void btif_gatt_cleanup_impl() {
+  if (bt_gatt_callbacks) {
+    bluetooth::log::info("btif_gatt_cleanup clearing bt_gatt_callbacks");
+    bt_gatt_callbacks = NULL;
+  }
+
+  BTA_GATTC_Disable();
+  do_in_main_thread(base::BindOnce(&BTA_GATTS_Disable));
+}
 /*******************************************************************************
  *
  * Function         btif_gatt_cleanup
@@ -67,12 +77,12 @@ static BtStatus btif_gatt_init(const btgatt_callbacks_t* callbacks) {
  *
  ******************************************************************************/
 static void btif_gatt_cleanup(void) {
-  if (bt_gatt_callbacks) {
-    bt_gatt_callbacks = NULL;
+  BtStatus status = do_in_jni_thread(base::BindOnce(&btif_gatt_cleanup_impl));
+  if (status != BtifStatus(SUCCESS)) {
+    bluetooth::log::warn("can't post cleanup to JNI");
+    return;
   }
-
-  BTA_GATTC_Disable();
-  BTA_GATTS_Disable();
+  bluetooth::log::info("btif_gatt_cleanup finished success");
 }
 
 static btgatt_interface_t btgattInterface = {

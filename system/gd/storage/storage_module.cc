@@ -34,15 +34,12 @@
 #include "storage/config_cache.h"
 #include "storage/config_keys.h"
 #include "storage/legacy_config_file.h"
-#include "storage/mutation.h"
 
 namespace bluetooth {
 namespace storage {
 
 using os::Alarm;
 using os::Handler;
-
-static const std::string kFactoryResetProperty = "persist.bluetooth.factoryreset";
 
 static const size_t kDefaultTempDeviceCapacity = 10000;
 // Save config whenever there is a change, but delay it by this value so that burst config change
@@ -95,11 +92,6 @@ StorageModule::StorageModule(os::Handler* handler, std::string config_file_path,
                    config_save_delay_.count(), kMinConfigSaveDelay.count());
 
   std::lock_guard<std::recursive_mutex> lock(mutex_);
-  if (os::GetSystemProperty(kFactoryResetProperty) == "true") {
-    log::info("{} is true, delete config files", kFactoryResetProperty);
-    LegacyConfigFile::FromPath(config_file_path_).Delete();
-    os::SetSystemProperty(kFactoryResetProperty, "false");
-  }
   if (!is_config_checksum_pass(kConfigFileComparePass)) {
     LegacyConfigFile::FromPath(config_file_path_).Delete();
   }
@@ -120,12 +112,7 @@ StorageModule::StorageModule(os::Handler* handler, std::string config_file_path,
   pimpl_ = std::make_unique<impl>(handler_, std::move(config.value()), temp_devices_capacity_);
   pimpl_->cache_.SetPersistentConfigChangedCallback(
           [this] { handler_->CallOn(this, &StorageModule::SaveDelayed); });
-
   pimpl_->cache_.FixDeviceTypeInconsistencies();
-  if (bluetooth::os::ParameterProvider::GetBtKeystoreInterface() != nullptr) {
-    bluetooth::os::ParameterProvider::GetBtKeystoreInterface()
-            ->ConvertEncryptOrDecryptKeyIfNeeded();
-  }
 
   if (save_needed) {
     SaveDelayed();
@@ -149,11 +136,6 @@ StorageModule::~StorageModule() {
   log::verbose("Storage module stopped !!");
 }
 
-Mutation StorageModule::Modify() {
-  std::lock_guard<std::recursive_mutex> lock(mutex_);
-  return Mutation(&pimpl_->cache_);
-}
-
 void StorageModule::SaveDelayed() {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
   if (pimpl_->has_pending_config_save_) {
@@ -171,6 +153,7 @@ void StorageModule::SaveImmediately() {
     pimpl_->config_save_alarm_.Cancel();
     pimpl_->has_pending_config_save_ = false;
   }
+  auto start_time = std::chrono::steady_clock::now();
 #ifndef TARGET_FLOSS
   log::assert_that(
           LegacyConfigFile::FromPath(config_file_path_).Write(pimpl_->cache_),
@@ -185,6 +168,13 @@ void StorageModule::SaveImmediately() {
       bluetooth::os::ParameterProvider::IsCommonCriteriaMode()) {
     bluetooth::os::ParameterProvider::GetBtKeystoreInterface()->set_encrypt_key_or_remove_key(
             kConfigFilePrefix, kConfigFileHash);
+  }
+  auto end_time = std::chrono::steady_clock::now();
+  auto write_duration =
+          std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+  // TODO(b/493507987): Remove this log after debugging.
+  if (write_duration >= std::chrono::milliseconds(500)) {
+    log::error("Config write took too long: {}ms", write_duration.count());
   }
 }
 

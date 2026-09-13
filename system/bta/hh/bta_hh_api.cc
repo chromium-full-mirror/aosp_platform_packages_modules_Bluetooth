@@ -36,9 +36,9 @@
 
 #include "bta/hh/bta_hh_int.h"
 #include "bta/sys/bta_sys.h"
-#include "hiddefs.h"
 #include "osi/include/allocator.h"
 #include "stack/include/bt_hdr.h"
+#include "stack/include/hiddefs.h"
 #include "stack/include/main_thread.h"
 
 using namespace bluetooth;
@@ -50,14 +50,13 @@ using namespace bluetooth;
 /**
  * Android Headtracker Service UUIDs
  */
-const Uuid ANDROID_HEADTRACKER_SERVICE_UUID =
-        Uuid::FromString(ANDROID_HEADTRACKER_SERVICE_UUID_STRING);
-const Uuid ANDROID_HEADTRACKER_VERSION_CHARAC_UUID =
-        Uuid::FromString(ANDROID_HEADTRACKER_VERSION_CHARAC_UUID_STRING);
-const Uuid ANDROID_HEADTRACKER_CONTROL_CHARAC_UUID =
-        Uuid::FromString(ANDROID_HEADTRACKER_CONTROL_CHARAC_UUID_STRING);
-const Uuid ANDROID_HEADTRACKER_REPORT_CHARAC_UUID =
-        Uuid::FromString(ANDROID_HEADTRACKER_REPORT_CHARAC_UUID_STRING);
+constinit Uuid ANDROID_HEADTRACKER_SERVICE_UUID(ANDROID_HEADTRACKER_SERVICE_UUID_STRING);
+constinit Uuid ANDROID_HEADTRACKER_VERSION_CHARAC_UUID(
+        ANDROID_HEADTRACKER_VERSION_CHARAC_UUID_STRING);
+constinit Uuid ANDROID_HEADTRACKER_CONTROL_CHARAC_UUID(
+        ANDROID_HEADTRACKER_CONTROL_CHARAC_UUID_STRING);
+constinit Uuid ANDROID_HEADTRACKER_REPORT_CHARAC_UUID(
+        ANDROID_HEADTRACKER_REPORT_CHARAC_UUID_STRING);
 
 static const tBTA_SYS_REG bta_hh_reg = {bta_hh_hdl_event, BTA_HhDisable};
 

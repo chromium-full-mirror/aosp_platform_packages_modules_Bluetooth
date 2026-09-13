@@ -251,8 +251,9 @@ typedef void (*btrc_passthrough_rsp_callback)(const RawAddress& bd_addr, int id,
 
 typedef void (*btrc_groupnavigation_rsp_callback)(int id, int key_state);
 
-typedef void (*btrc_connection_state_callback)(bool rc_connect, bool bt_connect,
-                                               const RawAddress& bd_addr);
+typedef void (*btrc_connection_state_callback)(const RawAddress& bd_addr,
+                                               btrc_connection_state_t rc_state,
+                                               btrc_connection_state_t br_state);
 
 typedef void (*btrc_ctrl_getrcfeatures_callback)(const RawAddress& bd_addr, int features);
 
@@ -375,7 +376,7 @@ typedef struct {
   /** send rsp to set_abs_vol received from target */
   BtStatus (*set_volume_rsp)(const RawAddress& bd_addr, uint8_t abs_vol, uint8_t label);
 
-  /** send notificaiton rsp for abs vol to target */
+  /** send notification rsp for abs vol to target */
   BtStatus (*register_abs_vol_rsp)(const RawAddress& bd_addr, btrc_notification_type_t rsp_type,
                                    uint8_t abs_vol, uint8_t label);
 
@@ -389,6 +390,8 @@ __END_DECLS
 #include <bluetooth/log.h>
 
 namespace std {
+template <>
+struct formatter<btrc_connection_state_t> : enum_formatter<btrc_connection_state_t> {};
 template <>
 struct formatter<btrc_status_t> : enum_formatter<btrc_status_t> {};
 template <>
